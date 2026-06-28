@@ -1,9 +1,0 @@
-HTTP (camelCase JSON)
-  │
-  ▼  main.py ......... app shell: CORS, lifespan(create tables → seed), /health
-  ▼  routers/ ........ thin endpoints; every one: Depends(get_db) + Depends(get_current_user)
-  ▼  deps.py ......... per-request async DB session  +  auth gate (Clerk JWT or demo principal)
-  ▼  models.py ....... SQLAlchemy ORM (relational columns + JSON blobs) → SQLite / Postgres
-  ▼  schemas.py ...... Pydantic *Out models, snake→camelCase on the way out
-  └─ agents/ ......... the AI subsystem (only on POST /analyze): LangGraph DAG of PydanticAI agents
-                       with a deterministic fallback at every node
