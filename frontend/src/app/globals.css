@@ -1,0 +1,183 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Font stacks — no network fetch; uses Inter / JetBrains Mono if installed,
+       otherwise a high-quality system stack so builds never depend on Google Fonts. */
+    --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "SFMono-Regular", Menlo,
+      Consolas, "Liberation Mono", monospace;
+
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 229 84% 56%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 220 14% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 60% 40%;
+    --warning: 32 95% 44%;
+    --info: 199 89% 48%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 229 84% 56%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 224 47% 5%;
+    --foreground: 210 40% 98%;
+    --card: 222 40% 7%;
+    --card-foreground: 210 40% 98%;
+    --popover: 223 44% 6%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 229 84% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 222 28% 13%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 222 28% 12%;
+    --muted-foreground: 215 18% 60%;
+    --accent: 222 28% 15%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 72% 56%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 58% 48%;
+    --warning: 38 92% 58%;
+    --info: 199 89% 58%;
+    --border: 220 24% 15%;
+    --input: 220 24% 17%;
+    --ring: 229 84% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv11", "ss01";
+    font-variation-settings: "opsz" 32;
+  }
+  /* Refined scrollbars */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.5);
+    background-clip: padding-box;
+  }
+}
+
+@layer components {
+  /* Glass card — the signature surface */
+  .glass {
+    @apply border border-border/60 bg-card/60 backdrop-blur-xl;
+    box-shadow:
+      inset 0 1px 0 0 hsl(0 0% 100% / 0.04),
+      0 12px 40px -16px rgba(0, 0, 0, 0.55);
+  }
+  .glass-hover {
+    @apply transition-all duration-200;
+  }
+  .glass-hover:hover {
+    @apply border-border bg-card/80;
+  }
+
+  /* Subtle elevated panel */
+  .panel {
+    @apply rounded-xl border border-border bg-card;
+  }
+
+  /* Text gradient for hero numbers / titles */
+  .text-gradient {
+    @apply bg-gradient-to-br from-foreground to-foreground/55 bg-clip-text text-transparent;
+  }
+  .text-gradient-brand {
+    @apply bg-gradient-to-r from-orbit-400 via-primary to-orbit-300 bg-clip-text text-transparent;
+  }
+
+  /* Animated grid backdrop */
+  .grid-bg {
+    background-size: 44px 44px;
+    @apply bg-grid-pattern;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+  .animation-delay-200 {
+    animation-delay: 200ms;
+  }
+  .animation-delay-500 {
+    animation-delay: 500ms;
+  }
+}
+
+/* React Flow theme overrides — match the product surface */
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__background {
+  background: transparent;
+}
+.react-flow__controls {
+  @apply overflow-hidden rounded-lg border border-border bg-card/80 shadow-lg backdrop-blur;
+}
+.react-flow__controls-button {
+  @apply border-border bg-transparent text-muted-foreground;
+}
+.react-flow__controls-button:hover {
+  @apply bg-accent text-foreground;
+}
+.react-flow__controls-button svg {
+  fill: currentColor;
+}
+.react-flow__minimap {
+  @apply overflow-hidden rounded-lg border border-border;
+  background: hsl(var(--card)) !important;
+}
+.react-flow__edge-path {
+  stroke-width: 1.5;
+}
+.react-flow__handle {
+  @apply border-border bg-muted-foreground;
+  width: 7px;
+  height: 7px;
+}

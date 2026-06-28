@@ -1,0 +1,19 @@
+import type { TimelineEvent } from "@/lib/types";
+import { ago, days, hours, mins } from "./time";
+
+export const timelineEvents: TimelineEvent[] = [
+  { id: "ev_1", kind: "meeting-uploaded", title: "Northwind Q2 Escalation uploaded", description: "38-minute Zoom recording ingested from the Zoom integration.", at: ago(mins(12)), actor: "Zoom", meetingId: "m_1", projectId: "p_1", meta: { Duration: "38m", Participants: 3 } },
+  { id: "ev_2", kind: "transcript-ready", title: "Transcript ready", description: "Diarized 4 speakers and aligned timestamps across the recording.", at: ago(mins(11)), actor: "Meeting Intelligence", agent: "meeting-intelligence", meetingId: "m_1", projectId: "p_1", meta: { Speakers: 4, Words: "5,820" } },
+  { id: "ev_3", kind: "ai-analysis", title: "AI analysis complete", description: "Extracted 6 pain points, 3 feature requests and $480K revenue at risk.", at: ago(mins(9)), actor: "Meeting Intelligence", agent: "meeting-intelligence", meetingId: "m_1", projectId: "p_1", meta: { "Pain points": 6, Signals: 9 } },
+  { id: "ev_4", kind: "prd-generated", title: "PRD generated: Enterprise SSO & SCIM", description: "Product Manager synthesized 4 meetings into a 2,180-word PRD with 5 user stories.", at: ago(mins(35)), actor: "Product Manager", agent: "product-manager", projectId: "p_1", meta: { Stories: 5, P0: 3 } },
+  { id: "ev_5", kind: "engineering-planned", title: "Engineering plan published", description: "Identity-broker architecture proposed; estimated 6 weeks across 2 engineers.", at: ago(mins(22)), actor: "Engineering Planner", agent: "engineering-planner", projectId: "p_1", meta: { Estimate: "6w", Components: 5 } },
+  { id: "ev_6", kind: "tasks-created", title: "9 tasks seeded to board", description: "Engineering Planner created and prioritized 9 tasks on the SSO board.", at: ago(mins(18)), actor: "Engineering Planner", agent: "engineering-planner", projectId: "p_1", meta: { Tasks: 9 } },
+  { id: "ev_7", kind: "review-approved", title: "PRD approved by Head of Product", description: "Mara Vossen approved the SSO PRD and locked Q3 sequencing.", at: ago(mins(16)), actor: "Mara Vossen", projectId: "p_1" },
+  { id: "ev_8", kind: "development-started", title: "Development started", description: "Devin began the SAML assertion validator; admin connection UI merged.", at: ago(hours(2)), actor: "Devin Okafor", projectId: "p_1", meta: { "In progress": 2 } },
+  { id: "ev_9", kind: "qa", title: "QA flagged a release risk", description: "tc_5 failing — SCIM deactivate does not revoke sessions within 5 minutes.", at: ago(hours(1)), actor: "QA Planner", agent: "qa-planner", projectId: "p_1", meta: { Failing: 1, Coverage: "58%" } },
+  { id: "ev_10", kind: "customer-updated", title: "Customer follow-up drafted", description: "Customer Success prepared a personalized update for Rachel at Northwind.", at: ago(mins(3)), actor: "Customer Success", agent: "customer-success", meetingId: "m_1", projectId: "p_1", meta: { Promises: 4 } },
+  // Vertex thread
+  { id: "ev_11", kind: "meeting-uploaded", title: "Vertex Health onboarding call uploaded", description: "Google Meet recording ingested for the Vertex expansion.", at: ago(hours(4)), actor: "Google Meet", meetingId: "m_2", projectId: "p_3" },
+  { id: "ev_12", kind: "ai-analysis", title: "Vertex expansion opportunity detected", description: "Identified a 25 → 240 seat expansion gated on SCIM + RBAC.", at: ago(hours(4)), actor: "Meeting Intelligence", agent: "meeting-intelligence", meetingId: "m_2", projectId: "p_3", meta: { Seats: "25 → 240" } },
+  { id: "ev_13", kind: "prd-generated", title: "RBAC discovery PRD drafted", description: "Product Manager opened a discovery PRD for role-based access control.", at: ago(days(1)), actor: "Product Manager", agent: "product-manager", projectId: "p_3" },
+];

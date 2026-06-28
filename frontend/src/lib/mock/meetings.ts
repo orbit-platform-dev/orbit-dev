@@ -1,0 +1,211 @@
+import type { Meeting } from "@/lib/types";
+import { stakeholders } from "./members";
+import { ago, days, hours, mins } from "./time";
+
+const s = (id: string) => stakeholders.find((x) => x.id === id)!;
+
+export const meetings: Meeting[] = [
+  {
+    id: "m_1",
+    title: "Northwind Labs — Q2 Escalation & Renewal Risk",
+    source: "zoom",
+    status: "analyzed",
+    date: ago(mins(12)),
+    durationSec: 2280,
+    account: "Northwind Labs",
+    participants: [s("s_1"), s("s_2"), s("s_7")],
+    tags: ["renewal", "enterprise", "at-risk"],
+    linkedProjectId: "p_1",
+    analysisProgress: 100,
+    transcript: [
+      { id: "t1", speaker: "Marcus Webb", speakerRole: "CTO, Northwind", start: 4, end: 22, sentiment: "negative", text: "I'll be direct — security review flagged that Orbit still doesn't support SAML SSO. That's a blocker for us renewing at the enterprise tier." },
+      { id: "t2", speaker: "Hana Kim", speakerRole: "AE, Orbit", start: 23, end: 39, sentiment: "neutral", text: "I hear you, Marcus. Let's make sure I capture exactly what your security team needs so I can take it back to product today." },
+      { id: "t3", speaker: "Rachel Lindqvist", speakerRole: "VP Eng, Northwind", start: 40, end: 78, sentiment: "mixed", text: "It's three things really. SAML SSO with our Okta tenant, SCIM so we can deprovision people who leave, and an exportable audit log. Without SCIM our IT team has to manually offboard, and that failed our last SOC 2 audit." },
+      { id: "t4", speaker: "Marcus Webb", speakerRole: "CTO, Northwind", start: 79, end: 104, sentiment: "negative", text: "Frankly we've raised SSO three times since January. If there's no committed date this quarter, leadership wants us to evaluate alternatives before the renewal." },
+      { id: "t5", speaker: "Hana Kim", speakerRole: "AE, Orbit", start: 105, end: 128, sentiment: "positive", text: "Understood. SSO is the single most requested capability across our enterprise accounts, so this is squarely on the roadmap. I'll get you a committed timeline in writing this week." },
+      { id: "t6", speaker: "Rachel Lindqvist", speakerRole: "VP Eng, Northwind", start: 129, end: 161, sentiment: "positive", text: "If you can ship SAML and SCIM by August, that resolves the renewal entirely. Honestly the rest of the product is excellent — the team loves it. This is the one gap." },
+      { id: "t7", speaker: "Marcus Webb", speakerRole: "CTO, Northwind", start: 162, end: 184, sentiment: "neutral", text: "And the audit log export — our compliance team needs it in CSV and via API. That's non-negotiable for the security addendum." },
+      { id: "t8", speaker: "Hana Kim", speakerRole: "AE, Orbit", start: 185, end: 206, sentiment: "positive", text: "Got it. SAML, SCIM, audit export. I'll align with product and come back with dates. Thank you both for being so clear about what unblocks the renewal." },
+    ],
+    analysis: {
+      summary:
+        "Northwind Labs ($480K ARR) is treating enterprise SSO as a hard renewal blocker. Their security team requires SAML SSO (Okta), SCIM provisioning, and an exportable audit log — the lack of SCIM contributed to a failed SOC 2 audit. The account is otherwise highly satisfied; this single capability gap is the entire renewal risk. CTO Marcus Webb signaled they will evaluate alternatives without a committed Q3 date, while VP Eng Rachel Lindqvist confirmed shipping SAML + SCIM by August fully resolves the renewal.",
+      keyTakeaways: [
+        "SSO is now raised in 4 of the last 5 Northwind meetings — clear pattern, not a one-off.",
+        "Missing SCIM directly caused a failed SOC 2 audit on their side — high emotional weight.",
+        "Renewal of $480K ARR hinges on a committed August delivery for SAML + SCIM.",
+        "Audit log export (CSV + API) is a non-negotiable line item in their security addendum.",
+      ],
+      sentiment: {
+        overall: "mixed",
+        score: 0.42,
+        breakdown: [
+          { label: "Product satisfaction", value: 0.78 },
+          { label: "Trust in roadmap", value: 0.31 },
+          { label: "Renewal intent", value: 0.45 },
+        ],
+      },
+      urgency: "critical",
+      revenueImpact: 480000,
+      topics: [
+        { label: "SAML SSO", weight: 0.9 },
+        { label: "SCIM provisioning", weight: 0.74 },
+        { label: "Audit log", weight: 0.6 },
+        { label: "SOC 2", weight: 0.52 },
+        { label: "Renewal", weight: 0.81 },
+      ],
+      painPoints: [
+        { id: "pp_1", title: "No SAML SSO support", severity: "critical", frequency: 4, description: "Enterprise security review blocks renewal without SAML SSO against their Okta tenant.", quotes: ["Orbit still doesn't support SAML SSO. That's a blocker for us renewing."] },
+        { id: "pp_2", title: "No SCIM deprovisioning", severity: "critical", frequency: 3, description: "Manual offboarding contributed to a failed SOC 2 audit; IT cannot automatically deprovision leavers.", quotes: ["Without SCIM our IT team has to manually offboard, and that failed our last SOC 2 audit."] },
+        { id: "pp_3", title: "No audit log export", severity: "high", frequency: 2, description: "Compliance requires exportable audit logs in CSV and via API for the security addendum.", quotes: ["The audit log export — our compliance team needs it in CSV and via API."] },
+      ],
+      featureRequests: [
+        { id: "fr_1", title: "SAML SSO (Okta, Azure AD, Google)", description: "Standards-based SAML 2.0 SSO with major IdPs.", demand: 94, effort: "L", category: "Security", linkedProjectId: "p_1" },
+        { id: "fr_2", title: "SCIM 2.0 user provisioning", description: "Automatic provisioning and deprovisioning of users and groups.", demand: 88, effort: "L", category: "Security", linkedProjectId: "p_1" },
+        { id: "fr_3", title: "Exportable audit log", description: "Tamper-evident audit log exportable as CSV and via REST API.", demand: 71, effort: "M", category: "Compliance", linkedProjectId: "p_2" },
+      ],
+      opportunities: [
+        { id: "op_1", title: "Secure Northwind renewal", description: "Committed August SSO delivery converts a churn risk into a multi-year renewal.", revenueImpact: 480000, confidence: 82, timeframe: "Q3 2026", type: "retention" },
+        { id: "op_2", title: "Enterprise security tier upsell", description: "Package SSO + SCIM + audit as a Security add-on across the enterprise base.", revenueImpact: 1200000, confidence: 64, timeframe: "Q3–Q4 2026", type: "expansion" },
+      ],
+      actionItems: [
+        { id: "ai_1", title: "Send Northwind a committed SSO timeline in writing", owner: "Hana Kim", due: ago(-days(2)), status: "in-progress", linkedTaskId: "tk_2" },
+        { id: "ai_2", title: "Open Enterprise SSO & SCIM project + PRD", owner: "Mara Vossen", due: ago(-days(1)), status: "done" },
+        { id: "ai_3", title: "Confirm SCIM scope with Northwind IT", owner: "Devin Okafor", due: ago(-days(4)), status: "open" },
+      ],
+    },
+  },
+  {
+    id: "m_2",
+    title: "Vertex Health — Onboarding & Rollout Planning",
+    source: "google-meet",
+    status: "analyzed",
+    date: ago(hours(4)),
+    durationSec: 1920,
+    account: "Vertex Health",
+    participants: [s("s_3"), s("s_4"), s("s_6")],
+    tags: ["onboarding", "expansion"],
+    linkedProjectId: "p_3",
+    analysisProgress: 100,
+    transcript: [
+      { id: "t1", speaker: "Aisha Bello", speakerRole: "Director of Ops, Vertex", start: 5, end: 30, sentiment: "positive", text: "The pilot went really well. We want to roll Orbit out to all 240 ops staff, but we need bulk user provisioning and role-based access before we can." },
+      { id: "t2", speaker: "Mara Vossen", speakerRole: "Head of Product, Orbit", start: 31, end: 52, sentiment: "positive", text: "That's fantastic. SCIM provisioning is already in planning, which will handle the bulk side. Let's talk through the roles you need." },
+      { id: "t3", speaker: "Jonathan Pierce", speakerRole: "Procurement, Vertex", start: 53, end: 80, sentiment: "neutral", text: "From my side it's about the contract — moving from 25 seats to 240 changes the commercial terms. I'll need updated pricing for the annual." },
+    ],
+    analysis: {
+      summary:
+        "Vertex Health's pilot succeeded and they want to expand from 25 to 240 seats. Expansion is gated on SCIM bulk provisioning and role-based access control. Procurement needs updated annual pricing for the larger seat count. This is a clean expansion opportunity that shares the SCIM dependency with the Northwind renewal.",
+      keyTakeaways: [
+        "Pilot succeeded; clear intent to expand 25 → 240 seats (~10x).",
+        "Expansion gated on SCIM provisioning + RBAC.",
+        "Shares SCIM dependency with Northwind — one project unblocks both.",
+      ],
+      sentiment: { overall: "positive", score: 0.74, breakdown: [{ label: "Product satisfaction", value: 0.86 }, { label: "Expansion intent", value: 0.8 }, { label: "Commercial alignment", value: 0.58 }] },
+      urgency: "high",
+      revenueImpact: 312000,
+      topics: [{ label: "SCIM", weight: 0.8 }, { label: "RBAC", weight: 0.7 }, { label: "Expansion", weight: 0.85 }, { label: "Pricing", weight: 0.5 }],
+      painPoints: [
+        { id: "pp_4", title: "No bulk provisioning", severity: "high", frequency: 2, description: "Cannot onboard 240 users without SCIM bulk provisioning.", quotes: ["We need bulk user provisioning and role-based access before we can."] },
+        { id: "pp_5", title: "Limited role granularity", severity: "medium", frequency: 1, description: "Need finer-grained roles for a 240-person ops org.", quotes: ["...role-based access before we can."] },
+      ],
+      featureRequests: [
+        { id: "fr_4", title: "Role-based access control (RBAC)", description: "Granular roles and permission sets for large teams.", demand: 76, effort: "M", category: "Security", linkedProjectId: "p_3" },
+        { id: "fr_2b", title: "SCIM 2.0 user provisioning", description: "Bulk provisioning for large rollouts.", demand: 88, effort: "L", category: "Security", linkedProjectId: "p_1" },
+      ],
+      opportunities: [
+        { id: "op_3", title: "Vertex 10x seat expansion", description: "Expand 25 → 240 seats once RBAC + SCIM ship.", revenueImpact: 312000, confidence: 71, timeframe: "Q3 2026", type: "expansion" },
+      ],
+      actionItems: [
+        { id: "ai_4", title: "Send updated 240-seat annual pricing", owner: "Hana Kim", due: ago(-days(3)), status: "open" },
+        { id: "ai_5", title: "Scope RBAC requirements with Vertex ops", owner: "Mara Vossen", due: ago(-days(5)), status: "open" },
+      ],
+    },
+  },
+  {
+    id: "m_3",
+    title: "Quanta Finance — Data Residency Deep Dive",
+    source: "google-meet",
+    status: "analyzing",
+    date: ago(mins(34)),
+    durationSec: 1500,
+    account: "Quanta Finance",
+    participants: [stakeholders[4]],
+    tags: ["compliance", "enterprise"],
+    analysisProgress: 62,
+    transcript: [
+      { id: "t1", speaker: "Elena Sokolova", speakerRole: "Head of Data, Quanta", start: 6, end: 36, sentiment: "neutral", text: "Before we go further we need to confirm data residency. All customer data has to stay in the EU — can Orbit guarantee an EU-only region?" },
+    ],
+    analysis: undefined,
+  },
+  {
+    id: "m_4",
+    title: "Meridian Retail — Quarterly Business Review",
+    source: "zoom",
+    status: "analyzed",
+    date: ago(days(2)),
+    durationSec: 2700,
+    account: "Meridian Retail",
+    participants: [stakeholders[7]],
+    tags: ["qbr", "expansion"],
+    analysisProgress: 100,
+    transcript: [
+      { id: "t1", speaker: "Daniel Foster", speakerRole: "VP Sales, Meridian", start: 8, end: 40, sentiment: "mixed", text: "Adoption is strong with the sales team, but reporting is where we struggle. We're exporting to spreadsheets to build the dashboards leadership wants." },
+    ],
+    analysis: {
+      summary:
+        "Meridian Retail shows strong adoption but is hitting a reporting ceiling — teams export to spreadsheets for leadership dashboards. A native analytics/reporting capability would deepen the account and open an expansion path.",
+      keyTakeaways: ["Strong day-to-day adoption.", "Reporting gap forces spreadsheet workarounds.", "Native dashboards = expansion lever."],
+      sentiment: { overall: "mixed", score: 0.55, breakdown: [{ label: "Adoption", value: 0.82 }, { label: "Reporting", value: 0.34 }] },
+      urgency: "medium",
+      revenueImpact: 96000,
+      topics: [{ label: "Reporting", weight: 0.8 }, { label: "Dashboards", weight: 0.7 }, { label: "Exports", weight: 0.5 }],
+      painPoints: [{ id: "pp_6", title: "No native reporting", severity: "medium", frequency: 3, description: "Teams export to spreadsheets to build leadership dashboards.", quotes: ["We're exporting to spreadsheets to build the dashboards leadership wants."] }],
+      featureRequests: [{ id: "fr_5", title: "Native analytics dashboards", description: "Configurable dashboards and scheduled reports.", demand: 68, effort: "XL", category: "Analytics" }],
+      opportunities: [{ id: "op_4", title: "Meridian analytics expansion", description: "Native reporting unlocks a leadership-tier upsell.", revenueImpact: 96000, confidence: 55, timeframe: "Q4 2026", type: "upsell" }],
+      actionItems: [{ id: "ai_6", title: "Demo reporting roadmap to Meridian", owner: "Hana Kim", due: ago(-days(6)), status: "open" }],
+    },
+  },
+  {
+    id: "m_5",
+    title: "Weekly Product Sync — Roadmap & Sequencing",
+    source: "google-meet",
+    status: "analyzed",
+    date: ago(days(1)),
+    durationSec: 1800,
+    account: "Orbit (internal)",
+    participants: [stakeholders[5]],
+    tags: ["internal", "roadmap"],
+    analysisProgress: 100,
+    transcript: [
+      { id: "t1", speaker: "Mara Vossen", speakerRole: "Head of Product", start: 5, end: 35, sentiment: "neutral", text: "Given Northwind and Vertex both need SCIM, let's sequence the identity work first — it unblocks $790K combined." },
+    ],
+    analysis: {
+      summary: "Internal sync aligning the team to sequence identity work (SSO + SCIM) first, as it unblocks the combined Northwind renewal and Vertex expansion worth ~$790K.",
+      keyTakeaways: ["Identity work sequenced first.", "Unblocks $790K combined.", "Audit log fast-follows."],
+      sentiment: { overall: "neutral", score: 0.6, breakdown: [{ label: "Alignment", value: 0.8 }] },
+      urgency: "high",
+      revenueImpact: 0,
+      topics: [{ label: "Sequencing", weight: 0.7 }, { label: "Identity", weight: 0.8 }],
+      painPoints: [],
+      featureRequests: [],
+      opportunities: [],
+      actionItems: [{ id: "ai_7", title: "Lock Q3 roadmap order", owner: "Mara Vossen", due: ago(days(1)), status: "done" }],
+    },
+  },
+  {
+    id: "m_6",
+    title: "Inbound — Helix Robotics Discovery Call",
+    source: "upload",
+    status: "transcribing",
+    date: ago(mins(3)),
+    durationSec: 1140,
+    account: "Helix Robotics",
+    participants: [],
+    tags: ["inbound", "new-logo"],
+    analysisProgress: 18,
+    transcript: [],
+    analysis: undefined,
+  },
+];
+
+export const meetingById = (id: string) => meetings.find((m) => m.id === id);

@@ -1,0 +1,31 @@
+# Root ignores. Note: backend/.gitignore and frontend/.gitignore cover
+# their own subtrees (.venv, node_modules, .next, *.db, .env). The rules
+# below are repo-wide OS/editor cruft plus a defense-in-depth net for secrets.
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Secrets — never commit real env files anywhere in the tree.
+# (Committed .env.example files are placeholders and are intentionally tracked.)
+**/.env
+**/.env.local
+**/.env.*.local
+!**/.env.example
+
+# Generated / dependency dirs (belt-and-suspenders)
+**/__pycache__/
+**/.venv/
+**/node_modules/
+**/.next/
+*.db

@@ -1,0 +1,42 @@
+HTTP (camelCase JSON)
+        │
+        ▼
+main.py
+ ├─ CORS
+ ├─ lifespan
+ ├─ create tables
+ ├─ seed data
+ └─ /health
+
+        │
+        ▼
+routers/
+ ├─ Thin endpoints
+ ├─ Depends(get_db)
+ └─ Depends(get_current_user)
+
+        │
+        ▼
+deps.py
+ ├─ Async DB session
+ └─ Authentication
+
+        │
+        ▼
+models.py
+ ├─ SQLAlchemy ORM
+ ├─ SQLite
+ └─ PostgreSQL
+
+        │
+        ▼
+schemas.py
+ ├─ Pydantic models
+ └─ snake_case → camelCase
+
+        │
+        ▼
+agents/
+ ├─ LangGraph DAG
+ ├─ PydanticAI Agents
+ └─ Deterministic fallback
