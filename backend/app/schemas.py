@@ -81,6 +81,10 @@ class ProjectOut(CamelModel):
     design: dict[str, Any] | None = None
     qa: dict[str, Any] | None = None
     sales: dict[str, Any] | None = None
+    customer_update: dict[str, Any] | None = None
+    timeline: dict[str, Any] | None = None
+    approval_status: str = "draft"
+    approved_at: datetime | None = None
 
 
 class TaskOut(CamelModel):

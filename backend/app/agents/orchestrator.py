@@ -26,6 +26,8 @@ class PipelineState(TypedDict, total=False):
     sales: dict[str, Any]
     customer_update: dict[str, Any]
     teams: dict[str, Any]
+    work_plan: dict[str, Any]
+    timeline: dict[str, Any]
     events: list[dict[str, Any]]
 
 
@@ -166,6 +168,56 @@ async def node_customer(state: PipelineState) -> PipelineState:
     return state
 
 
+_POINTS_PER_WEEK = 6
+_PHASE_ORDER = ["product", "design", "engineering", "qa", "customer-success", "sales"]
+_MILESTONE_LABEL = {
+    "product": "Requirements locked", "design": "Designs ready", "engineering": "Build complete",
+    "qa": "Validated", "customer-success": "Customer updated", "sales": "Positioned",
+}
+
+
+def _derive_timeline(items: list[dict]) -> dict:
+    """Deterministically turn work items into duration, milestones and a critical path."""
+    if not items:
+        return {"durationWeeks": 0, "milestones": [], "criticalPath": [], "deliveryEstimate": "n/a", "confidence": 0}
+    by_disc: dict[str, int] = {}
+    for i in items:
+        disc = i.get("discipline", "engineering")
+        by_disc[disc] = by_disc.get(disc, 0) + int(i.get("estimatePoints") or 0)
+    present = [d for d in _PHASE_ORDER if d in by_disc] + [d for d in by_disc if d not in _PHASE_ORDER]
+
+    milestones, week = [], 0
+    for disc in present:
+        week += max(1, round(by_disc[disc] / _POINTS_PER_WEEK))
+        milestones.append({
+            "title": _MILESTONE_LABEL.get(disc, disc.title()), "week": week,
+            "description": f"{disc.replace('-', ' ').title()} work done ({by_disc[disc]} pts).",
+        })
+    duration = week or 1
+    critical = [d.replace("-", " ").title() for d in present if d in ("product", "engineering", "qa")]
+    confs = [int(i.get("confidence") or 0) for i in items if i.get("confidence") is not None]
+    return {
+        "durationWeeks": duration,
+        "milestones": milestones,
+        "criticalPath": critical or [present[0].title()],
+        "deliveryEstimate": f"~{duration} week{'s' if duration != 1 else ''}",
+        "confidence": round(sum(confs) / len(confs)) if confs else 60,
+    }
+
+
+async def node_plan(state: PipelineState) -> PipelineState:
+    """Generate the cross-functional execution plan (work items), then derive its timeline."""
+    out = await _run_agent(
+        "execution-planner", s.WorkPlan,
+        f"PRD:\n{state.get('prd')}\n\nSignals:\n{state.get('signals')}\n\nRelevant teams:\n{state.get('teams')}",
+        lambda: fb.fallback_workplan(state.get("prd", {}), state.get("signals", {}), state.get("teams", {})),
+    )
+    state["work_plan"] = out
+    state["timeline"] = _derive_timeline(out.get("items", []))
+    state.setdefault("events", []).append({"agent": "execution-planner", "step": "Execution plan built"})
+    return state
+
+
 def _build_graph():
     """Compile the LangGraph StateGraph (lazy import)."""
     from langgraph.graph import END, START, StateGraph
@@ -179,6 +231,7 @@ def _build_graph():
     g.add_node("sales", node_sales)
     g.add_node("customer", node_customer)
     g.add_node("route", node_route)
+    g.add_node("plan", node_plan)
 
     g.add_edge(START, "intelligence")
     g.add_edge("intelligence", "pm")
@@ -188,8 +241,9 @@ def _build_graph():
     g.add_edge("engineering", "qa")
     g.add_edge("design", "qa")
     g.add_edge("engineering", "sales")
-    g.add_edge("qa", "customer")
-    g.add_edge("sales", "customer")
+    g.add_edge("qa", "plan")
+    g.add_edge("sales", "plan")
+    g.add_edge("plan", "customer")
     g.add_edge("customer", END)
     return g.compile()
 
@@ -209,6 +263,7 @@ async def run_pipeline(meeting_id: str, transcript: str, account: str) -> Pipeli
         state = await node_design(state)
         state = await node_qa(state)
         state = await node_sales(state)
+        state = await node_plan(state)
         state = await node_customer(state)
         return state
 
@@ -240,4 +295,9 @@ def signals_to_analysis(signals: dict[str, Any]) -> dict[str, Any]:
         "featureRequests": [{"id": f"fr_{i}", **f} for i, f in enumerate(signals.get("featureRequests", []))],
         "opportunities": [{"id": f"op_{i}", **o} for i, o in enumerate(signals.get("opportunities", []))],
         "actionItems": [{"id": f"ai_{i}", **a} for i, a in enumerate(signals.get("actionItems", []))],
+        "bugs": [{"id": f"bug_{i}", **b, "severity": _norm(b.get("severity"), _URGENCY, "medium")} for i, b in enumerate(signals.get("bugs", []))],
+        "customerGoals": signals.get("customerGoals", []),
+        "deadlines": [{"id": f"dl_{i}", **dl} for i, dl in enumerate(signals.get("deadlines", []))],
+        "requestedIntegrations": signals.get("requestedIntegrations", []),
+        "confidence": signals.get("confidence", 70),
     }

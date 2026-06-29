@@ -20,11 +20,25 @@ def _key(name: str) -> str:
     return letters[:3] or "ORB"
 
 
+_PRIORITIES = {"urgent", "high", "medium", "low"}
+
+
+def _norm_priority(p) -> str:
+    p = str(p or "").lower().strip()
+    return p if p in _PRIORITIES else "high"
+
+
 def _map_prd(prd: dict, now: datetime) -> dict:
     return {
+        "title": prd.get("title", ""),
         "problem": prd.get("problem", ""),
+        "background": prd.get("background", ""),
         "goals": prd.get("goals", []),
         "nonGoals": prd.get("nonGoals", []),
+        "functionalRequirements": prd.get("functionalRequirements", []),
+        "acceptanceCriteria": prd.get("acceptanceCriteria", []),
+        "dependencies": prd.get("dependencies", []),
+        "risks": prd.get("risks", []),
         "successMetrics": prd.get("successMetrics", []),
         "userStories": [{"id": f"us_{i}", **s} for i, s in enumerate(prd.get("userStories", []))],
         "sections": [],
@@ -107,10 +121,12 @@ async def persist_execution(m: Meeting, state: dict, db) -> str:
     qa = state.get("qa") or {}
     sales = state.get("sales") or {}
     cu = state.get("customer_update") or {}
+    work_items = (state.get("work_plan") or {}).get("items") or []
+    timeline = state.get("timeline") or {}
     now = datetime.now(timezone.utc)
     frs = signals.get("featureRequests") or []
-    primary = frs[0]["title"] if frs else ((prd.get("goals") or [m.title])[0])
-    weeks = eng.get("estimateWeeks") or 6
+    primary = (prd.get("title") or (frs[0]["title"] if frs else None) or (prd.get("goals") or [m.title])[0])
+    weeks = timeline.get("durationWeeks") or eng.get("estimateWeeks") or 6
 
     await delete_execution(m.id, db)  # replace any prior execution (idempotent re-runs)
 
@@ -119,12 +135,13 @@ async def persist_execution(m: Meeting, state: dict, db) -> str:
         id=pid, name=primary[:60], key=_key(primary), description=(prd.get("problem") or m.title)[:500],
         status="in-progress", health="at-risk" if signals.get("urgency") in ("critical", "high") else "on-track",
         progress=20, start_date=now, target_date=now + timedelta(weeks=weeks),
-        delivery_estimate=f"~{weeks} weeks", source_meeting_id=m.id,
+        delivery_estimate=timeline.get("deliveryEstimate") or f"~{weeks} weeks", source_meeting_id=m.id,
         revenue_impact=float(signals.get("revenueImpact") or 0),
         owner={"id": "u_1", "name": "You", "email": "", "role": "Owner", "title": "Owner", "status": "active"},
         team=[], tags=m.tags or [], documents=[],
         prd=_map_prd(prd, now), engineering=_map_engineering(eng), design=_map_design(design),
         qa=_map_qa(qa), sales=_map_sales(sales),
+        customer_update=cu or None, timeline=timeline or None, approval_status="draft",
     ))
 
     # The execution router decided which teams this conversation actually needs.
@@ -148,29 +165,46 @@ async def persist_execution(m: Meeting, state: dict, db) -> str:
     nodes = [
         _node(g("meeting"), "meeting", m.title, m.account, "meeting-intelligence", pid, now,
               reason="The customer conversation that triggered this work."),
-        _node(g("need"), "feature-request", primary, f"Demand {frs[0].get('demand', '')}" if frs else "Customer need",
-              "meeting-intelligence", pid, now, reason="The core need extracted from the call."),
-        _node(g("prd"), "prd", "PRD", f"{len(prd.get('userStories', []))} stories", "product-manager", pid, now,
-              reason="Defines what to build, why it matters, and how success is measured."),
+        _node(g("intent"), "customer-intent", "Customer Intent",
+              f"{len(frs)} requests · {len(signals.get('bugs', []))} bugs · {len(signals.get('painPoints', []))} pains",
+              "meeting-intelligence", pid, now, reason="What the customer actually needs, extracted from the call."),
+        _node(g("prd"), "prd", "PRD", (prd.get("title") or f"{len(prd.get('userStories', []))} stories")[:80],
+              "product-manager", pid, now, reason="Defines what to build, why it matters, and how success is measured."),
+        _node(g("plan"), "execution-plan", "Execution Plan", f"{len(work_items)} work items",
+              "execution-planner", pid, now, reason="The cross-functional work needed to deliver the PRD."),
         _team_node(g("eng"), "engineering", "Engineering", f"{weeks} wks · {len(eng.get('components', []))} components", "engineering-planner", eng_ok, eng_why),
         _team_node(g("design"), "design", "Design", f"{len(design.get('flows', []))} flows · {len(design.get('screens', []))} screens", "design-planner", design_ok, design_why),
         _team_node(g("qa"), "qa", "QA", f"Coverage {qa.get('coverageEstimate', 0)}%", "qa-planner", qa_ok, qa_why),
         _team_node(g("sales"), "sales", "Sales", f"{len(sales.get('talkingPoints', []))} talk tracks", "sales-planner", sales_ok, sales_why),
-        _team_node(g("cs"), "customer-followup", "Customer Follow-up", cu.get("subject", "") or "Follow-up drafted", "customer-success", cs_ok, cs_why),
+        _node(g("timeline"), "timeline", "Timeline", timeline.get("deliveryEstimate") or "n/a",
+              "execution-planner", pid, now, reason="Estimated delivery, milestones and critical path from the work items."),
+        _team_node(g("cs"), "customer-followup", "Customer Email", cu.get("subject", "") or "Follow-up drafted", "customer-success", cs_ok, cs_why),
     ]
-    tasks = [
-        Task(id=f"tk_{m.id}_{i}", key=f"{_key(primary)}-{i}", title=c, description="", column="todo",
-             priority="high", discipline="engineering", estimate=None, project_id=pid, assignee=None,
-             labels=["backend"], links={"meetingId": m.id, "graphNodeId": g("eng")}, created_at=now, updated_at=now)
-        for i, c in enumerate(eng.get("components", [])[:5], start=1)
-    ]
+
+    # Work items become tasks across every relevant discipline (not just engineering),
+    # each carrying its "why" + confidence so the review screen can explain itself.
+    tasks = []
+    for i, w in enumerate(work_items, start=1):
+        disc = w.get("discipline") or "engineering"
+        owner = w.get("suggestedOwner")
+        tasks.append(Task(
+            id=f"tk_{m.id}_{i}", key=f"{_key(primary)}-{i}", title=(w.get("title") or "Work item")[:140],
+            description=w.get("description", ""), column="todo", priority=_norm_priority(w.get("priority")),
+            discipline=disc, estimate=w.get("estimatePoints"), project_id=pid,
+            assignee={"name": owner, "title": owner, "isSuggested": True} if owner else None,
+            labels=[disc], created_at=now, updated_at=now,
+            links={"meetingId": m.id, "graphNodeId": g("plan"),
+                   "reason": w.get("reason", ""), "confidence": w.get("confidence")},
+        ))
     db.add_all(nodes)
     db.add_all(tasks)
     await db.flush()  # nodes before edges (FK)
 
     e = lambda a, b, anim=False: GraphEdge(id=f"e_{m.id}_{a}_{b}", source=g(a), target=g(b), animated=anim)
     db.add_all([
-        e("meeting", "need"), e("need", "prd"), e("prd", "eng", True), e("prd", "design", True),
-        e("prd", "sales", True), e("eng", "qa", True), e("design", "qa"), e("qa", "cs"), e("sales", "cs", True),
+        e("meeting", "intent"), e("intent", "prd"), e("prd", "plan", True),
+        e("plan", "eng", True), e("plan", "design", True), e("plan", "sales", True),
+        e("eng", "qa", True), e("design", "qa"),
+        e("plan", "timeline", True), e("timeline", "cs", True),
     ])
     return pid

@@ -83,6 +83,10 @@ class Project(Base):
     design: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     qa: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     sales: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    customer_update: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    timeline: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    approval_status: Mapped[str] = mapped_column(String, default="draft")
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Task(Base):

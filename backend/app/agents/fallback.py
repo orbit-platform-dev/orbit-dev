@@ -54,6 +54,18 @@ def fallback_signals(transcript: str, account: str) -> dict:
     if revenue == 0 and neg:
         revenue = 120_000.0 * neg
 
+    bug_hints = ("bug", "broken", "error", "crash", "timeout", "regress", "defect", "500", "504", "doesn't work", "not working")
+    bugs = [{"title": f"Defect: {s[:55]}", "description": s, "severity": "high"}
+            for s in sents if any(w in s.lower() for w in bug_hints)][:3]
+    known_integrations = ("slack", "jira", "linear", "salesforce", "hubspot", "github", "gitlab",
+                          "zendesk", "segment", "snowflake", "okta", "notion", "stripe")
+    requested_integrations = sorted({name.title() for name in known_integrations if name in lower})
+    deadline_hints = ("deadline", "by end of", "before ", "due ", "launch", "q1", "q2", "q3", "q4", "black friday")
+    deadlines = [{"title": s[:55], "due": "see transcript"} for s in sents
+                 if any(w in s.lower() for w in deadline_hints)][:2]
+    customer_goals = [f"Adopt {f['title']}" for f in features[:2]]
+    confidence = max(35, min(90, 40 + 12 * len(features) + 8 * len(pains)))
+
     return {
         "summary": (sents[0] if sents else "Customer conversation analyzed.")
         + (f" {account} discussion with {len(features)} feature signal(s) detected." if features else ""),
@@ -70,6 +82,11 @@ def fallback_signals(transcript: str, account: str) -> dict:
             if (revenue or features) else []
         ),
         "actionItems": [{"title": f"Follow up on: {f['title']}", "owner": "Account team", "status": "open"} for f in features[:3]],
+        "bugs": bugs,
+        "customerGoals": customer_goals,
+        "deadlines": deadlines,
+        "requestedIntegrations": requested_integrations,
+        "confidence": confidence,
     }
 
 
@@ -77,13 +94,70 @@ def fallback_prd(signals: dict) -> dict:
     frs = signals.get("featureRequests", [])
     primary = frs[0]["title"] if frs else "Requested capability"
     return {
+        "title": f"{primary} — PRD",
         "problem": f"Customers need {primary.lower()}; it is blocking adoption and revenue.",
+        "background": "Surfaced directly in a customer conversation; captured here so the team can act on it.",
         "goals": [f"Ship {fr['title']}" for fr in frs[:3]] or [f"Deliver {primary}"],
         "nonGoals": ["Out-of-scope edge cases", "Net-new platform rewrites"],
+        "functionalRequirements": [f"The system must support {fr['title']}." for fr in frs[:3]]
+        or [f"The system must support {primary}."],
+        "acceptanceCriteria": [f"{fr['title']} is usable end-to-end by the customer." for fr in frs[:3]]
+        or ["The capability is usable end-to-end."],
+        "dependencies": [],
+        "risks": ["Integration edge cases", "Scope creep beyond the core need"],
         "successMetrics": [{"metric": "Adoption", "target": "> 80%"}, {"metric": "Time to value", "target": "< 1 week"}],
         "userStories": [{"persona": "Admin", "story": f"Use {fr['title']} to unblock my team.", "priority": "P0"} for fr in frs[:3]]
         or [{"persona": "User", "story": f"Use {primary}.", "priority": "P0"}],
     }
+
+
+# Default owner per discipline, used by the deterministic work-plan fallback.
+_OWNER = {
+    "product": "Product manager", "engineering": "Backend engineer", "design": "Product designer",
+    "qa": "QA engineer", "customer-success": "Customer success manager", "sales": "Account executive",
+}
+
+
+def fallback_workplan(prd: dict, signals: dict, teams: dict | None = None) -> dict:
+    """Deterministic cross-functional work items, scoped to the relevant teams."""
+    teams = teams or {}
+
+    def on(team: str) -> bool:
+        d = teams.get(team)
+        return True if d is None else bool(d.get("relevant", True))
+
+    goals = prd.get("goals") or [(signals.get("featureRequests") or [{}])[0].get("title", "the requested capability")]
+    primary = goals[0]
+    items: list[dict] = []
+
+    def add(discipline, title, description, priority, points, reason, confidence=70):
+        items.append({
+            "title": title, "description": description, "discipline": discipline, "priority": priority,
+            "suggestedOwner": _OWNER.get(discipline, "Owner"), "estimatePoints": points,
+            "reason": reason, "confidence": confidence,
+        })
+
+    if on("product"):
+        add("product", f"Finalize requirements for {primary}", "Lock scope, acceptance criteria and edge cases.",
+            "high", 3, "The PRD is a draft; product must confirm scope before build.")
+    if on("engineering"):
+        add("engineering", f"Implement {primary}", "Build the core capability behind a clean interface.",
+            "high", 8, f"Directly delivers the customer's request: {primary}.", 75)
+        add("engineering", "Expose API + persistence", "Endpoints, data model and migrations for the new capability.",
+            "medium", 5, "The capability needs to be stored and accessible.")
+    if on("design"):
+        add("design", f"Design the {primary} flow", "Wireframe the setup and primary user flow.",
+            "medium", 3, "A user-facing capability needs a clear flow.")
+    if on("qa"):
+        add("qa", f"Test {primary} end-to-end", "Happy path, error handling and regression on adjacent areas.",
+            "high", 3, "Validate the change before it reaches the customer.")
+    if on("sales") and signals.get("opportunities"):
+        add("sales", f"Position {primary} with the account", "Update the deal and prep talk track.",
+            "medium", 1, "Tied to a revenue opportunity from the call.")
+    if on("customer-success"):
+        add("customer-success", "Close the loop with the customer", "Send the follow-up and confirm the timeline.",
+            "high", 1, "The customer expects a response on what was discussed.")
+    return {"items": items}
 
 
 def fallback_engineering(prd: dict) -> dict:

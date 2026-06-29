@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from sqlalchemy import delete
@@ -11,7 +12,7 @@ from sqlalchemy import delete
 from ..agents.orchestrator import run_pipeline, signals_to_analysis
 from ..agents.persistence import delete_execution, persist_execution
 from ..deps import Depends, get_current_user, get_db
-from ..models import ActivityEvent, Meeting, TimelineEvent
+from ..models import ActivityEvent, Meeting, Project, TimelineEvent
 from ..redis_client import publish_event
 from ..schemas import MeetingOut, RunTranscriptIn, UploadMeetingIn
 
@@ -151,3 +152,50 @@ async def delete_meeting(meeting_id: str, db=Depends(get_db), _=Depends(get_curr
     await db.execute(delete(TimelineEvent).where(TimelineEvent.meeting_id == meeting_id))
     await db.delete(m)
     await db.commit()
+
+
+class PatchMeetingIn(BaseModel):
+    analysis: dict | None = None
+
+
+@router.patch("/{meeting_id}", response_model=MeetingOut)
+async def patch_meeting(meeting_id: str, body: PatchMeetingIn, db=Depends(get_db), _=Depends(get_current_user)):
+    """Edit the (still-draft) customer intent / analysis before approval."""
+    m = await db.get(Meeting, meeting_id)
+    if not m:
+        raise HTTPException(404, "Meeting not found")
+    if body.analysis is not None:
+        m.analysis = body.analysis
+    await db.commit()
+    await db.refresh(m)
+    return m
+
+
+@router.post("/{meeting_id}/approve")
+async def approve_execution(meeting_id: str, db=Depends(get_db), _=Depends(get_current_user)):
+    """Finalize the execution plan. For the MVP this only flips state — no external sync."""
+    m = await db.get(Meeting, meeting_id)
+    if not m:
+        raise HTTPException(404, "Meeting not found")
+    if not m.linked_project_id:
+        raise HTTPException(409, "This meeting has no execution plan to approve")
+    p = await db.get(Project, m.linked_project_id)
+    if not p:
+        raise HTTPException(404, "Execution plan not found")
+
+    now = datetime.now(timezone.utc)
+    p.approval_status = "approved"
+    p.approved_at = now
+    p.status = "in-progress"
+    db.add(ActivityEvent(
+        id=f"ac_{uuid.uuid4().hex[:8]}", actor={"name": "You"}, action="approved the execution plan for",
+        target=p.name, target_type="project", at=now, project_id=p.id,
+    ))
+    db.add(TimelineEvent(
+        id=f"ev_{uuid.uuid4().hex[:8]}", kind="review-approved", title="Execution plan approved",
+        description=f"{p.name} approved — ready for synchronization.", at=now, actor="You",
+        project_id=p.id, meeting_id=m.id,
+    ))
+    await db.commit()
+    await publish_event("orbit:pipeline", {"type": "execution.approved", "meetingId": m.id, "projectId": p.id})
+    return {"meetingId": m.id, "projectId": p.id, "approvalStatus": "approved", "approvedAt": now.isoformat()}
