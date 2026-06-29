@@ -47,11 +47,13 @@ def _ensure_columns(conn) -> None:
 async def init_db() -> None:
     """Create tables, run lightweight column migrations, and seed unless disabled."""
     from . import models  # noqa: F401  (register models)
-    from .seed import seed_if_empty
+    from .seed import ensure_integrations, seed_if_empty
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_ensure_columns)
-    if settings.seed_demo:
-        async with SessionLocal() as session:
+    async with SessionLocal() as session:
+        if settings.seed_demo:
             await seed_if_empty(session)
+        # Always ensure the integration catalog exists (even on a non-empty DB).
+        await ensure_integrations(session)

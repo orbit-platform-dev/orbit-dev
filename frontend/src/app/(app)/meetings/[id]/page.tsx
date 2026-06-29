@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowLeft, Clock, Code2, FileText, PenTool, ShieldCheck, Sparkles, Ticket, TrendingUp, Video, Workflow } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Clock, Code2, FileText, PenTool, ShieldCheck, Sparkles, Ticket, TrendingUp, Video, Workflow } from "lucide-react";
 import { useMeeting, useProject } from "@/lib/hooks";
 import { formatDate, formatDuration } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -110,7 +110,11 @@ export default function MeetingDetailPage() {
             </Button>
             <Button asChild className="gap-2">
               <Link href={`/meetings/${m.id}/review`}>
-                <Sparkles className="h-4 w-4" /> Review &amp; approve
+                {project?.approvalStatus === "approved" ? (
+                  <><CheckCircle2 className="h-4 w-4" /> View execution plan</>
+                ) : (
+                  <><Sparkles className="h-4 w-4" /> Review &amp; approve</>
+                )}
               </Link>
             </Button>
           </div>

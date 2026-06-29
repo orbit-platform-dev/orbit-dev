@@ -141,10 +141,10 @@ export async function getTasks(): Promise<Task[]> {
   if (USE_MOCK) return delay().then(() => allTasks);
   return live("/tasks");
 }
-/** Edit / reassign / move a work item. */
+/** Edit / reassign / accept-decline a work item. */
 export async function patchTask(
   id: string,
-  body: Partial<{ column: string; priority: string; title: string; description: string; assignee: Record<string, unknown> }>,
+  body: Partial<{ column: string; priority: string; title: string; description: string; assignee: Record<string, unknown>; decision: "accepted" | "declined" }>,
 ): Promise<Task | undefined> {
   if (USE_MOCK) return delay(120).then(() => undefined);
   return liveSend(`/tasks/${id}`, "PATCH", body);
@@ -153,6 +153,11 @@ export async function patchTask(
 export async function deleteTask(id: string): Promise<void> {
   if (USE_MOCK) return delay(120).then(() => undefined);
   await liveSend(`/tasks/${id}`, "DELETE");
+}
+/** Push a work item to a connected tool (Jira/Linear). MVP: faked but persisted. */
+export async function pushTask(id: string, target: string): Promise<Task | undefined> {
+  if (USE_MOCK) return delay(150).then(() => undefined);
+  return liveSend(`/tasks/${id}/push`, "POST", { target });
 }
 
 // --- Graph -----------------------------------------------------------------
@@ -172,6 +177,11 @@ export async function getTimeline(): Promise<TimelineEvent[]> {
 }
 
 // --- Integrations ----------------------------------------------------------
+/** Connect / disconnect an integration (only Jira & Linear are wired for the MVP). */
+export async function patchIntegration(key: string, status: "connected" | "disconnected"): Promise<Integration | undefined> {
+  if (USE_MOCK) return delay(150).then(() => undefined);
+  return liveSend(`/integrations/${key}`, "PATCH", { status });
+}
 export async function getIntegrations(): Promise<Integration[]> {
   if (USE_MOCK) return delay(200).then(() => integrations);
   return live("/integrations");

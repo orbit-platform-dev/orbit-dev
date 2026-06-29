@@ -10,10 +10,17 @@ import { Separator } from "@/components/ui/separator";
 import { GraphStatusBadge } from "@/components/shared/status";
 import { AgentIcon } from "@/components/shared/agent-icon";
 import { agentMeta } from "@/components/shared/agent-icon";
-import { TicketsPanel } from "@/components/tickets/tickets-panel";
+import { useQueryClient } from "@tanstack/react-query";
+import { qk, useConnectedProvider, useProject, useTasks } from "@/lib/hooks";
+import * as api from "@/lib/api";
+import { WorkItemCard } from "@/components/execution/work-item-card";
 import { kindMeta } from "./graph-meta";
 
-const TICKET_KINDS = new Set(["execution-plan", "engineering", "design", "qa"]);
+// Node kinds that carry work items, and how to scope tasks to each.
+const WORK_KINDS = new Set<string>(["execution-plan", "engineering", "design", "qa", "sales", "customer-followup"]);
+const NODE_DISCIPLINE: Record<string, string> = {
+  engineering: "engineering", design: "design", qa: "qa", sales: "sales", "customer-followup": "customer-success",
+};
 
 // Sharp, plain-language statement of what each stage/team is responsible for.
 const kindPurpose: Partial<Record<GraphNodeKind, string>> = {
@@ -37,6 +44,20 @@ export function NodeDetail({ node, onClose }: { node: ExecutionNode; onClose: ()
   const Icon = meta.icon;
   const isSkipped = node.status === "skipped" || Boolean(node.meta.skipped);
   const reason = node.meta.reason ? String(node.meta.reason) : "";
+
+  const qc = useQueryClient();
+  const { data: allTasks } = useTasks();
+  const { data: project } = useProject(node.projectId ?? "");
+  const connectedProvider = useConnectedProvider();
+  const members = api.directory.members;
+  const canPush = project?.approvalStatus === "approved";
+  const nodeTasks = (allTasks ?? []).filter(
+    (t) => t.projectId === node.projectId && (node.kind === "execution-plan" || t.discipline === NODE_DISCIPLINE[node.kind]),
+  );
+  const invalidateNode = () => {
+    qc.invalidateQueries({ queryKey: qk.tasks });
+    if (node.projectId) qc.invalidateQueries({ queryKey: qk.project(node.projectId) });
+  };
 
   return (
     <motion.aside
@@ -123,11 +144,26 @@ export function NodeDetail({ node, onClose }: { node: ExecutionNode; onClose: ()
             ))}
         </div>
 
-        {TICKET_KINDS.has(node.kind) && !isSkipped && (
+        {WORK_KINDS.has(node.kind) && !isSkipped && nodeTasks.length > 0 && (
           <>
             <Separator className="my-4" />
-            <div className="mb-2 text-xs font-semibold text-muted-foreground">Tickets</div>
-            <TicketsPanel scope={{ graphNodeId: node.id }} compact />
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold text-muted-foreground">Work items · {nodeTasks.length}</span>
+              {!canPush && <span className="text-[10px] text-muted-foreground">Approve the plan to push</span>}
+            </div>
+            <div className="space-y-2">
+              {nodeTasks.map((t) => (
+                <WorkItemCard
+                  key={t.id}
+                  task={t}
+                  members={members}
+                  connectedProvider={connectedProvider}
+                  canPush={canPush}
+                  onChanged={invalidateNode}
+                  compact
+                />
+              ))}
+            </div>
           </>
         )}
 

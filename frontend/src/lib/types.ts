@@ -357,6 +357,10 @@ export interface Task {
     graphNodeId?: ID;
     reason?: string;
     confidence?: number;
+    decision?: "accepted" | "declined";
+    pushed?: boolean;
+    pushedTo?: string;
+    externalKey?: string;
   };
   createdAt: string;
   updatedAt: string;
@@ -406,14 +410,18 @@ export type IntegrationKey =
   | "notion"
   | "hubspot"
   | "salesforce"
-  | "calendar";
+  | "calendar"
+  | "gong"
+  | "intercom"
+  | "asana"
+  | "confluence";
 
-export type IntegrationStatus = "connected" | "disconnected" | "error" | "syncing";
+export type IntegrationStatus = "connected" | "disconnected" | "error" | "syncing" | "coming-soon";
 
 export interface Integration {
   key: IntegrationKey;
   name: string;
-  category: "Conferencing" | "Communication" | "Engineering" | "Product" | "CRM" | "Calendar";
+  category: "Conferencing" | "Communication" | "Engineering" | "Product" | "CRM" | "Calendar" | "Support";
   description: string;
   status: IntegrationStatus;
   lastSync?: string;

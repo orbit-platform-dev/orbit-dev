@@ -7,10 +7,10 @@ import { motion } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  ArrowLeft, Bug, CalendarClock, CheckCircle2, Crosshair, FileText,
-  ListChecks, Lock, Mail, Pencil, Plug, Rocket, Sparkles, Trash2, Workflow, X,
+  ArrowLeft, ArrowUpRight, Bug, CalendarClock, CheckCircle2, Crosshair, FileText,
+  ListChecks, Lock, Mail, Pencil, Plug, Rocket, Sparkles, Workflow,
 } from "lucide-react";
-import { qk, useMeeting, useProject, useTasks } from "@/lib/hooks";
+import { qk, useConnectedProvider, useMeeting, useProject, useTasks } from "@/lib/hooks";
 import * as api from "@/lib/api";
 import type { Project, Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -21,8 +21,12 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
+} from "@/components/ui/dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { GraphCanvas } from "@/components/graph/graph-canvas";
+import { WorkItemCard, type Provider } from "@/components/execution/work-item-card";
 
 const DISC: Record<string, { label: string; color: string }> = {
   product: { label: "Product", color: "#8b5cf6" },
@@ -33,9 +37,7 @@ const DISC: Record<string, { label: string; color: string }> = {
   sales: { label: "Sales", color: "#f59e0b" },
 };
 const DISC_ORDER = ["product", "engineering", "design", "qa", "customer-success", "sales"];
-const PRIORITY_VARIANT: Record<string, "destructive" | "warning" | "default" | "muted"> = {
-  urgent: "destructive", high: "warning", medium: "default", low: "muted",
-};
+const PROVIDER_NAME: Record<Provider, string> = { jira: "Jira", linear: "Linear" };
 
 function Section({ icon: Icon, title, hint, action, children }: {
   icon: React.ElementType; title: string; hint?: string; action?: React.ReactNode; children: React.ReactNode;
@@ -80,71 +82,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-// --- Work item row ----------------------------------------------------------
-function WorkItemRow({ task, locked, onChanged }: { task: Task; locked: boolean; onChanged: () => void }) {
-  const [editingOwner, setEditingOwner] = React.useState(false);
-  const [owner, setOwner] = React.useState(task.assignee?.name ?? "");
-  const [busy, setBusy] = React.useState(false);
-  const reason = (task.links?.reason as string) || "";
-  const confidence = task.links?.confidence as number | undefined;
-
-  const run = async (fn: () => Promise<unknown>, msg: string) => {
-    setBusy(true);
-    try { await fn(); onChanged(); toast.success(msg); }
-    catch { toast.error("Something went wrong"); }
-    finally { setBusy(false); }
-  };
-
-  return (
-    <div className="rounded-lg border border-border bg-background/40 p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Badge variant={PRIORITY_VARIANT[task.priority] ?? "default"} className="capitalize">{task.priority}</Badge>
-            {typeof task.estimate === "number" && <span className="text-xs tabular-nums text-muted-foreground">{task.estimate} pts</span>}
-            {typeof confidence === "number" && <span className="text-xs text-muted-foreground">· {confidence}% conf</span>}
-          </div>
-          <div className="mt-1 text-sm font-medium leading-snug">{task.title}</div>
-          {task.description && <p className="mt-0.5 text-xs text-muted-foreground">{task.description}</p>}
-        </div>
-        {!locked && (
-          <Button variant="ghost" size="icon-sm" title="Skip this item" disabled={busy}
-            onClick={() => run(() => api.deleteTask(task.id), "Item skipped")}>
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        )}
-      </div>
-
-      {reason && (
-        <div className="mt-2 rounded-md border border-primary/20 bg-primary/5 px-2.5 py-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground/60">Why</span>
-          <p className="text-xs text-muted-foreground">{reason}</p>
-        </div>
-      )}
-
-      <div className="mt-2 flex items-center gap-2 text-xs">
-        <span className="text-muted-foreground">Owner:</span>
-        {editingOwner && !locked ? (
-          <span className="flex items-center gap-1">
-            <Input value={owner} onChange={(e) => setOwner(e.target.value)} className="h-7 w-44 text-xs" placeholder="Role / person" />
-            <Button size="icon-sm" variant="ghost" disabled={busy}
-              onClick={() => run(() => api.patchTask(task.id, { assignee: { name: owner, title: owner } }), "Reassigned").then(() => setEditingOwner(false))}>
-              <CheckCircle2 className="h-3.5 w-3.5" />
-            </Button>
-            <Button size="icon-sm" variant="ghost" onClick={() => setEditingOwner(false)}><X className="h-3.5 w-3.5" /></Button>
-          </span>
-        ) : (
-          <button disabled={locked} onClick={() => setEditingOwner(true)}
-            className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-0.5 font-medium hover:border-primary/40 disabled:opacity-60">
-            {task.assignee?.name || "Unassigned"}
-            {!locked && <Pencil className="h-3 w-3 text-muted-foreground" />}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // --- Page -------------------------------------------------------------------
 export default function ExecutionReviewPage() {
   const { id } = useParams<{ id: string }>();
@@ -154,6 +91,8 @@ export default function ExecutionReviewPage() {
   const { data: project } = useProject(pid);
   const { data: allTasks } = useTasks();
 
+  const connectedProvider = useConnectedProvider();
+  const members = api.directory.members;
   const tasks = React.useMemo(() => (allTasks ?? []).filter((t) => t.projectId === pid), [allTasks, pid]);
   const approved = project?.approvalStatus === "approved";
   const [approving, setApproving] = React.useState(false);
@@ -284,7 +223,9 @@ export default function ExecutionReviewPage() {
                     <span className="text-xs text-muted-foreground">· {items.length}</span>
                   </div>
                   <div className="space-y-2">
-                    {items.map((t) => <WorkItemRow key={t.id} task={t} locked={approved} onChanged={invalidate} />)}
+                    {items.map((t) => (
+                      <WorkItemCard key={t.id} task={t} members={members} connectedProvider={connectedProvider} canPush={approved} onChanged={invalidate} />
+                    ))}
                   </div>
                 </div>
               );
@@ -327,12 +268,69 @@ export default function ExecutionReviewPage() {
               <span className="text-muted-foreground">Review the plan above, then approve to finalize it.</span>
             )}
           </div>
-          <Button onClick={approve} disabled={approved || approving} className="gap-2">
-            {approved ? <><Lock className="h-4 w-4" /> Approved</> : <><Rocket className="h-4 w-4" /> {approving ? "Approving…" : "Approve execution plan"}</>}
-          </Button>
+          <div className="flex items-center gap-2">
+            {approved && (
+              <PushPlanDialog
+                tasks={tasks}
+                connectedProvider={connectedProvider}
+                onPushed={invalidate}
+              />
+            )}
+            <Button onClick={approve} disabled={approved || approving} className="gap-2">
+              {approved ? <><Lock className="h-4 w-4" /> Approved</> : <><Rocket className="h-4 w-4" /> {approving ? "Approving…" : "Approve execution plan"}</>}
+            </Button>
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function PushPlanDialog({ tasks, connectedProvider, onPushed }: {
+  tasks: Task[]; connectedProvider: Provider | null; onPushed: () => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  // Accepted, not-yet-pushed work items are eligible.
+  const pending = tasks.filter((t) => t.links?.decision !== "declined" && !t.links?.pushed);
+
+  const pushAll = async () => {
+    if (!connectedProvider) return;
+    setBusy(true);
+    try {
+      for (const t of pending) await api.pushTask(t.id, connectedProvider);
+      onPushed();
+      toast.success(`Pushed ${pending.length} item${pending.length === 1 ? "" : "s"} to ${PROVIDER_NAME[connectedProvider]}`);
+      setOpen(false);
+    } catch { toast.error("Push failed"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" className="gap-2"><ArrowUpRight className="h-4 w-4" /> Push to tools</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Push execution plan</DialogTitle>
+          <DialogDescription>
+            {connectedProvider
+              ? `Create ${pending.length} accepted work item${pending.length === 1 ? "" : "s"} in ${PROVIDER_NAME[connectedProvider]}. Declined and already-pushed items are skipped.`
+              : "No tool is connected yet. Connect Jira or Linear to push this plan."}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          {connectedProvider ? (
+            <Button onClick={pushAll} disabled={busy || pending.length === 0} className="gap-2">
+              <ArrowUpRight className="h-4 w-4" /> {busy ? "Pushing…" : `Push to ${PROVIDER_NAME[connectedProvider]}`}
+            </Button>
+          ) : (
+            <Button asChild className="gap-2"><Link href="/integrations"><Plug className="h-4 w-4" /> Open integrations</Link></Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

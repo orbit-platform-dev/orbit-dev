@@ -24,6 +24,37 @@ def ahead(**kw) -> datetime:
     return _now + timedelta(**kw)
 
 
+def _baseline_integrations() -> list:
+    """The integration catalog. Only Jira & Linear are wired as (fake) connectors;
+    the rest are surfaced as 'coming soon'. Returns fresh ORM instances per call."""
+    return [
+        models.Integration(key="jira", name="Jira", category="Engineering", description="Push generated work items into Jira projects.", status="disconnected"),
+        models.Integration(key="linear", name="Linear", category="Engineering", description="Push generated work items into Linear as issues.", status="disconnected"),
+        models.Integration(key="github", name="GitHub", category="Engineering", description="Sync tasks to issues, link PRs.", status="coming-soon"),
+        models.Integration(key="slack", name="Slack", category="Communication", description="Post summaries and follow-ups to channels.", status="coming-soon"),
+        models.Integration(key="notion", name="Notion", category="Product", description="Publish PRDs and specs.", status="coming-soon"),
+        models.Integration(key="hubspot", name="HubSpot", category="CRM", description="Sync accounts, deals and signals.", status="coming-soon"),
+        models.Integration(key="salesforce", name="Salesforce", category="CRM", description="Map opportunities to pipeline.", status="coming-soon"),
+        models.Integration(key="calendar", name="Google Calendar", category="Calendar", description="Schedule follow-ups and detect calls.", status="coming-soon"),
+        models.Integration(key="google-meet", name="Google Meet", category="Conferencing", description="Auto-import recordings and transcripts.", status="coming-soon"),
+        models.Integration(key="zoom", name="Zoom", category="Conferencing", description="Pull cloud recordings instantly.", status="coming-soon"),
+        models.Integration(key="gong", name="Gong", category="Conferencing", description="Ingest call recordings and revenue signals.", status="coming-soon"),
+        models.Integration(key="intercom", name="Intercom", category="Support", description="Turn support conversations into intent.", status="coming-soon"),
+        models.Integration(key="asana", name="Asana", category="Engineering", description="Sync work items to Asana projects.", status="coming-soon"),
+        models.Integration(key="confluence", name="Confluence", category="Product", description="Publish PRDs to Confluence spaces.", status="coming-soon"),
+    ]
+
+
+async def ensure_integrations(db: AsyncSession) -> None:
+    """Backfill any missing integration rows (independent of the demo seed gate),
+    so the catalog is always present even on a DB that already has user data."""
+    existing = set((await db.execute(select(models.Integration.key))).scalars().all())
+    missing = [i for i in _baseline_integrations() if i.key not in existing]
+    if missing:
+        db.add_all(missing)
+        await db.commit()
+
+
 async def seed_if_empty(db: AsyncSession) -> None:
     existing = await db.scalar(select(models.Meeting).limit(1))
     if existing:
@@ -208,18 +239,7 @@ async def seed_if_empty(db: AsyncSession) -> None:
         models.TimelineEvent(id="ev_10", kind="customer-updated", title="Customer follow-up drafted", description="Personalized update for Northwind.", at=ago(minutes=3), actor="Customer Success", agent="customer-success", meeting_id="m_1", project_id="p_1"),
     ]
 
-    integrations = [
-        models.Integration(key="google-meet", name="Google Meet", category="Conferencing", description="Auto-import recordings and transcripts.", status="connected", last_sync=ago(minutes=34), account="workspace@orbit.app", stats=[{"label": "Meetings", "value": "128"}]),
-        models.Integration(key="zoom", name="Zoom", category="Conferencing", description="Pull cloud recordings instantly.", status="connected", last_sync=ago(minutes=12), account="orbit-app", stats=[{"label": "Meetings", "value": "214"}]),
-        models.Integration(key="slack", name="Slack", category="Communication", description="Post summaries and follow-ups.", status="connected", last_sync=ago(minutes=4), account="orbit.slack.com", stats=[{"label": "Channels", "value": "6"}]),
-        models.Integration(key="github", name="GitHub", category="Engineering", description="Sync tasks to issues, link PRs.", status="connected", last_sync=ago(hours=1), account="orbit-labs", stats=[{"label": "Issues", "value": "47"}]),
-        models.Integration(key="linear", name="Linear", category="Engineering", description="Two-way task sync.", status="syncing", last_sync=ago(minutes=1), account="orbit"),
-        models.Integration(key="jira", name="Jira", category="Engineering", description="Push tasks into Jira.", status="disconnected"),
-        models.Integration(key="notion", name="Notion", category="Product", description="Publish PRDs and specs.", status="connected", last_sync=ago(hours=3), account="Orbit HQ"),
-        models.Integration(key="hubspot", name="HubSpot", category="CRM", description="Sync accounts and deals.", status="error", last_sync=ago(days=2), account="orbit"),
-        models.Integration(key="salesforce", name="Salesforce", category="CRM", description="Map opportunities to pipeline.", status="disconnected"),
-        models.Integration(key="calendar", name="Google Calendar", category="Calendar", description="Schedule follow-ups.", status="connected", last_sync=ago(minutes=20), account="workspace@orbit.app"),
-    ]
+    integrations = _baseline_integrations()
 
     activity = [
         models.ActivityEvent(id="ac_1", actor={"name": "Customer Success", "isAgent": True}, action="drafted a follow-up for", target="Northwind Labs", target_type="meeting", at=ago(minutes=3), project_id="p_1"),

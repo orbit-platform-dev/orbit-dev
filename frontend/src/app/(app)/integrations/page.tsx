@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Plug, Search } from "lucide-react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import type { Integration, IntegrationStatus } from "@/lib/types";
-import { useIntegrations } from "@/lib/hooks";
+import { qk, useIntegrations } from "@/lib/hooks";
+import * as api from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -14,10 +16,18 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { IntegrationCard } from "@/components/integrations/integration-card";
 
 type Category = Integration["category"];
-const CATEGORIES: Category[] = ["Conferencing", "Communication", "Engineering", "Product", "CRM", "Calendar"];
+const CATEGORIES: Category[] = ["Engineering", "Conferencing", "Communication", "Product", "CRM", "Calendar", "Support"];
+
+// Only Jira & Linear are wired as (fake) connectors; everything else is "coming soon".
+const CONNECTABLE = new Set(["jira", "linear"]);
+const normalizeStatus = (i: Integration): Integration =>
+  CONNECTABLE.has(i.key)
+    ? { ...i, status: i.status === "connected" || i.status === "syncing" ? "connected" : "disconnected" }
+    : { ...i, status: "coming-soon" };
 
 export default function IntegrationsPage() {
   const { data, isLoading } = useIntegrations();
+  const qc = useQueryClient();
 
   // Local, mutable state seeded from the hook data.
   const [items, setItems] = useState<Integration[]>([]);
@@ -25,13 +35,27 @@ export default function IntegrationsPage() {
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    if (data) setItems(data);
+    if (data) setItems(data.map(normalizeStatus));
   }, [data]);
 
   const setStatus = (key: Integration["key"], status: IntegrationStatus, lastSync?: string) => {
     setItems((prev) =>
       prev.map((i) => (i.key === key ? { ...i, status, ...(lastSync !== undefined ? { lastSync } : {}) } : i)),
     );
+  };
+
+  // Persist connect/disconnect (only Jira & Linear are real connectors); optimistic + refetch.
+  const connect = async (i: Integration) => {
+    setStatus(i.key, "connected", new Date().toISOString());
+    try { await api.patchIntegration(i.key, "connected"); toast.success(`${i.name} connected`); }
+    catch { setStatus(i.key, "disconnected"); toast.error(`Couldn't connect ${i.name}`); }
+    qc.invalidateQueries({ queryKey: qk.integrations });
+  };
+  const disconnect = async (i: Integration) => {
+    setStatus(i.key, "disconnected");
+    try { await api.patchIntegration(i.key, "disconnected"); toast(`${i.name} disconnected`); }
+    catch { toast.error(`Couldn't disconnect ${i.name}`); }
+    qc.invalidateQueries({ queryKey: qk.integrations });
   };
 
   const counts = useMemo(() => {
@@ -138,18 +162,9 @@ export default function IntegrationsPage() {
             <IntegrationCard
               key={i.key}
               integration={i}
-              onConnect={() => {
-                setStatus(i.key, "connected", new Date().toISOString());
-                toast.success(`${i.name} connected`);
-              }}
-              onDisconnect={() => {
-                setStatus(i.key, "disconnected");
-                toast(`${i.name} disconnected`);
-              }}
-              onReconnect={() => {
-                setStatus(i.key, "connected", new Date().toISOString());
-                toast.success(`${i.name} reconnected`);
-              }}
+              onConnect={() => connect(i)}
+              onDisconnect={() => disconnect(i)}
+              onReconnect={() => connect(i)}
               onConfigure={() => toast(`${i.name} settings`, { description: "Configuration is coming to this demo." })}
             />
           ))}

@@ -12,6 +12,10 @@ export const integrationBrand: Record<IntegrationKey, { short: string; color: st
   hubspot: { short: "Hs", color: "#ff7a59" },
   salesforce: { short: "Sf", color: "#00a1e0" },
   calendar: { short: "Ca", color: "#4285f4" },
+  gong: { short: "Go", color: "#a855f7" },
+  intercom: { short: "Ic", color: "#1f8ded" },
+  asana: { short: "As", color: "#f06a6a" },
+  confluence: { short: "Cf", color: "#2684ff" },
 };
 
 export function IntegrationLogo({ k, className }: { k: IntegrationKey; className?: string }) {

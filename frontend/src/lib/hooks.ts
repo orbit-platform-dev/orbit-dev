@@ -34,3 +34,12 @@ export const useExecutionGraph = (meetingId?: string) =>
 export const useTimeline = () => useQuery({ queryKey: qk.timeline, queryFn: api.getTimeline });
 export const useIntegrations = () => useQuery({ queryKey: qk.integrations, queryFn: api.getIntegrations });
 export const useActivity = () => useQuery({ queryKey: qk.activity, queryFn: api.getActivity, refetchInterval: 10000 });
+
+/** The connected push target (Jira preferred, then Linear), or null if none. */
+export function useConnectedProvider(): "jira" | "linear" | null {
+  const { data } = useIntegrations();
+  const isUp = (k: string) => data?.some((i) => i.key === k && (i.status === "connected" || i.status === "syncing"));
+  if (isUp("jira")) return "jira";
+  if (isUp("linear")) return "linear";
+  return null;
+}

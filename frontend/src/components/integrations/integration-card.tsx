@@ -127,6 +127,14 @@ function FooterAction({
   onConfigure: () => void;
   name: string;
 }) {
+  if (status === "coming-soon") {
+    return (
+      <Button size="sm" variant="outline" className="gap-1.5" disabled>
+        Coming soon
+      </Button>
+    );
+  }
+
   if (status === "disconnected") {
     return (
       <Button size="sm" className="gap-1.5" onClick={onConnect}>
