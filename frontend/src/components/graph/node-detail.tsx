@@ -103,7 +103,7 @@ export function NodeDetail({ node, onClose }: { node: ExecutionNode; onClose: ()
           <div className="mt-3 flex items-center gap-2 rounded-lg border border-border bg-background/40 p-2.5">
             <AgentIcon agent={node.agent} size="sm" />
             <div className="min-w-0">
-              <div className="text-xs font-medium" style={{ color: agentMeta[node.agent].color }}>
+              <div className="text-xs font-medium" style={{ color: agentMeta[node.agent]?.color }}>
                 Owned by agent
               </div>
               <div className="truncate text-xs capitalize text-muted-foreground">{node.agent.replace(/-/g, " ")}</div>

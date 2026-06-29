@@ -128,10 +128,12 @@ export interface Meeting {
 export type AgentKey =
   | "meeting-intelligence"
   | "product-manager"
+  | "execution-router"
   | "engineering-planner"
   | "design-planner"
   | "qa-planner"
   | "sales-planner"
+  | "execution-planner"
   | "customer-success"
   | "leadership-advisor";
 
