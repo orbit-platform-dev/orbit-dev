@@ -102,11 +102,18 @@ export default function MeetingDetailPage() {
           </div>
         </div>
         {m.linkedProjectId && (
-          <Button asChild className="gap-2">
-            <Link href={`/graph?meeting=${m.id}`}>
-              <Workflow className="h-4 w-4" /> View execution graph
-            </Link>
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            <Button asChild variant="outline" className="gap-2">
+              <Link href={`/graph?meeting=${m.id}`}>
+                <Workflow className="h-4 w-4" /> Execution graph
+              </Link>
+            </Button>
+            <Button asChild className="gap-2">
+              <Link href={`/meetings/${m.id}/review`}>
+                <Sparkles className="h-4 w-4" /> Review &amp; approve
+              </Link>
+            </Button>
+          </div>
         )}
       </div>
 

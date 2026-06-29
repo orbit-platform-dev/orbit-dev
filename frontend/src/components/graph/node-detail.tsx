@@ -13,14 +13,17 @@ import { agentMeta } from "@/components/shared/agent-icon";
 import { TicketsPanel } from "@/components/tickets/tickets-panel";
 import { kindMeta } from "./graph-meta";
 
-const TICKET_KINDS = new Set(["engineering", "design", "qa"]);
+const TICKET_KINDS = new Set(["execution-plan", "engineering", "design", "qa"]);
 
 // Sharp, plain-language statement of what each stage/team is responsible for.
 const kindPurpose: Partial<Record<GraphNodeKind, string>> = {
   meeting: "The customer conversation this all started from.",
   "business-goal": "The business outcome to drive.",
   "feature-request": "The core need extracted from the call.",
+  "customer-intent": "What the customer actually needs — requests, bugs, goals and deadlines.",
   prd: "What to build — problem, goals, and prioritized user stories.",
+  "execution-plan": "The cross-functional work items needed to deliver the PRD.",
+  timeline: "Estimated delivery, milestones and the critical path.",
   engineering: "How to build it — architecture, components, estimate and risks.",
   design: "The user flows and screens to design.",
   qa: "Test strategy and coverage to ship it safely.",

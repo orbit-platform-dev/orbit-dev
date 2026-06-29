@@ -95,6 +95,12 @@ export interface MeetingAnalysis {
   urgency: Urgency;
   revenueImpact: number;
   topics: { label: string; weight: number }[];
+  // Enriched customer intent (optional — older analyses may not include these).
+  bugs?: { id: ID; title: string; description: string; severity: Urgency }[];
+  customerGoals?: string[];
+  deadlines?: { id: ID; title: string; due: string }[];
+  requestedIntegrations?: string[];
+  confidence?: number; // 0-100
 }
 
 export interface Meeting {
@@ -177,14 +183,36 @@ export interface PRDSection {
 }
 
 export interface ProjectPRD {
+  title?: string;
   problem: string;
+  background?: string;
   goals: string[];
   nonGoals: string[];
+  functionalRequirements?: string[];
+  acceptanceCriteria?: string[];
+  dependencies?: string[];
+  risks?: string[];
   successMetrics: { metric: string; target: string }[];
   userStories: { id: ID; persona: string; story: string; priority: "P0" | "P1" | "P2" }[];
   sections: PRDSection[];
   generatedBy: AgentKey;
   updatedAt: string;
+}
+
+export interface CustomerUpdate {
+  subject?: string;
+  body?: string;
+  commitments?: string[];
+  skipped?: boolean;
+  reason?: string;
+}
+
+export interface ExecutionTimeline {
+  durationWeeks: number;
+  milestones: { title: string; week: number; description: string }[];
+  criticalPath: string[];
+  deliveryEstimate: string;
+  confidence: number; // 0-100
 }
 
 export interface EngineeringPlan {
@@ -240,6 +268,10 @@ export interface Project {
   design?: DesignPlan;
   qa?: QAPlan;
   sales?: SalesPlan;
+  customerUpdate?: CustomerUpdate;
+  timeline?: ExecutionTimeline;
+  approvalStatus?: "draft" | "approved";
+  approvedAt?: string;
   documents: AgentDocument[];
 }
 
@@ -251,11 +283,14 @@ export type GraphNodeKind =
   | "meeting"
   | "business-goal"
   | "feature-request"
+  | "customer-intent"
   | "prd"
+  | "execution-plan"
   | "engineering"
   | "design"
   | "qa"
   | "sales"
+  | "timeline"
   | "deployment"
   | "customer-followup";
 
@@ -312,12 +347,14 @@ export interface Task {
   labels: string[];
   estimate?: number; // points
   projectId?: ID;
-  discipline: "engineering" | "design" | "qa" | "product" | "sales";
+  discipline: "engineering" | "design" | "qa" | "product" | "sales" | "customer-success";
   links: {
     meetingId?: ID;
     featureRequestId?: ID;
     prdId?: ID;
     graphNodeId?: ID;
+    reason?: string;
+    confidence?: number;
   };
   createdAt: string;
   updatedAt: string;

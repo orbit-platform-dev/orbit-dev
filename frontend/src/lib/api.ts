@@ -45,6 +45,16 @@ async function live<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function liveSend<T>(path: string, method: "POST" | "PATCH" | "DELETE", body?: unknown): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`API ${method} ${path} failed: ${res.status}`);
+  return (res.status === 204 ? (undefined as T) : await res.json()) as T;
+}
+
 // --- Meetings --------------------------------------------------------------
 export async function getMeetings(): Promise<Meeting[]> {
   if (USE_MOCK) return delay().then(() => meetings);
@@ -91,6 +101,12 @@ export async function deleteMeeting(id: string): Promise<void> {
   if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
 }
 
+/** Edit the still-draft customer intent / analysis before approval. */
+export async function patchMeeting(id: string, body: { analysis?: unknown }): Promise<Meeting | undefined> {
+  if (USE_MOCK) return delay(120).then(() => undefined);
+  return liveSend(`/meetings/${id}`, "PATCH", body);
+}
+
 // --- Agents ----------------------------------------------------------------
 export async function getAgents(): Promise<Agent[]> {
   if (USE_MOCK) return delay(220).then(() => agents);
@@ -106,11 +122,37 @@ export async function getProject(id: string): Promise<Project | undefined> {
   if (USE_MOCK) return delay(180).then(() => projects.find((x) => x.id === id));
   return live(`/projects/${id}`);
 }
+/** Edit the still-draft artifacts (PRD, follow-up email, timeline, name). */
+export async function patchProject(
+  id: string,
+  body: Partial<{ name: string; prd: unknown; customerUpdate: unknown; timeline: unknown }>,
+): Promise<Project | undefined> {
+  if (USE_MOCK) return delay(120).then(() => undefined);
+  return liveSend(`/projects/${id}`, "PATCH", body);
+}
+/** Finalize the execution plan (MVP: flips state, no external sync). */
+export async function approveExecution(meetingId: string): Promise<{ approvalStatus: string; approvedAt: string } | undefined> {
+  if (USE_MOCK) return delay(150).then(() => ({ approvalStatus: "approved", approvedAt: new Date().toISOString() }));
+  return liveSend(`/meetings/${meetingId}/approve`, "POST");
+}
 
 // --- Tasks -----------------------------------------------------------------
 export async function getTasks(): Promise<Task[]> {
   if (USE_MOCK) return delay().then(() => allTasks);
   return live("/tasks");
+}
+/** Edit / reassign / move a work item. */
+export async function patchTask(
+  id: string,
+  body: Partial<{ column: string; priority: string; title: string; description: string; assignee: Record<string, unknown> }>,
+): Promise<Task | undefined> {
+  if (USE_MOCK) return delay(120).then(() => undefined);
+  return liveSend(`/tasks/${id}`, "PATCH", body);
+}
+/** Skip / remove a work item from the plan. */
+export async function deleteTask(id: string): Promise<void> {
+  if (USE_MOCK) return delay(120).then(() => undefined);
+  await liveSend(`/tasks/${id}`, "DELETE");
 }
 
 // --- Graph -----------------------------------------------------------------

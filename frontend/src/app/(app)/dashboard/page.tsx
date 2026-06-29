@@ -19,10 +19,7 @@ import {
 } from "@/components/dashboard/widgets";
 
 function greeting() {
-  const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 18) return "Good afternoon";
-  return "Good evening";
+  return "Welcome"
 }
 
 export default function DashboardPage() {
@@ -45,7 +42,7 @@ export default function DashboardPage() {
   return (
     <div>
       <PageHeader
-        title={`${greeting()}, ${demoUser.name.split(" ")[0]}`}
+        title={`${greeting()} ${demoUser.name.split(" ")[0]}`}
         description={`${formatDate(new Date(), { weekday: "long", month: "long", day: "numeric" })} · Here's what your agents have been up to.`}
         actions={
           <>
