@@ -175,8 +175,16 @@ Everything degrades gracefully — the app runs with **none** of these set.
 
 ## Current state
 
-- **Done:** execution router (team relevance + "why" on every node); chat ("Ask
-  Orbit") is gated behind a **Coming soon** overlay; Projects section removed
-  (breakdown lives inside meetings).
-- **Next (Phase 2):** human controls — approve / reject / edit / skip / assign on
-  graph nodes + tickets — plus wiring in the `leadership-advisor` verdict.
+- **Done:** the MVP flow **upload → analysis → customer intent → draft PRD →
+  execution plan → timeline → execution graph → customer follow-up → review →
+  approve**. The Execution Review screen (`meetings/[id]/review`) is the
+  centerpiece: editable PRD/email, per-work-item skip/reassign + "why"/confidence,
+  a derived timeline, the embedded graph, and a sticky **Approve** CTA that flips
+  `Project.approval_status` draft→approved (sync to Jira/Linear is mocked).
+- **Also done earlier:** execution router (team relevance + "why" on every node);
+  chat gated behind a **Coming soon** overlay; Projects section folded into meetings.
+- **Pipeline now:** meeting-intelligence → product-manager → execution-router →
+  {eng, design} → qa, sales → **execution-planner** (work items) → customer-success;
+  timeline is derived deterministically from the work items.
+- **Next:** real Jira/Linear push after approval; wire in the `leadership-advisor`
+  "should we build this?" verdict; richer Customer-Intent editing.
