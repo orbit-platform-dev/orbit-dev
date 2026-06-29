@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { Toaster as Sonner } from "sonner";
 
 export function Toaster() {
@@ -7,6 +8,15 @@ export function Toaster() {
     <Sonner
       theme="dark"
       position="bottom-right"
+      // Sonner v2 colors toasts via these CSS vars (they outrank utility classes),
+      // so point them at the product's theme tokens instead of the default black.
+      style={
+        {
+          "--normal-bg": "hsl(var(--card))",
+          "--normal-text": "hsl(var(--foreground))",
+          "--normal-border": "hsl(var(--border))",
+        } as CSSProperties
+      }
       toastOptions={{
         classNames: {
           toast:

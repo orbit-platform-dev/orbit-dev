@@ -60,9 +60,9 @@ export default function IntegrationsPage() {
 
   const counts = useMemo(() => {
     const connected = items.filter((i) => i.status === "connected" || i.status === "syncing").length;
-    const attention = items.filter((i) => i.status === "error").length;
     const available = items.filter((i) => i.status === "disconnected").length;
-    return { connected, available, attention };
+    const comingSoon = items.filter((i) => i.status === "coming-soon").length;
+    return { connected, available, comingSoon };
   }, [items]);
 
   const filtered = useMemo(() => {
@@ -92,14 +92,7 @@ export default function IntegrationsPage() {
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
           <SummaryChip className="border-success/30 bg-success/10 text-success" value={counts.connected} label="connected" />
           <SummaryChip className="border-border bg-muted/40 text-muted-foreground" value={counts.available} label="available" />
-          <SummaryChip
-            className={cn(
-              "border-destructive/30 bg-destructive/10 text-destructive",
-              counts.attention === 0 && "border-border bg-muted/40 text-muted-foreground",
-            )}
-            value={counts.attention}
-            label="need attention"
-          />
+          <SummaryChip className="border-border bg-muted/40 text-muted-foreground" value={counts.comingSoon} label="coming soon" />
         </div>
       </PageHeader>
 
