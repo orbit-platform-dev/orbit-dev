@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -11,49 +12,64 @@ from sqlalchemy import delete
 
 from ..agents.orchestrator import run_pipeline, signals_to_analysis
 from ..agents.persistence import delete_execution, persist_execution
+from ..database import SessionLocal
 from ..deps import Depends, get_current_user, get_db
 from ..models import ActivityEvent, Meeting, Project, TimelineEvent
 from ..redis_client import publish_event
 from ..schemas import MeetingOut, RunTranscriptIn, UploadMeetingIn
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
+logger = logging.getLogger("orbit.meetings")
 
 
-async def _execute_pipeline(m: Meeting, db) -> dict:
-    """Run the full agent pipeline over a meeting's transcript and persist the result.
+async def _analyze_in_background(meeting_id: str) -> None:
+    """Run the full agent pipeline for a meeting, writing real progress after each stage.
 
-    Shared by /analyze (stored meeting) and /transcript (pasted transcript) so both
-    paths execute identically.
+    Runs detached from the request in its own DB session so the endpoint can return
+    immediately and the UI can poll the meeting to watch progress climb. On failure the
+    meeting is marked `failed` rather than left spinning.
     """
-    transcript_text = "\n".join(f"{s.get('speaker', '?')}: {s.get('text', '')}" for s in (m.transcript or []))
-    if not transcript_text.strip():
-        raise HTTPException(409, "Meeting has no transcript to analyze")
+    async with SessionLocal() as db:
+        m = await db.get(Meeting, meeting_id)
+        if not m:
+            return
+        transcript_text = "\n".join(f"{s.get('speaker', '?')}: {s.get('text', '')}" for s in (m.transcript or []))
+        if not transcript_text.strip():
+            m.status = "failed"
+            await db.commit()
+            return
 
-    state = await run_pipeline(m.id, transcript_text, m.account)
-    analysis = signals_to_analysis(state.get("signals", {}))
+        async def on_progress(pct: int, _label: str) -> None:
+            m.status = "analyzing"
+            m.analysis_progress = max(m.analysis_progress or 0, pct)  # never go backwards
+            await db.commit()
 
-    m.analysis = analysis
-    m.status = "analyzed"
-    m.analysis_progress = 100
-
-    if analysis.get("featureRequests") or analysis.get("painPoints"):
-        m.linked_project_id = await persist_execution(m, state, db)
-    else:
-        await delete_execution(m.id, db)
-        m.linked_project_id = None
-    db.add(TimelineEvent(
-        id=f"ev_{uuid.uuid4().hex[:8]}", kind="ai-analysis", title="AI analysis complete",
-        description=analysis.get("summary", "")[:160], at=datetime.now(timezone.utc),
-        actor="Meeting Intelligence", agent="meeting-intelligence", meeting_id=m.id,
-    ))
-    db.add(ActivityEvent(
-        id=f"ac_{uuid.uuid4().hex[:8]}", actor={"name": "Meeting Intelligence", "isAgent": True},
-        action="analyzed", target=m.title, target_type="meeting", at=datetime.now(timezone.utc),
-    ))
-    await db.commit()
-    await publish_event("orbit:pipeline", {"type": "meeting.analyzed", "meetingId": m.id})
-
-    return {"meetingId": m.id, "analysis": analysis, "pipeline": {k: v for k, v in state.items() if k != "transcript"}}
+        try:
+            state = await run_pipeline(m.id, transcript_text, m.account, on_progress=on_progress)
+            analysis = signals_to_analysis(state.get("signals", {}))
+            m.analysis = analysis
+            if analysis.get("featureRequests") or analysis.get("painPoints"):
+                m.linked_project_id = await persist_execution(m, state, db)
+            else:
+                await delete_execution(m.id, db)
+                m.linked_project_id = None
+            m.status = "analyzed"
+            m.analysis_progress = 100
+            db.add(TimelineEvent(
+                id=f"ev_{uuid.uuid4().hex[:8]}", kind="ai-analysis", title="AI analysis complete",
+                description=analysis.get("summary", "")[:160], at=datetime.now(timezone.utc),
+                actor="Meeting Intelligence", agent="meeting-intelligence", meeting_id=m.id,
+            ))
+            db.add(ActivityEvent(
+                id=f"ac_{uuid.uuid4().hex[:8]}", actor={"name": "Meeting Intelligence", "isAgent": True},
+                action="analyzed", target=m.title, target_type="meeting", at=datetime.now(timezone.utc),
+            ))
+            await db.commit()
+            await publish_event("orbit:pipeline", {"type": "meeting.analyzed", "meetingId": m.id})
+        except Exception:
+            logger.exception("analysis failed for meeting %s", meeting_id)
+            m.status = "failed"
+            await db.commit()
 
 
 @router.get("", response_model=list[MeetingOut])
@@ -71,19 +87,20 @@ async def get_meeting(meeting_id: str, db=Depends(get_db), _=Depends(get_current
 
 
 @router.post("", response_model=MeetingOut, status_code=201)
-async def upload_meeting(body: UploadMeetingIn, db=Depends(get_db), _=Depends(get_current_user)):
+async def upload_meeting(body: UploadMeetingIn, background: BackgroundTasks, db=Depends(get_db), _=Depends(get_current_user)):
+    has_transcript = bool(body.transcript_text)
     m = Meeting(
         id=f"m_{uuid.uuid4().hex[:8]}",
         title=body.title,
         source=body.source,
-        status="transcribing" if not body.transcript_text else "analyzing",
+        status="analyzing" if has_transcript else "transcribing",
         account=body.account,
         date=datetime.now(timezone.utc),
         duration_sec=0,
-        analysis_progress=10 if not body.transcript_text else 40,
+        analysis_progress=5,
         participants=[],
         transcript=[{"id": "t1", "speaker": "Speaker 1", "start": 0, "end": 0, "text": body.transcript_text}]
-        if body.transcript_text
+        if has_transcript
         else [],
         tags=["new"],
     )
@@ -95,14 +112,17 @@ async def upload_meeting(body: UploadMeetingIn, db=Depends(get_db), _=Depends(ge
     await db.commit()
     await db.refresh(m)
     await publish_event("orbit:pipeline", {"type": "meeting.uploaded", "meetingId": m.id})
+    if has_transcript:
+        background.add_task(_analyze_in_background, m.id)  # analyze right away when we already have text
     return m
 
 
 @router.post("/transcript")
-async def run_transcript(body: RunTranscriptIn, db=Depends(get_db), _=Depends(get_current_user)):
-    """Create a meeting from a pasted transcript and run the full agent pipeline.
+async def run_transcript(body: RunTranscriptIn, background: BackgroundTasks, db=Depends(get_db), _=Depends(get_current_user)):
+    """Create a meeting from a pasted transcript and kick off analysis in the background.
 
-    Lets the agentic workflow be validated end-to-end without a meeting connector.
+    Returns immediately with the new meeting id; the client polls the meeting to watch
+    progress climb through the real pipeline stages.
     """
     if not body.transcript.strip():
         raise HTTPException(422, "transcript is required")
@@ -117,7 +137,7 @@ async def run_transcript(body: RunTranscriptIn, db=Depends(get_db), _=Depends(ge
         account=body.account,
         date=datetime.now(timezone.utc),
         duration_sec=0,
-        analysis_progress=40,
+        analysis_progress=5,
         participants=[],
         transcript=[{"id": "t1", "speaker": "Transcript", "start": 0, "end": 0, "text": body.transcript}],
         tags=["manual"],
@@ -130,16 +150,23 @@ async def run_transcript(body: RunTranscriptIn, db=Depends(get_db), _=Depends(ge
     await db.commit()
     await publish_event("orbit:pipeline", {"type": "meeting.uploaded", "meetingId": m.id})
 
-    return await _execute_pipeline(m, db)
+    background.add_task(_analyze_in_background, m.id)
+    return {"meetingId": m.id, "status": "analyzing"}
 
 
 @router.post("/{meeting_id}/analyze")
-async def analyze_meeting(meeting_id: str, db=Depends(get_db), _=Depends(get_current_user)):
-    """Run the LangGraph agent pipeline over a stored meeting's transcript."""
+async def analyze_meeting(meeting_id: str, background: BackgroundTasks, db=Depends(get_db), _=Depends(get_current_user)):
+    """Re-run the agent pipeline over a stored meeting's transcript (in the background)."""
     m = await db.get(Meeting, meeting_id)
     if not m:
         raise HTTPException(404, "Meeting not found")
-    return await _execute_pipeline(m, db)
+    if not any((s.get("text") or "").strip() for s in (m.transcript or [])):
+        raise HTTPException(409, "Meeting has no transcript to analyze")
+    m.status = "analyzing"
+    m.analysis_progress = 5
+    await db.commit()
+    background.add_task(_analyze_in_background, meeting_id)
+    return {"meetingId": m.id, "status": "analyzing"}
 
 
 @router.delete("/{meeting_id}", status_code=204)

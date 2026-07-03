@@ -18,8 +18,9 @@ import { IntegrationCard } from "@/components/integrations/integration-card";
 type Category = Integration["category"];
 const CATEGORIES: Category[] = ["Engineering", "Conferencing", "Communication", "Product", "CRM", "Calendar", "Support"];
 
-// Only Jira & Linear are wired as (fake) connectors; everything else is "coming soon".
-const CONNECTABLE = new Set(["jira", "linear"]);
+// Connectable destinations: issue trackers (Jira / Linear) + PRD doc tools
+// (Google Docs / Notion / Confluence / Linear / Jira); everything else is "coming soon".
+const CONNECTABLE = new Set(["jira", "linear", "google-docs", "confluence", "notion"]);
 const normalizeStatus = (i: Integration): Integration =>
   CONNECTABLE.has(i.key)
     ? { ...i, status: i.status === "connected" || i.status === "syncing" ? "connected" : "disconnected" }

@@ -20,7 +20,17 @@ export const qk = {
 
 export const useDashboard = () => useQuery({ queryKey: qk.dashboard, queryFn: api.getDashboard, refetchInterval: 8000 });
 export const useMeetings = () => useQuery({ queryKey: qk.meetings, queryFn: api.getMeetings });
-export const useMeeting = (id: string) => useQuery({ queryKey: qk.meeting(id), queryFn: () => api.getMeeting(id), enabled: !!id });
+export const useMeeting = (id: string) =>
+  useQuery({
+    queryKey: qk.meeting(id),
+    queryFn: () => api.getMeeting(id),
+    enabled: !!id,
+    // While a meeting is still being analyzed, poll so its progress climbs live.
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status && status !== "analyzed" && status !== "failed" ? 2000 : false;
+    },
+  });
 export const useAgents = () => useQuery({ queryKey: qk.agents, queryFn: api.getAgents, refetchInterval: 5000 });
 export const useProjects = () => useQuery({ queryKey: qk.projects, queryFn: api.getProjects });
 export const useProject = (id: string) => useQuery({ queryKey: qk.project(id), queryFn: () => api.getProject(id), enabled: !!id });

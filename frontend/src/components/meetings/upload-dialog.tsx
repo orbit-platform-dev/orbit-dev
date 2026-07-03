@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { FileAudio, FileText, FileVideo, Loader2, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -31,6 +32,7 @@ export function MeetingUploadDialog({ open, onOpenChange }: { open: boolean; onO
   const [transcript, setTranscript] = React.useState("");
   const inputRef = React.useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
+  const router = useRouter();
 
   const reset = () => {
     setPhase("idle");
@@ -67,13 +69,14 @@ export function MeetingUploadDialog({ open, onOpenChange }: { open: boolean; onO
     }
     setPhase("analyzing");
     try {
-      await runTranscript({ transcript, title: title.trim() || undefined });
-      toast.success("Analysis complete", { description: "Agents built the execution graph and a project." });
+      const { meetingId } = await runTranscript({ transcript, title: title.trim() || undefined });
+      toast.success("Analyzing the call…", { description: "Watch Orbit build the plan in real time." });
       for (const key of [qk.meetings, qk.dashboard, qk.graph, qk.projects, qk.tasks, qk.timeline, qk.activity]) {
         queryClient.invalidateQueries({ queryKey: key });
       }
       onOpenChange(false);
       setTimeout(reset, 300);
+      router.push(`/meetings/${meetingId}`); // land on the meeting so progress streams in
     } catch (e) {
       toast.error("Analysis failed", { description: (e as Error).message });
       setPhase("idle");

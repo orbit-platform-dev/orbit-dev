@@ -67,11 +67,11 @@ export async function getMeeting(id: string): Promise<Meeting | undefined> {
 
 export interface TranscriptRunResult {
   meetingId: string;
-  analysis: unknown;
-  pipeline: Record<string, unknown>;
+  status: string;
 }
 
-/** Paste a transcript and run the full agent pipeline. Requires the backend. */
+/** Paste a transcript and start analysis in the background. Returns immediately with
+ *  the new meeting id; poll the meeting to watch progress. Requires the backend. */
 export async function runTranscript(input: {
   transcript: string;
   title?: string;
@@ -89,6 +89,12 @@ export async function runTranscript(input: {
   });
   if (!res.ok) throw new Error(`Analyze failed: ${res.status}`);
   return res.json() as Promise<TranscriptRunResult>;
+}
+
+/** Re-run analysis over a stored meeting (background). Requires the backend. */
+export async function analyzeMeeting(id: string): Promise<{ meetingId: string; status: string } | undefined> {
+  if (USE_MOCK) return delay(150).then(() => undefined);
+  return liveSend(`/meetings/${id}/analyze`, "POST");
 }
 
 /** Delete a meeting and everything derived from it. Requires the backend. */
@@ -134,6 +140,43 @@ export async function patchProject(
 export async function approveExecution(meetingId: string): Promise<{ approvalStatus: string; approvedAt: string } | undefined> {
   if (USE_MOCK) return delay(150).then(() => ({ approvalStatus: "approved", approvedAt: new Date().toISOString() }));
   return liveSend(`/meetings/${meetingId}/approve`, "POST");
+}
+
+export interface PrdPublication {
+  tool: string;
+  url: string;
+  at: string;
+}
+const rid = (n = 12) => Math.random().toString(36).slice(2, 2 + n);
+const MOCK_DOC_URL: Record<string, () => string> = {
+  "google-docs": () => `https://docs.google.com/document/d/${rid(16)}/edit`,
+  notion: () => `https://www.notion.so/orbit/${rid(16)}`,
+  confluence: () => `https://orbit.atlassian.net/wiki/spaces/PRD/pages/${Math.floor(Math.random() * 9e5 + 1e5)}`,
+  linear: () => `https://linear.app/orbit/document/${rid(8)}`,
+  jira: () => `https://orbit.atlassian.net/browse/PRD-${Math.floor(Math.random() * 900 + 100)}`,
+};
+
+/** Placeholder deep link for a doc destination (used until the real integration exists). */
+export function stubDocUrl(target: string): string {
+  return (MOCK_DOC_URL[target] ?? MOCK_DOC_URL.linear)();
+}
+
+const BOARD_URL: Record<string, () => string> = {
+  jira: () => `https://orbit.atlassian.net/jira/software/projects/ORB/boards/1`,
+  linear: () => `https://linear.app/orbit/team/ORB/active`,
+};
+/** Placeholder link to the tracker board after pushing work items (real link later). */
+export function stubBoardUrl(target: string): string {
+  return (BOARD_URL[target] ?? BOARD_URL.jira)();
+}
+/** Publish the PRD to a connected doc tool; returns the created doc's deep link.
+ *  The actual create-doc call is stubbed until each integration is built. */
+export async function publishPrd(projectId: string, target: string): Promise<PrdPublication> {
+  if (USE_MOCK) {
+    await delay(400);
+    return { tool: target, url: stubDocUrl(target), at: new Date().toISOString() };
+  }
+  return liveSend(`/projects/${projectId}/publish-prd`, "POST", { target });
 }
 
 // --- Tasks -----------------------------------------------------------------

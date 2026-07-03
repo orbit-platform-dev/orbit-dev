@@ -1,19 +1,26 @@
 "use client";
 
+// A single execution work item on the Review Screen. Orbit proposes it; the user
+// can edit its title/description/priority, reassign the owner, decline it, or
+// (after approval) push it to a tool. Everything here is a correctable draft.
+
 import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { ArrowUpRight, Check, Plug, Undo2, UserPlus, X } from "lucide-react";
+import { ArrowUpRight, Check, Pencil, Plug, Trash2, Undo2, UserPlus, X } from "lucide-react";
 import type { Member, Task } from "@/lib/types";
 import * as api from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export type Provider = "jira" | "linear";
 
+const PRIORITIES: Task["priority"][] = ["urgent", "high", "medium", "low"];
 const PRIORITY_VARIANT: Record<string, "destructive" | "warning" | "default" | "muted"> = {
   urgent: "destructive", high: "warning", medium: "default", low: "muted",
 };
@@ -37,12 +44,13 @@ function teamFor(discipline: string, members: Member[]): Member[] {
 const PROVIDER_NAME: Record<Provider, string> = { jira: "Jira", linear: "Linear" };
 
 export function WorkItemCard({
-  task, members, connectedProvider, canPush, onChanged, compact = false,
+  task, members, connectedProvider, canPush, canEdit = true, onChanged, compact = false,
 }: {
   task: Task;
   members: Member[];
   connectedProvider: Provider | null;
   canPush: boolean;
+  canEdit?: boolean;
   onChanged: () => void;
   compact?: boolean;
 }) {
@@ -54,12 +62,31 @@ export function WorkItemCard({
   const [assignOpen, setAssignOpen] = React.useState(false);
   const [q, setQ] = React.useState("");
 
+  // Edit mode — Orbit's title/description/priority are a first draft.
+  const [editing, setEditing] = React.useState(false);
+  const [title, setTitle] = React.useState(task.title);
+  const [description, setDescription] = React.useState(task.description);
+  const [priority, setPriority] = React.useState<Task["priority"]>(task.priority);
+
+  const editable = canEdit && !declined && !pushed;
+
   const run = async (fn: () => Promise<unknown>, msg: string) => {
     setBusy(true);
     try { await fn(); onChanged(); if (msg) toast.success(msg); }
     catch { toast.error("Something went wrong"); }
     finally { setBusy(false); }
   };
+
+  const startEdit = () => {
+    setTitle(task.title);
+    setDescription(task.description);
+    setPriority(task.priority);
+    setEditing(true);
+  };
+
+  const saveEdit = () =>
+    run(() => api.patchTask(task.id, { title: title.trim() || task.title, description, priority }), "Work item updated")
+      .then(() => setEditing(false));
 
   const candidates = teamFor(task.discipline, members).filter((m) =>
     q.trim() ? m.name.toLowerCase().includes(q.replace("@", "").trim().toLowerCase()) : true,
@@ -68,6 +95,27 @@ export function WorkItemCard({
   const assign = (m: Member) =>
     run(() => api.patchTask(task.id, { assignee: { id: m.id, name: m.name, title: m.title } }), `Assigned to ${m.name}`)
       .then(() => { setAssignOpen(false); setQ(""); });
+
+  if (editing) {
+    return (
+      <div className="space-y-2 rounded-lg border border-primary/30 bg-background/40 p-3">
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Work item title" className="h-8 text-sm font-medium" />
+        <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="Description" className="text-sm" />
+        <div className="flex items-center gap-2">
+          <Select value={priority} onValueChange={(v) => setPriority(v as Task["priority"])}>
+            <SelectTrigger className="h-8 w-32 text-xs capitalize"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {PRIORITIES.map((p) => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <div className="ml-auto flex gap-1.5">
+            <Button size="sm" onClick={saveEdit} disabled={busy}>Save</Button>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={cn("rounded-lg border border-border bg-background/40 p-3", declined && "opacity-55")}>
@@ -88,18 +136,25 @@ export function WorkItemCard({
           {task.description && !compact && <p className="mt-0.5 text-xs text-muted-foreground">{task.description}</p>}
         </div>
 
-        {/* Accept / decline */}
-        {declined ? (
-          <Button variant="ghost" size="icon-sm" title="Restore" disabled={busy}
-            onClick={() => run(() => api.patchTask(task.id, { decision: "accepted" }), "Restored")}>
-            <Undo2 className="h-3.5 w-3.5" />
-          </Button>
-        ) : (
-          <Button variant="ghost" size="icon-sm" title="Decline this suggestion" disabled={busy || pushed}
-            onClick={() => run(() => api.patchTask(task.id, { decision: "declined" }), "Declined")}>
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        )}
+        {/* Edit / accept / decline */}
+        <div className="flex shrink-0 items-center">
+          {editable && (
+            <Button variant="ghost" size="icon-sm" title="Edit work item" disabled={busy} onClick={startEdit}>
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {declined ? (
+            <Button variant="ghost" size="icon-sm" title="Restore" disabled={busy}
+              onClick={() => run(() => api.patchTask(task.id, { decision: "accepted" }), "Restored")}>
+              <Undo2 className="h-3.5 w-3.5" />
+            </Button>
+          ) : (
+            <Button variant="ghost" size="icon-sm" title="Decline this suggestion" disabled={busy || pushed}
+              onClick={() => run(() => api.patchTask(task.id, { decision: "declined" }), "Declined")}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
       </div>
 
       {reason && !compact && (
@@ -135,6 +190,14 @@ export function WorkItemCard({
               </div>
             </PopoverContent>
           </Popover>
+
+          {/* Remove from plan */}
+          {editable && !compact && (
+            <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground" disabled={busy}
+              onClick={() => run(() => api.deleteTask(task.id), "Removed from plan")}>
+              <Trash2 className="h-3.5 w-3.5" /> Remove
+            </Button>
+          )}
 
           {/* Push (post-approve, connection-gated) */}
           {canPush && !pushed && (

@@ -12,4 +12,6 @@ export const integrations: Integration[] = [
   { key: "hubspot", name: "HubSpot", category: "CRM", description: "Sync accounts, deals and meeting signals to HubSpot.", status: "error", lastSync: ago(days(2)), account: "orbit", stats: [{ label: "Deals", value: "—" }] },
   { key: "salesforce", name: "Salesforce", category: "CRM", description: "Map revenue opportunities to Salesforce pipeline.", status: "disconnected" },
   { key: "calendar", name: "Google Calendar", category: "Calendar", description: "Schedule follow-ups and detect upcoming customer calls.", status: "connected", lastSync: ago(mins(20)), account: "workspace@orbit.app", stats: [{ label: "Events", value: "31" }, { label: "Follow-ups", value: "5" }] },
+  { key: "google-docs", name: "Google Docs", category: "Product", description: "Publish approved PRDs to a Google Doc your team can comment on.", status: "connected", lastSync: ago(hours(2)), account: "workspace@orbit.app", stats: [{ label: "Docs published", value: "12" }] },
+  { key: "confluence", name: "Confluence", category: "Product", description: "Publish approved PRDs to a Confluence space.", status: "disconnected" },
 ];

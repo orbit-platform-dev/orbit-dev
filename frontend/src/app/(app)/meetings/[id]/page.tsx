@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowLeft, CheckCircle2, Clock, Code2, FileText, PenTool, ShieldCheck, Sparkles, Ticket, TrendingUp, Video, Workflow } from "lucide-react";
-import { useMeeting, useProject } from "@/lib/hooks";
+import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, ArrowLeft, CheckCircle2, Clock, Code2, FileText, PenTool, RefreshCw, ShieldCheck, Sparkles, Ticket, TrendingUp, Video, Workflow } from "lucide-react";
+import * as api from "@/lib/api";
+import { qk, useMeeting, useProject } from "@/lib/hooks";
 import { formatDate, formatDuration } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +41,14 @@ export default function MeetingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: m, isLoading } = useMeeting(id);
   const { data: project } = useProject(m?.linkedProjectId ?? "");
+  const qc = useQueryClient();
+  const retry = async () => {
+    try {
+      await api.analyzeMeeting(id);
+      qc.invalidateQueries({ queryKey: qk.meeting(id) });
+      toast.success("Re-analyzing this call…");
+    } catch { toast.error("Couldn't restart analysis"); }
+  };
 
   if (isLoading) {
     return (
@@ -65,7 +76,8 @@ export default function MeetingDetailPage() {
 
   const src = sourceMeta[m.source];
   const SrcIcon = src.icon;
-  const processing = m.status !== "analyzed";
+  const processing = m.status !== "analyzed" && m.status !== "failed";
+  const failed = m.status === "failed";
   const hasBreakdown = !!project;
 
   return (
@@ -135,6 +147,20 @@ export default function MeetingDetailPage() {
             <span className="text-sm tabular-nums text-muted-foreground">{m.analysisProgress}%</span>
           </div>
           <Progress value={m.analysisProgress} className="mt-3" indicatorClassName="bg-info" />
+        </Card>
+      )}
+
+      {/* Failed banner */}
+      {failed && (
+        <Card className="mb-6 border-destructive/30 bg-destructive/5 p-4">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+            <div className="flex-1">
+              <div className="text-sm font-medium">Analysis didn&apos;t finish</div>
+              <div className="text-xs text-muted-foreground">Something interrupted the agents before they were done. You can run it again.</div>
+            </div>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={retry}><RefreshCw className="h-4 w-4" /> Retry</Button>
+          </div>
         </Card>
       )}
 

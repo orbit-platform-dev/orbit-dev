@@ -10,8 +10,8 @@ from ..schemas import IntegrationOut
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
-# Only these are wired as (fake) connectors for the MVP; the rest are "coming soon".
-CONNECTABLE = {"jira", "linear"}
+# Connectable destinations for the MVP (issue trackers + PRD doc tools); the rest are "coming soon".
+CONNECTABLE = {"jira", "linear", "google-docs", "confluence", "notion"}
 
 
 class PatchIntegrationIn(BaseModel):

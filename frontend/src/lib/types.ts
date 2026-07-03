@@ -199,6 +199,8 @@ export interface ProjectPRD {
   sections: PRDSection[];
   generatedBy: AgentKey;
   updatedAt: string;
+  // Where this PRD was published after approval (Linear / Google Docs / Confluence), with a deep link back.
+  publication?: { tool: IntegrationKey; url: string; at: string };
 }
 
 export interface CustomerUpdate {
@@ -414,7 +416,8 @@ export type IntegrationKey =
   | "gong"
   | "intercom"
   | "asana"
-  | "confluence";
+  | "confluence"
+  | "google-docs";
 
 export type IntegrationStatus = "connected" | "disconnected" | "error" | "syncing" | "coming-soon";
 

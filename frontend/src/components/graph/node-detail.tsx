@@ -159,6 +159,7 @@ export function NodeDetail({ node, onClose }: { node: ExecutionNode; onClose: ()
                   members={members}
                   connectedProvider={connectedProvider}
                   canPush={canPush}
+                  canEdit={!canPush}
                   onChanged={invalidateNode}
                   compact
                 />

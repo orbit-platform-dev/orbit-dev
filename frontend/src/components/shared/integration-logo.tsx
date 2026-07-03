@@ -1,5 +1,5 @@
 import {
-  siAsana, siConfluence, siGithub, siGooglecalendar, siGooglemeet, siHubspot,
+  siAsana, siConfluence, siGithub, siGooglecalendar, siGoogledocs, siGooglemeet, siHubspot,
   siIntercom, siJira, siLinear, siNotion, siZoom,
 } from "simple-icons";
 import type { IntegrationKey } from "@/lib/types";
@@ -21,6 +21,7 @@ const ICONS: Partial<Record<IntegrationKey, Brand>> = {
   intercom: siIntercom,
   asana: siAsana,
   confluence: siConfluence,
+  "google-docs": siGoogledocs,
 };
 
 // Monogram fallback (short label + brand color) for marks not in simple-icons.
@@ -39,6 +40,7 @@ export const integrationBrand: Record<IntegrationKey, { short: string; color: st
   intercom: { short: "Ic", color: "#1f8ded" },
   asana: { short: "As", color: "#f06a6a" },
   confluence: { short: "Cf", color: "#2684ff" },
+  "google-docs": { short: "GD", color: "#4285f4" },
 };
 
 export function IntegrationLogo({ k, className }: { k: IntegrationKey; className?: string }) {

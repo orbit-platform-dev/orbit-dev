@@ -41,7 +41,8 @@ def _baseline_integrations() -> list:
         models.Integration(key="gong", name="Gong", category="Conferencing", description="Ingest call recordings and revenue signals.", status="coming-soon"),
         models.Integration(key="intercom", name="Intercom", category="Support", description="Turn support conversations into intent.", status="coming-soon"),
         models.Integration(key="asana", name="Asana", category="Engineering", description="Sync work items to Asana projects.", status="coming-soon"),
-        models.Integration(key="confluence", name="Confluence", category="Product", description="Publish PRDs to Confluence spaces.", status="coming-soon"),
+        models.Integration(key="confluence", name="Confluence", category="Product", description="Publish PRDs to Confluence spaces.", status="disconnected"),
+        models.Integration(key="google-docs", name="Google Docs", category="Product", description="Publish approved PRDs to a commentable Google Doc.", status="disconnected"),
     ]
 
 

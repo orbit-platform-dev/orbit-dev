@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, TypedDict
+from typing import Any, Awaitable, Callable, TypedDict
 
 from ..config import settings
 from . import definitions as d
@@ -248,23 +248,59 @@ def _build_graph():
     return g.compile()
 
 
-async def run_pipeline(meeting_id: str, transcript: str, account: str) -> PipelineState:
-    """Execute the full pipeline for a meeting and return the final state."""
+# Real progress checkpoints: each state key appears as its agent stage finishes, so
+# the % is derived from how far the pipeline has actually gotten (not a placeholder).
+_PROGRESS_STEPS: list[tuple[str, int, str]] = [
+    ("signals", 15, "Signals extracted"),
+    ("prd", 30, "PRD drafted"),
+    ("teams", 40, "Teams routed"),
+    ("engineering", 55, "Engineering planned"),
+    ("design", 62, "Design planned"),
+    ("qa", 68, "QA planned"),
+    ("sales", 72, "Sales enabled"),
+    ("work_plan", 85, "Execution plan built"),
+    ("customer_update", 95, "Follow-up drafted"),
+]
+
+
+def _progress_from_state(state: PipelineState) -> tuple[int, str]:
+    """Highest checkpoint whose output already exists in the state."""
+    pct, label = 5, "Analyzing the call…"
+    for key, p, lbl in _PROGRESS_STEPS:
+        if state.get(key):
+            pct, label = p, lbl
+    return pct, label
+
+
+ProgressCallback = Callable[[int, str], Awaitable[None]]
+
+
+async def run_pipeline(
+    meeting_id: str, transcript: str, account: str, on_progress: ProgressCallback | None = None,
+) -> PipelineState:
+    """Execute the full pipeline for a meeting, reporting real per-stage progress."""
     state: PipelineState = {"meeting_id": meeting_id, "transcript": transcript, "account": account, "events": []}
+
+    async def _report(s: PipelineState) -> None:
+        if on_progress:
+            pct, label = _progress_from_state(s)
+            await on_progress(pct, label)
+
     try:
         graph = _build_graph()
-        return await graph.ainvoke(state)
+        final: PipelineState = state
+        # `values` streams the full accumulated state after each super-step.
+        async for snapshot in graph.astream(state, stream_mode="values"):
+            final = snapshot
+            await _report(snapshot)
+        return final
     except Exception:
-        # LangGraph unavailable — run the (near-linear) pipeline directly.
-        state = await node_intelligence(state)
-        state = await node_pm(state)
-        state = await node_route(state)
-        state = await node_engineering(state)
-        state = await node_design(state)
-        state = await node_qa(state)
-        state = await node_sales(state)
-        state = await node_plan(state)
-        state = await node_customer(state)
+        # LangGraph unavailable — run the (near-linear) pipeline directly, still reporting progress.
+        logger.warning("LangGraph streaming unavailable; running sequential pipeline", exc_info=True)
+        for node in (node_intelligence, node_pm, node_route, node_engineering,
+                     node_design, node_qa, node_sales, node_plan, node_customer):
+            state = await node(state)
+            await _report(state)
         return state
 
 
