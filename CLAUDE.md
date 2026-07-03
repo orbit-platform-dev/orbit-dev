@@ -83,9 +83,12 @@ FastAPI monolith, four layers (all under `backend/app/`):
 ### The agent pipeline (the core)
 
 A **LangGraph `StateGraph`** of typed **PydanticAI** agents, defined in
-`agents/orchestrator.py`. Entry point: `run_pipeline()`, called by
-`routers/meetings.py::_execute_pipeline` (shared by `POST /meetings/transcript`
-and `POST /meetings/{id}/analyze`).
+`agents/orchestrator.py`. Entry point: `run_pipeline()`, run **in the background** by
+`routers/meetings.py::_analyze_in_background` (both `POST /meetings/transcript` and
+`POST /meetings/{id}/analyze` schedule it and return immediately). It takes an
+`on_progress` callback and streams stages via `graph.astream(stream_mode="values")`,
+writing real `Meeting.analysis_progress` after each stage so the UI can show live
+progress; on error the meeting is set `status="failed"`, never left spinning.
 
 ```
 transcript
@@ -126,12 +129,26 @@ Next.js App Router under `frontend/src/app/(app)/`: `dashboard`, `meetings`,
 - Shared types in `lib/types.ts` (match the backend's camelCase output).
 - The **meeting detail page** shows the breakdown tabs (PRD/Eng/Design/QA/Sales/
   Tickets) inline — the standalone Projects section was removed; `components/
-  projects/project-tabs.tsx` is reused there.
+  projects/project-tabs.tsx` is reused there. It **polls** while a meeting is
+  `analyzing` (via `useMeeting` refetchInterval) so progress climbs live, and shows a
+  `failed`-state retry.
+- The **Execution Review screen** (`meetings/[id]/review`) is the editable heart:
+  every section — Customer Intent, PRD (all fields), work items (inline edit / reassign
+  / decline / remove), timeline, follow-up email — is an editable draft until approval,
+  built on reusable editors in `components/execution/editable.tsx`.
+- **Publishing**: one reusable destination picker (`components/execution/publish-dialog.tsx`
+  + the `publish-destinations.ts` service) powers both the PRD "Publish" and the
+  work-items "Push to tools" dialogs. Each shows every destination — PDF · Notion ·
+  Confluence · Google Docs · Jira · Linear — with per-row connection status + in-dialog
+  Connect; connected rows push directly, disconnected offer Connect. **PDF export is
+  real** (`@react-pdf/renderer`; `prd-pdf.tsx` / `plan-pdf.tsx`); **tool pushes are
+  stubbed** behind the seam (`api.publishPrd`, `stubDocUrl` / `stubBoardUrl`).
 
 ## Conventions
 
 - Backend schemas serialize **camelCase** (`alias_generator=to_camel`) — keep
-  frontend `lib/types.ts` in sync.
+  frontend `lib/types.ts` in sync. **PATCH request bodies also accept camelCase**
+  (e.g. `PatchProjectIn` uses `to_camel`), so the frontend can send `customerUpdate`.
 - Graph node IDs: `g_{meetingId}_{kind}`; edges `e_{meetingId}_...`; tasks
   `tk_{meetingId}_...`. This keeps the graph **per-meeting** and re-runs idempotent.
 - `persist_execution` calls `delete_execution` first, so analyzing is idempotent.
@@ -150,6 +167,10 @@ Next.js App Router under `frontend/src/app/(app)/`: `dashboard`, `meetings`,
   badge lookups defensive (`meta[x] ?? meta.default`).
 - After deleting an app route, `rm -rf frontend/.next/types` before `typecheck`
   (stale generated types reference the deleted page).
+- **Analysis is async**: `/transcript` and `/analyze` return immediately (`status="analyzing"`,
+  `analysis_progress=5`); the background task writes progress per stage. The UI must **poll**
+  `GET /meetings/{id}` until `analyzed`/`failed` (already wired in `useMeeting`). The
+  background task uses its **own** `SessionLocal()` session — never the request's `db`.
 - Known cosmetic issue: the pipeline `events` activity log has duplicate entries (a
   LangGraph parallel-branch state-merge artifact). Doesn't affect graph/teams.
 
@@ -175,16 +196,22 @@ Everything degrades gracefully — the app runs with **none** of these set.
 
 ## Current state
 
-- **Done:** the MVP flow **upload → analysis → customer intent → draft PRD →
-  execution plan → timeline → execution graph → customer follow-up → review →
-  approve**. The Execution Review screen (`meetings/[id]/review`) is the
-  centerpiece: editable PRD/email, per-work-item skip/reassign + "why"/confidence,
-  a derived timeline, the embedded graph, and a sticky **Approve** CTA that flips
-  `Project.approval_status` draft→approved (sync to Jira/Linear is mocked).
+- **Done:** the MVP flow **upload → (background) analysis with live per-stage progress
+  → editable review → approve → publish**. The Execution Review screen
+  (`meetings/[id]/review`) is the centerpiece: **every** section is an editable draft
+  until approval — Customer Intent, PRD (all fields), work items (inline edit / reassign
+  / decline / remove), timeline, follow-up email — then a sticky **Approve** flips
+  `Project.approval_status` draft→approved, which **locks** edits (PATCH returns 409).
+- **Publishing:** a unified destination-picker dialog sends the PRD *or* the work-item
+  plan to any of PDF · Notion · Confluence · Google Docs · Jira · Linear (per-row status,
+  in-dialog Connect, redirect links after push). **PDF is real; every tool push is a
+  stub** behind `api.publishPrd` / `POST /projects/{id}/publish-prd` (records
+  `prd.publication`) + `stubDocUrl` / `stubBoardUrl`. `CONNECTABLE` (front + back) =
+  jira · linear · google-docs · confluence · notion.
 - **Also done earlier:** execution router (team relevance + "why" on every node);
-  chat gated behind a **Coming soon** overlay; Projects section folded into meetings.
-- **Pipeline now:** meeting-intelligence → product-manager → execution-router →
+  chat gated behind a **Coming soon** overlay; Projects folded into meetings.
+- **Pipeline:** meeting-intelligence → product-manager → execution-router →
   {eng, design} → qa, sales → **execution-planner** (work items) → customer-success;
-  timeline is derived deterministically from the work items.
-- **Next:** real Jira/Linear push after approval; wire in the `leadership-advisor`
-  "should we build this?" verdict; richer Customer-Intent editing.
+  timeline derived deterministically from the work items.
+- **Next:** replace the publish stubs with real integration pushes (behind the existing
+  service seam); wire in the `leadership-advisor` verdict.
