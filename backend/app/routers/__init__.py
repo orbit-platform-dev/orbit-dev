@@ -3,6 +3,8 @@ from fastapi import APIRouter
 from . import (
     activity,
     agents,
+    calendar,
+    calls,
     dashboard,
     graph,
     integrations,
@@ -13,5 +15,5 @@ from . import (
 )
 
 api_router = APIRouter()
-for module in (meetings, agents, projects, tasks, graph, timeline, integrations, activity, dashboard):
+for module in (meetings, calls, calendar, agents, projects, tasks, graph, timeline, integrations, activity, dashboard):
     api_router.include_router(module.router)

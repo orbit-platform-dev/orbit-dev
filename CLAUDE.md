@@ -69,10 +69,12 @@ There are no automated tests yet.
 
 FastAPI monolith, four layers (all under `backend/app/`):
 
-1. **HTTP** — 9 routers (`routers/`): `meetings`, `graph`, `projects`, `tasks`,
-   `agents`, `timeline`, `integrations`, `activity`, `dashboard`. Mounted in
-   `routers/__init__.py`. Auth via `deps.get_current_user` (Clerk JWT; **disabled
-   in dev** when `CLERK_JWKS_URL` unset → everyone is `DEMO_PRINCIPAL`).
+1. **HTTP** — 11 routers (`routers/`): `meetings`, `calls`, `calendar`, `graph`,
+   `projects`, `tasks`, `agents`, `timeline`, `integrations`, `activity`,
+   `dashboard`. Mounted in `routers/__init__.py`. Auth via `deps.get_current_user`
+   (Clerk JWT; **disabled in dev** when `CLERK_JWKS_URL` unset → everyone is
+   `DEMO_PRINCIPAL`). The call-room endpoints (`GET /calls/{id}`, the WS) are
+   **deliberately public** — external guests join calls by link.
 2. **Agents** (`agents/`) — the brain. See below.
 3. **Persistence** (`agents/persistence.py`) — turns pipeline output into domain
    rows (Project + GraphNodes/Edges + Tasks).
@@ -117,10 +119,66 @@ transcript
   if skipped, sets `state[stage]={"skipped": True, "reason": ...}` instead of
   generating filler.
 
+### Orbit Calls + Google Calendar (Orbit hosts the call — the Lyra model)
+
+Orbit **is** the meeting surface, not a bot in someone else's: calls run at
+`frontend /call/{room}` (full-screen page outside the `(app)` sidebar group,
+public in `middleware.ts` so guests can join by link).
+
+- **Media is WebRTC peer-to-peer** (mesh + Google STUN). The backend never sees
+  media — `routers/calls.py` is only the signaling plane (`/ws/calls/{room}`:
+  join/roster/SDP/ICE relay) + the live transcript sink. Room registry is
+  in-memory → **single-process server only** (fine for dev; an SFU like LiveKit
+  is the scale path).
+- **Per-mic transcription (the Lyra trick):** each participant's own browser
+  transcribes their own mic via the Web Speech API (Chrome/Edge; free, no key)
+  and streams `{type:"transcript", text, dur}`. The server stamps times against
+  the room clock (`end ≥ 0.5s`, `start < end`) and broadcasts to everyone —
+  **including the sender** (the echo is what renders in captions/panel). This is
+  the seam where live listening/agents plug in later.
+- **Call end → Meeting:** `POST /calls/{room}/end` finalizes the room into a
+  `Meeting(source="orbit-call")` with real per-speaker, timestamped transcript +
+  participants, then schedules the normal `_analyze_in_background` pipeline
+  (only if anyone actually spoke). Idempotent; broadcasts `{type:"ended"}` so
+  every client shows the "view analysis" screen.
+- **Google Calendar** (`routers/calendar.py`): real OAuth (httpx only, no Google
+  SDK) — `GET /calendar/connect` → consent URL → `GET /calendar/oauth/callback`
+  → tokens in `CalendarConnection` (+ flips the `calendar` Integration row);
+  redirects back to `/calendar`. Refresh tokens handled in `_access_token`.
+  **Fails loudly (503 + setup hint) when `GOOGLE_CLIENT_ID/SECRET` are unset —
+  never mocked.**
+- **Auto-link, always replace, read-only** (product decision, 2026-07-04):
+  events are **created in the user's calendar apps, never in Orbit** (attendees
+  span companies). With `CalendarConnection.auto_link` ON (default; NULL counts
+  as ON), `GET /calendar/events` links every eligible upcoming event (timed +
+  other attendees or a Meet link) as part of the sync and **always replaces the
+  Meet conference** (`conferenceData: null` + `conferenceDataVersion=1`) so
+  every invited party sees one link — Orbit's. Rooms are created locally first,
+  then the Google PATCHes run **concurrently** (`asyncio.gather`), so
+  steady-state loads make exactly one Google call. Where Google 403s the edit
+  (attendee on someone else's event) the room still exists with
+  `linkedInInvite:false` — the UI says copy the link. Manual fallback:
+  `POST /calendar/events/{id}/orbit-link` (same replace behavior).
+  `PATCH /calendar/settings {autoLink}` toggles.
+
 ## Frontend architecture
 
-Next.js App Router under `frontend/src/app/(app)/`: `dashboard`, `meetings`,
-`meetings/[id]`, `graph`, `integrations`, `settings` (+ gated `chat`).
+Next.js App Router under `frontend/src/app/(app)/`: `dashboard`, `calendar`,
+`meetings`, `meetings/[id]`, `graph`, `integrations`, `settings` (+ gated `chat`).
+
+- **Calendar tab** (`(app)/calendar/page.tsx`): **read-only Google
+  Calendar-style week grid** (user's explicit design choice) — Sunday-start day
+  columns, hour gutter, events absolutely positioned with an interval-partition
+  lane layout for overlaps, red now-line on today, ‹ › week paging + Today
+  (each week is its own query key via `GET /calendar/events?time_min&days`),
+  auto-scroll to the working hour, event click → popover with details +
+  actions. Auto-link toggle in the header; connect empty-state (Google now,
+  Zoom coming soon). No event creation in Orbit. Per-event actions (Join /
+  copy / manual link) live in ONE shared component,
+  `components/calendar/event-actions.tsx`, reused by the grid popover and the
+  Meetings page's **"Starting soon"** strip — which shows ONLY calls live now
+  or starting within 30 minutes (with a countdown), nothing else.
+  `useCalendarEvents` keeps previous data while refetching (no flicker).
 
 - **Graph** is the centerpiece: `components/graph/` (`graph-canvas`,
   `execution-node`, `node-detail`, `graph-meta`) using **@xyflow/react**.
@@ -188,6 +246,9 @@ Everything degrades gracefully — the app runs with **none** of these set.
 | `DATABASE_URL` | SQLite by default; Compose sets Postgres |
 | `REDIS_URL` | optional — enables the event stream |
 | `CLERK_JWKS_URL` / `CLERK_ISSUER` | enables API bearer-token auth |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | enables Google Calendar OAuth (Orbit call links on invites) |
+| `GOOGLE_REDIRECT_URI` | default `http://localhost:8000/calendar/oauth/callback` — must match the OAuth client |
+| `FRONTEND_URL` | default `http://localhost:3000` — used to build `/call/{room}` links |
 
 **Frontend** (`frontend/.env.local`): `NEXT_PUBLIC_API_URL` (use the real API),
 `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` (real auth).
@@ -213,5 +274,10 @@ Everything degrades gracefully — the app runs with **none** of these set.
 - **Pipeline:** meeting-intelligence → product-manager → execution-router →
   {eng, design} → qa, sales → **execution-planner** (work items) → customer-success;
   timeline derived deterministically from the work items.
+- **Orbit Calls (own-the-call) shipped:** Google Calendar OAuth → Orbit link on the
+  invite → in-browser WebRTC call at `/call/{room}` with per-mic live transcription →
+  end call → Meeting (`source="orbit-call"`, real speakers + timestamps) → the standard
+  analysis pipeline. Meetings page shows upcoming calendar events + "Start Orbit call".
 - **Next:** replace the publish stubs with real integration pushes (behind the existing
-  service seam); wire in the `leadership-advisor` verdict.
+  service seam); wire in the `leadership-advisor` verdict; live in-call AI (the
+  transcript stream is already the seam).

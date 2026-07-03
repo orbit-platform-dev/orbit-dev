@@ -33,7 +33,7 @@ export type Urgency = "critical" | "high" | "medium" | "low";
 // Meetings
 // ---------------------------------------------------------------------------
 
-export type MeetingSource = "google-meet" | "zoom" | "upload" | "transcript";
+export type MeetingSource = "google-meet" | "zoom" | "upload" | "transcript" | "orbit-call";
 export type MeetingStatus = "uploading" | "transcribing" | "analyzing" | "analyzed" | "failed";
 
 export interface TranscriptSegment {
@@ -430,6 +430,41 @@ export interface Integration {
   lastSync?: string;
   account?: string;
   stats?: { label: string; value: string }[];
+}
+
+// ---------------------------------------------------------------------------
+// Orbit Calls + Google Calendar
+// ---------------------------------------------------------------------------
+
+export interface CalendarStatus {
+  configured: boolean; // GOOGLE_CLIENT_ID/SECRET present on the backend
+  connected: boolean;
+  email?: string | null;
+  autoLink?: boolean; // Orbit links every upcoming meeting automatically
+}
+
+export interface CalendarEvent {
+  id: ID;
+  title: string;
+  start: string | null;
+  end: string | null;
+  attendees: { email: string; name: string }[];
+  meetLink?: string | null;
+  htmlLink?: string | null;
+  orbitRoomId?: string | null;
+  orbitUrl?: string | null;
+  linkedInInvite?: boolean; // the Orbit link made it onto the Google invite
+}
+
+export interface CallRoomInfo {
+  roomId: string;
+  title: string;
+  account: string;
+  status: "scheduled" | "live" | "ended";
+  scheduledStart?: string | null;
+  startedAt?: string | null;
+  meetingId?: string | null;
+  liveParticipants: number;
 }
 
 // ---------------------------------------------------------------------------

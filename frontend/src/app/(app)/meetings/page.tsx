@@ -26,6 +26,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { sourceMeta } from "@/components/meetings/meeting-source";
 import { MeetingUploadDialog } from "@/components/meetings/upload-dialog";
+import { UpcomingCalls } from "@/components/meetings/upcoming-calls";
+import { createInstantCall } from "@/lib/api";
 
 function MeetingsInner() {
   const { data: meetings, isLoading } = useMeetings();
@@ -39,6 +41,18 @@ function MeetingsInner() {
   React.useEffect(() => {
     if (params.get("upload")) setUploadOpen(true);
   }, [params]);
+
+  const [starting, setStarting] = React.useState(false);
+  const startCall = async () => {
+    setStarting(true);
+    try {
+      const { roomId } = await createInstantCall();
+      router.push(`/call/${roomId}`);
+    } catch (err) {
+      toast.error("Couldn't start the call", { description: (err as Error).message });
+      setStarting(false);
+    }
+  };
 
   const filtered = (meetings ?? []).filter((m) => {
     const q = query.toLowerCase();
@@ -56,13 +70,19 @@ function MeetingsInner() {
     <div>
       <PageHeader
         title="Meetings"
-        description="Every customer conversation, transcribed and analyzed by your AI agents."
         actions={
-          <Button className="gap-2" onClick={() => setUploadOpen(true)}>
-            <Upload className="h-4 w-4" /> Upload meeting
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" className="gap-2" onClick={() => setUploadOpen(true)}>
+              <Upload className="h-4 w-4" /> Upload meeting
+            </Button>
+            <Button className="gap-2" onClick={startCall} disabled={starting}>
+              <Video className="h-4 w-4" /> {starting ? "Starting…" : "Start Orbit call"}
+            </Button>
+          </div>
         }
       />
+
+      <UpcomingCalls />
 
       <div className="mb-6 grid grid-cols-3 gap-4">
         <StatCard label="Total meetings" value={String(meetings?.length ?? 0)} hint="across all accounts" />
@@ -82,6 +102,7 @@ function MeetingsInner() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All sources</SelectItem>
+            <SelectItem value="orbit-call">Orbit Call</SelectItem>
             <SelectItem value="zoom">Zoom</SelectItem>
             <SelectItem value="google-meet">Google Meet</SelectItem>
             <SelectItem value="upload">Upload</SelectItem>

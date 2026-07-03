@@ -24,6 +24,17 @@ class Settings(BaseSettings):
     clerk_jwks_url: str | None = None
     clerk_issuer: str | None = None
 
+    # --- Orbit Calls + Google Calendar ---------------------------------------
+    # Where the Next.js app lives — used to build shareable /call/{room} links
+    # and as the post-OAuth redirect target.
+    frontend_url: str = "http://localhost:3000"
+    # Google OAuth client (create one at https://console.cloud.google.com →
+    # APIs & Services → Credentials → OAuth client ID, type "Web application").
+    # Authorized redirect URI must exactly match GOOGLE_REDIRECT_URI below.
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_redirect_uri: str = "http://localhost:8000/calendar/oauth/callback"
+
     # --- AI / LLM provider (provider-agnostic via PydanticAI) ----------------
     # The agent pipeline only calls a live model when ENABLE_AI=true; otherwise
     # it uses deterministic, transcript-derived fallbacks so the whole product

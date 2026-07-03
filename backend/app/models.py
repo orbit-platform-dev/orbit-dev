@@ -157,6 +157,41 @@ class Integration(Base):
     stats: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
 
 
+class CalendarConnection(Base):
+    """An OAuth'd calendar account (one per provider for the MVP workspace)."""
+
+    __tablename__ = "calendar_connections"
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # provider key, e.g. "google"
+    email: Mapped[str] = mapped_column(String, default="")
+    access_token: Mapped[str] = mapped_column(Text)
+    refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_expiry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scopes: Mapped[str] = mapped_column(Text, default="")
+    connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Automatically put Orbit links on upcoming meetings as they sync (NULL = on).
+    auto_link: Mapped[bool | None] = mapped_column(nullable=True, default=True)
+
+
+class CallRoom(Base):
+    """A live Orbit call. Orbit hosts the call itself (like Lyra) so each
+    participant's mic is transcribed individually; when the call ends the room
+    is finalized into a Meeting and the analysis pipeline runs."""
+
+    __tablename__ = "call_rooms"
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # room code, e.g. r_ab12cd34
+    title: Mapped[str] = mapped_column(String)
+    account: Mapped[str] = mapped_column(String, default="")
+    status: Mapped[str] = mapped_column(String, default="scheduled")  # scheduled | live | ended
+    calendar_event_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    scheduled_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    participants: Mapped[list[Any]] = mapped_column(JSON, default=list)  # [{id,name,joinedAt,leftAt}]
+    transcript: Mapped[list[Any]] = mapped_column(JSON, default=list)  # [{id,speaker,start,end,text}]
+    meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)  # set when finalized
+
+
 class ActivityEvent(Base):
     __tablename__ = "activity_events"
     id: Mapped[str] = mapped_column(String, primary_key=True)

@@ -16,6 +16,8 @@ export const qk = {
   timeline: ["timeline"] as const,
   integrations: ["integrations"] as const,
   activity: ["activity"] as const,
+  calendarStatus: ["calendar", "status"] as const,
+  calendarEvents: ["calendar", "events"] as const,
 };
 
 export const useDashboard = () => useQuery({ queryKey: qk.dashboard, queryFn: api.getDashboard, refetchInterval: 8000 });
@@ -44,6 +46,18 @@ export const useExecutionGraph = (meetingId?: string) =>
 export const useTimeline = () => useQuery({ queryKey: qk.timeline, queryFn: api.getTimeline });
 export const useIntegrations = () => useQuery({ queryKey: qk.integrations, queryFn: api.getIntegrations });
 export const useActivity = () => useQuery({ queryKey: qk.activity, queryFn: api.getActivity, refetchInterval: 10000 });
+
+export const useCalendarStatus = () =>
+  useQuery({ queryKey: qk.calendarStatus, queryFn: api.getCalendarStatus });
+/** Calendar events in a window; keyed by window so week paging caches per week. */
+export const useCalendarEvents = (connected: boolean, timeMin?: string, days = 7) =>
+  useQuery({
+    queryKey: [...qk.calendarEvents, timeMin ?? "now", days],
+    queryFn: () => api.getCalendarEvents(timeMin, days),
+    enabled: connected,
+    refetchInterval: 60_000,
+    placeholderData: (prev) => prev, // keep the grid on screen while refetching
+  });
 
 /** The connected push target (Jira preferred, then Linear), or null if none. */
 export function useConnectedProvider(): "jira" | "linear" | null {

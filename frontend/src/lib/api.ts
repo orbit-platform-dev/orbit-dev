@@ -22,6 +22,9 @@ import {
 import type {
   ActivityEvent,
   Agent,
+  CalendarEvent,
+  CalendarStatus,
+  CallRoomInfo,
   CustomerRequest,
   ExecutionGraph,
   FollowUp,
@@ -228,6 +231,65 @@ export async function patchIntegration(key: string, status: "connected" | "disco
 export async function getIntegrations(): Promise<Integration[]> {
   if (USE_MOCK) return delay(200).then(() => integrations);
   return live("/integrations");
+}
+
+// --- Orbit Calls + Google Calendar ------------------------------------------
+// All real — these need the backend (and Google OAuth creds for calendar).
+const NEEDS_BACKEND = "This needs the backend — set NEXT_PUBLIC_API_URL.";
+
+export async function getCalendarStatus(): Promise<CalendarStatus> {
+  if (USE_MOCK) return { configured: false, connected: false };
+  return live("/calendar/status");
+}
+/** URL of Google's consent screen; navigate the browser there to connect. */
+export async function getCalendarAuthUrl(): Promise<{ url: string }> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  const res = await fetch(`${API_URL}/calendar/connect`);
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `Connect failed: ${res.status}`);
+  return res.json();
+}
+export async function disconnectCalendar(): Promise<void> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  await liveSend("/calendar/disconnect", "POST");
+}
+/** Events in a window (ISO timeMin + days) — powers the week view's ‹ › paging. */
+export async function getCalendarEvents(timeMin?: string, days = 7): Promise<CalendarEvent[]> {
+  if (USE_MOCK) return [];
+  const params = new URLSearchParams({ days: String(days) });
+  if (timeMin) params.set("time_min", timeMin);
+  return live(`/calendar/events?${params}`);
+}
+/** Make Orbit the meeting link on one event (Meet replaced, invite updated). */
+export async function addOrbitLink(
+  eventId: string,
+): Promise<{ roomId: string; url: string; linkedInInvite: boolean }> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend(`/calendar/events/${eventId}/orbit-link`, "POST");
+}
+/** Toggle auto-linking of upcoming meetings. */
+export async function patchCalendarSettings(autoLink: boolean): Promise<CalendarStatus> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend("/calendar/settings", "PATCH", { autoLink });
+}
+
+/** Start an ad-hoc Orbit call room right now. */
+export async function createInstantCall(title?: string): Promise<{ roomId: string; url: string }> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend("/calls", "POST", { title: title || "Instant Orbit call" });
+}
+export async function getCallRoom(roomId: string): Promise<CallRoomInfo> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return live(`/calls/${roomId}`);
+}
+/** End the call for everyone; finalizes it into a Meeting and starts analysis. */
+export async function endCall(roomId: string): Promise<{ meetingId: string; status: string }> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend(`/calls/${roomId}/end`, "POST");
+}
+/** WebSocket endpoint for a call room (signaling + live transcript). */
+export function callSocketUrl(roomId: string): string {
+  if (!API_URL) throw new Error(NEEDS_BACKEND);
+  return `${API_URL.replace(/^http/, "ws")}/ws/calls/${roomId}`;
 }
 
 // --- Activity & dashboard rollups -----------------------------------------
