@@ -1,8 +1,5 @@
 "use client";
 
-// A single execution work item on the Review Screen. Orbit proposes it; the user
-// can edit its title/description/priority, reassign the owner, decline it, or
-// (after approval) push it to a tool. Everything here is a correctable draft.
 
 import * as React from "react";
 import Link from "next/link";

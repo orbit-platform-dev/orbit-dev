@@ -1,11 +1,5 @@
 "use client";
 
-// Reusable "Where should Orbit send this?" destination picker. Every destination is an
-// equal, always-visible row showing its connection status. There is no separate selection
-// step: if a destination is connected you push straight to it from its row; if it isn't,
-// the row offers Connect (in-dialog). PDF-style rows (integrationKey: null) never need auth
-// and download directly. The caller supplies the destinations + a publish(dest) action, so
-// real integrations plug in here without changing this component. Used by both push dialogs.
 
 import * as React from "react";
 import { toast } from "sonner";

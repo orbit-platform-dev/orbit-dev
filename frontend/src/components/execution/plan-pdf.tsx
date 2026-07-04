@@ -1,7 +1,5 @@
 "use client";
 
-// One-click PDF export of the execution plan (work items). Always available in the
-// push dialog so the user can take the plan away even when no tool is connected.
 
 import { Document, Page, Text, View, StyleSheet, pdf } from "@react-pdf/renderer";
 import type { Task } from "@/lib/types";

@@ -108,7 +108,6 @@ export default function CalendarPage() {
         </p>
       </PageHeader>
 
-      {/* Week navigation */}
       <div className="mb-3 flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => setWeekOffset(0)} disabled={weekOffset === 0}>
           Today
@@ -279,7 +278,6 @@ function WeekGrid({ weekStart, events }: { weekStart: Date; events: CalendarEven
             const isToday = sameDay(d, today);
             return (
               <div key={d.toISOString()} className={cn("relative border-l border-border/60", isToday && "bg-primary/[0.03]")}>
-                {/* hour lines */}
                 {Array.from({ length: 23 }, (_, i) => i + 1).map((h) => (
                   <div key={h} className="absolute inset-x-0 border-t border-border/40" style={{ top: h * HOUR_PX }} />
                 ))}

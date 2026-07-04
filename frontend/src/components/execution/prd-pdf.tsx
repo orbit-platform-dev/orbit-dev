@@ -1,8 +1,5 @@
 "use client";
 
-// One-click PDF export of a PRD (fully client-side, no backend needed). This is
-// the always-available fallback in the Review Screen's Publish menu — used when
-// no doc tool is connected, or whenever the user just wants a file to share.
 
 import { Document, Page, Text, View, StyleSheet, pdf } from "@react-pdf/renderer";
 import type { ProjectPRD } from "@/lib/types";

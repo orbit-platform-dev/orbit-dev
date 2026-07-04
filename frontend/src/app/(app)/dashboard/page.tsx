@@ -11,7 +11,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  ExecutionProgress,
   LatestActivity,
   RecentMeetings,
   Stagger,
@@ -35,7 +34,6 @@ export default function DashboardPage() {
   );
   const stats = [
     { label: "Meetings analyzed", value: String(analyzed), hint: processing ? `${processing} still processing` : "all caught up" },
-    { label: "Active projects", value: String(activeProjects), hint: "in flight" },
     { label: "Open follow-ups", value: String(openFollowUps), hint: "across recent calls" },
   ];
 
@@ -84,9 +82,6 @@ export default function DashboardPage() {
             </Stagger>
             <Stagger className="lg:col-span-5">
               <LatestActivity activity={data.activity} />
-            </Stagger>
-            <Stagger className="lg:col-span-12">
-              <ExecutionProgress projects={data.projects} />
             </Stagger>
           </div>
         </StaggerGrid>

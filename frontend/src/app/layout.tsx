@@ -4,11 +4,12 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Orbit — Meetings to shipped, on autopilot",
+    default: "Orbit Meetings to shipped, on autopilot",
     template: "%s · Orbit",
   },
   description:
     "Orbit turns customer meetings into PRDs, plans, tasks and shipped features — orchestrated by a team of AI agents.",
+  icons: { icon: "/orbit-logo.svg" },
 };
 
 export const viewport: Viewport = {

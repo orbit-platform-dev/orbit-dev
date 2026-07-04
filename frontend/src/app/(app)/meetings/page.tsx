@@ -14,6 +14,7 @@ import { deleteMeeting } from "@/lib/api";
 import { formatDate, formatDuration, timeAgo } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { SentimentBadge, UrgencyBadge } from "@/components/shared/status";
 import { StatCard } from "@/components/shared/stat-card";
 import { Button } from "@/components/ui/button";
@@ -164,6 +165,7 @@ function MeetingRow({ meeting: m }: { meeting: Meeting }) {
   const processing = m.status !== "analyzed";
   const queryClient = useQueryClient();
   const router = useRouter();
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
 
   const onViewGraph = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -171,10 +173,13 @@ function MeetingRow({ meeting: m }: { meeting: Meeting }) {
     router.push(`/graph?meeting=${m.id}`);
   };
 
-  const onDelete = async (e: React.MouseEvent) => {
+  const onDelete = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!window.confirm(`Delete "${m.title}" and its graph, project and tasks?`)) return;
+    setConfirmDelete(true);
+  };
+
+  const doDelete = async () => {
     try {
       await deleteMeeting(m.id);
       toast.success("Meeting deleted");
@@ -183,10 +188,21 @@ function MeetingRow({ meeting: m }: { meeting: Meeting }) {
       }
     } catch (err) {
       toast.error("Delete failed", { description: (err as Error).message });
+      throw err;
     }
   };
 
   return (
+    <>
+    <ConfirmDialog
+      open={confirmDelete}
+      onOpenChange={setConfirmDelete}
+      title="Delete this meeting?"
+      description={<>&ldquo;{m.title}&rdquo; and everything derived from it — execution graph, project and tasks — will be permanently removed.</>}
+      confirmLabel="Delete meeting"
+      destructive
+      onConfirm={doDelete}
+    />
     <Link
       href={`/meetings/${m.id}`}
       className="glass glass-hover block rounded-xl p-4 transition-all hover:-translate-y-0.5"
@@ -279,6 +295,7 @@ function MeetingRow({ meeting: m }: { meeting: Meeting }) {
         </Button>
       </div>
     </Link>
+    </>
   );
 }
 

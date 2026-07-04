@@ -1,7 +1,5 @@
 "use client";
 
-// The one implementation of calendar-event actions (Join / copy / manual link),
-// shared by the Calendar agenda and the Meetings "Next calls" strip.
 
 import * as React from "react";
 import Link from "next/link";

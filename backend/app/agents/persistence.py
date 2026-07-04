@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
 
-from ..models import GraphEdge, GraphNode, Meeting, Project, Task
+from ..models import ActivityEvent, GraphEdge, GraphNode, Meeting, Project, Task
 
 
 def _key(name: str) -> str:
@@ -104,11 +104,14 @@ def _node(nid: str, kind: str, title: str, subtitle: str, agent: str, project_id
 
 
 async def delete_execution(meeting_id: str, db) -> None:
-    """Remove the graph, tasks, and project derived from a meeting (idempotent)."""
+    """Remove the graph, tasks, project and their activity derived from a meeting
+    (idempotent — also runs before re-analysis, so a replaced project takes its
+    activity trail with it)."""
     await db.execute(delete(GraphEdge).where(GraphEdge.id.like(f"e_{meeting_id}_%")))
     await db.execute(delete(GraphNode).where(GraphNode.id.like(f"g_{meeting_id}_%")))
     await db.execute(delete(Task).where(Task.id.like(f"tk_{meeting_id}_%")))
     for p in (await db.execute(select(Project).where(Project.source_meeting_id == meeting_id))).scalars().all():
+        await db.execute(delete(ActivityEvent).where(ActivityEvent.project_id == p.id))
         await db.delete(p)
     await db.flush()
 

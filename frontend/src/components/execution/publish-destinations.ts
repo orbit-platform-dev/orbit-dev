@@ -1,7 +1,3 @@
-// Where a PRD can be published, and the service that performs it. Keeping the
-// destination list + publish logic here (separate from the dialog UI) means real
-// integrations can be added later by only changing `api.publishPrd`/this file —
-// the dialog never changes. PDF is a first-class destination, not an integration.
 
 import type { IntegrationKey, ProjectPRD } from "@/lib/types";
 import * as api from "@/lib/api";

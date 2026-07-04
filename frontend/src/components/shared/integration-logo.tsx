@@ -7,8 +7,7 @@ import { cn } from "@/lib/utils";
 
 type Brand = { path: string; hex: string };
 
-// Real brand marks (simple-icons). Slack / Salesforce / Gong were removed from
-// simple-icons for trademark reasons, so they fall back to a monogram tile below.
+
 const ICONS: Partial<Record<IntegrationKey, Brand>> = {
   jira: siJira,
   linear: siLinear,

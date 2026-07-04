@@ -1,8 +1,5 @@
 "use client";
 
-// Reusable inline editors for the Review Screen. Everything Orbit generates is a
-// first draft — these primitives let a user correct any field before approval,
-// so the same add/edit/remove behavior is consistent across Intent, PRD and Timeline.
 
 import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";

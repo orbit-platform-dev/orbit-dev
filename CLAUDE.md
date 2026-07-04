@@ -204,6 +204,10 @@ Next.js App Router under `frontend/src/app/(app)/`: `dashboard`, `calendar`,
 
 ## Conventions
 
+- **Comments: only important ones.** A comment must carry a constraint, a why,
+  a protocol, or a gotcha the code can't show. No narration, no decorative
+  markers on self-evident code.
+
 - Backend schemas serialize **camelCase** (`alias_generator=to_camel`) — keep
   frontend `lib/types.ts` in sync. **PATCH request bodies also accept camelCase**
   (e.g. `PatchProjectIn` uses `to_camel`), so the frontend can send `customerUpdate`.

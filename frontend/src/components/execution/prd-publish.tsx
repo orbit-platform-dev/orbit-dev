@@ -1,9 +1,5 @@
 "use client";
 
-// PRD "Publish" — a thin wrapper over the shared PublishDialog. It supplies the PRD's
-// destinations (PDF + doc tools) and the publish action; all interaction (selection,
-// status, connect, push) lives in PublishDialog so the PRD and work-items dialogs stay
-// identical.
 
 import { Share2 } from "lucide-react";
 import type { ProjectPRD } from "@/lib/types";

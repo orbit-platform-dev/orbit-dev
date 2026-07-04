@@ -28,7 +28,6 @@ export const agentMeta: Record<AgentKey, { icon: LucideIcon; color: string }> = 
   "leadership-advisor": { icon: Compass, color: "#f43f5e" },
 };
 
-// Fallback so an unknown/new agent key can never crash a render.
 const FALLBACK = { icon: Bot, color: "#94a3b8" };
 
 export function AgentIcon({

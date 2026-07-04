@@ -49,13 +49,17 @@ export const useActivity = () => useQuery({ queryKey: qk.activity, queryFn: api.
 
 export const useCalendarStatus = () =>
   useQuery({ queryKey: qk.calendarStatus, queryFn: api.getCalendarStatus });
-/** Calendar events in a window; keyed by window so week paging caches per week. */
+/** Calendar events in a window; keyed by window so week paging caches per week.
+ *  Google is the source of truth, so unlike Orbit-internal queries this refetches
+ *  the moment the tab regains focus — edits made in Google Calendar appear (and
+ *  auto-link) as soon as the user comes back, no refresh needed. */
 export const useCalendarEvents = (connected: boolean, timeMin?: string, days = 7) =>
   useQuery({
     queryKey: [...qk.calendarEvents, timeMin ?? "now", days],
     queryFn: () => api.getCalendarEvents(timeMin, days),
     enabled: connected,
     refetchInterval: 60_000,
+    refetchOnWindowFocus: "always",
     placeholderData: (prev) => prev, // keep the grid on screen while refetching
   });
 

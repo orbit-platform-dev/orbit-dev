@@ -4,7 +4,8 @@ from fastapi import APIRouter
 from sqlalchemy import select
 
 from ..deps import Depends, get_current_user, get_db
-from ..models import ActivityEvent, Agent, Integration, Meeting, Project, Task, TimelineEvent
+from ..models import Agent, Integration, Meeting, Project, Task, TimelineEvent
+from .activity import visible_activity
 from ..schemas import (
     ActivityEventOut,
     AgentOut,
@@ -29,7 +30,7 @@ async def get_dashboard(db=Depends(get_db), _=Depends(get_current_user)):
     projects = (await db.execute(select(Project))).scalars().all()
     tasks = (await db.execute(select(Task))).scalars().all()
     integrations = (await db.execute(select(Integration))).scalars().all()
-    activity = (await db.execute(select(ActivityEvent).order_by(ActivityEvent.at.desc()))).scalars().all()
+    activity = await visible_activity(db)
     timeline = (await db.execute(select(TimelineEvent).order_by(TimelineEvent.at.desc()))).scalars().all()
 
     # --- derived rollups -----------------------------------------------------

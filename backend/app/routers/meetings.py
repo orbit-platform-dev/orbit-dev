@@ -63,6 +63,7 @@ async def _analyze_in_background(meeting_id: str) -> None:
             db.add(ActivityEvent(
                 id=f"ac_{uuid.uuid4().hex[:8]}", actor={"name": "Meeting Intelligence", "isAgent": True},
                 action="analyzed", target=m.title, target_type="meeting", at=datetime.now(timezone.utc),
+                meeting_id=m.id,
             ))
             await db.commit()
             await publish_event("orbit:pipeline", {"type": "meeting.analyzed", "meetingId": m.id})
@@ -171,12 +172,14 @@ async def analyze_meeting(meeting_id: str, background: BackgroundTasks, db=Depen
 
 @router.delete("/{meeting_id}", status_code=204)
 async def delete_meeting(meeting_id: str, db=Depends(get_db), _=Depends(get_current_user)):
-    """Delete a meeting and everything derived from it (graph, project, tasks, timeline)."""
+    """Delete a meeting and everything derived from it (graph, project, tasks,
+    timeline, activity)."""
     m = await db.get(Meeting, meeting_id)
     if not m:
         raise HTTPException(404, "Meeting not found")
     await delete_execution(meeting_id, db)
     await db.execute(delete(TimelineEvent).where(TimelineEvent.meeting_id == meeting_id))
+    await db.execute(delete(ActivityEvent).where(ActivityEvent.meeting_id == meeting_id))
     await db.delete(m)
     await db.commit()
 
@@ -216,7 +219,7 @@ async def approve_execution(meeting_id: str, db=Depends(get_db), _=Depends(get_c
     p.status = "in-progress"
     db.add(ActivityEvent(
         id=f"ac_{uuid.uuid4().hex[:8]}", actor={"name": "You"}, action="approved the execution plan for",
-        target=p.name, target_type="project", at=now, project_id=p.id,
+        target=p.name, target_type="project", at=now, project_id=p.id, meeting_id=m.id,
     ))
     db.add(TimelineEvent(
         id=f"ev_{uuid.uuid4().hex[:8]}", kind="review-approved", title="Execution plan approved",

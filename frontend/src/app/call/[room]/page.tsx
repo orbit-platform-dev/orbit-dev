@@ -1,13 +1,5 @@
 "use client";
 
-// Orbit Calls — Orbit hosts the call itself (the Lyra model).
-//
-// Media is WebRTC peer-to-peer (mesh + Google STUN); the backend WebSocket is
-// only signaling + the live transcript sink. Each participant's own browser
-// transcribes their own microphone (Web Speech API) and streams named,
-// timestamped segments — that's what makes the post-call transcript
-// per-speaker accurate, and it's the seam where live listening plugs in later.
-
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -20,6 +12,8 @@ import type { CallRoomInfo } from "@/lib/types";
 import { cn, colorFromString, formatDuration, initials } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { OrbitMark } from "@/components/shared/logo";
 
 const ICE_SERVERS: RTCConfiguration = {
   iceServers: [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }],
@@ -313,16 +307,10 @@ export default function CallPage() {
   }
 
   async function endForAll() {
-    if (!window.confirm("End the call for everyone? Orbit will build the meeting + analysis from the transcript.")) return;
-    setEnding(true);
-    try {
-      const res = await api.endCall(room);
-      setMeetingId(res.meetingId);
-      cleanup();
-      setPhase("ended");
-    } catch {
-      setEnding(false);
-    }
+    const res = await api.endCall(room);
+    setMeetingId(res.meetingId);
+    cleanup();
+    setPhase("ended");
   }
 
   async function copyLink() {
@@ -399,9 +387,9 @@ export default function CallPage() {
       <Shell>
         <div className="flex flex-1 items-center justify-center p-6">
           <div className="w-full max-w-3xl">
-            <div className="mb-6 flex items-center gap-2 text-primary">
-              <OrbitIcon className="h-5 w-5" />
-              <span className="text-sm font-semibold tracking-tight">Orbit Calls</span>
+            <div className="mb-6 flex items-center gap-2">
+              <OrbitMark className="h-6 w-6" />
+              <span className="text-sm font-semibold tracking-tight text-primary">Orbit Calls</span>
             </div>
             <div className="grid gap-6 md:grid-cols-[1.4fr_1fr]">
               <div className="relative aspect-video overflow-hidden rounded-2xl border border-border bg-black/60">
@@ -456,7 +444,7 @@ export default function CallPage() {
     <Shell>
       {/* Header */}
       <header className="flex items-center gap-3 border-b border-border/60 px-4 py-2.5">
-        <OrbitIcon className="h-5 w-5 text-primary" />
+        <OrbitMark className="h-6 w-6" />
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">{info?.title ?? "Orbit call"}</div>
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
@@ -538,11 +526,21 @@ export default function CallPage() {
         <Button variant="outline" className="gap-2" onClick={leave}>
           Leave
         </Button>
-        <Button variant="destructive" className="gap-2" onClick={endForAll} disabled={ending}>
-          {ending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneOff className="h-4 w-4" />}
+        <Button variant="destructive" className="gap-2" onClick={() => setEnding(true)}>
+          <PhoneOff className="h-4 w-4" />
           End & analyze
         </Button>
       </footer>
+
+      <ConfirmDialog
+        open={ending}
+        onOpenChange={setEnding}
+        title="End the call for everyone?"
+        description="Orbit will turn the transcript into a meeting and start the analysis — every participant leaves the call."
+        confirmLabel="End & analyze"
+        destructive
+        onConfirm={endForAll}
+      />
     </Shell>
   );
 }

@@ -201,3 +201,5 @@ class ActivityEvent(Base):
     target_type: Mapped[str] = mapped_column(String)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     project_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Ties the row to its meeting so deleting the meeting removes its activity.
+    meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)

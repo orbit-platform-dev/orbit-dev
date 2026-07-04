@@ -3,21 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { Check, ChevronsUpDown, Plus, Sparkles } from "lucide-react";
+import { Plus, Sparkles } from "lucide-react";
 import { navSections } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { workspace } from "@/lib/auth";
 import { OrbitMark } from "@/components/shared/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useMeetings } from "@/lib/hooks";
 
 function useBadgeCounts() {
@@ -33,33 +25,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <div className="flex h-full w-64 flex-col border-r border-border bg-card/40">
-      {/* Workspace switcher */}
       <div className="px-3 pt-3">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-accent">
-              <OrbitMark className="h-8 w-8" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold leading-tight">{workspace.name}</div>
-                <div className="truncate text-xs text-muted-foreground">{workspace.plan} plan</div>
-              </div>
-              <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-60" align="start">
-            <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
-            <DropdownMenuItem>
-              <OrbitMark className="h-5 w-5" />
-              <span className="flex-1">Orbit</span>
-              <Check className="h-4 w-4 text-primary" />
-            </DropdownMenuItem>
-            <DropdownMenuItem>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div className="flex items-center gap-2.5 px-2 py-2">
+          <OrbitMark className="h-8 w-8" />
+          <div className="truncate text-sm font-semibold leading-tight">{workspace.name}</div>
+        </div>
       </div>
 
       {/* New meeting CTA */}
