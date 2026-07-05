@@ -5,11 +5,11 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Clock, Search, Trash2, Upload, Users, Video, Workflow } from "lucide-react";
+import { Clock, CloudDownload, Search, Trash2, Upload, Users, Video, Workflow } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Meeting } from "@/lib/types";
-import { qk, useMeetings } from "@/lib/hooks";
+import { qk, useMeetings, useZoomStatus } from "@/lib/hooks";
 import { deleteMeeting } from "@/lib/api";
 import { formatDate, formatDuration, timeAgo } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
@@ -28,6 +28,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { sourceMeta } from "@/components/meetings/meeting-source";
 import { MeetingUploadDialog } from "@/components/meetings/upload-dialog";
 import { UpcomingCalls } from "@/components/meetings/upcoming-calls";
+import { ZoomImportDialog } from "@/components/meetings/zoom-import";
 import { createInstantCall } from "@/lib/api";
 
 function MeetingsInner() {
@@ -43,6 +44,8 @@ function MeetingsInner() {
     if (params.get("upload")) setUploadOpen(true);
   }, [params]);
 
+  const { data: zoom } = useZoomStatus();
+  const [zoomOpen, setZoomOpen] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
   const startCall = async () => {
     setStarting(true);
@@ -73,6 +76,11 @@ function MeetingsInner() {
         title="Meetings"
         actions={
           <div className="flex items-center gap-2">
+            {zoom?.connected && (
+              <Button variant="outline" className="gap-2" onClick={() => setZoomOpen(true)}>
+                <CloudDownload className="h-4 w-4" /> Import from Zoom
+              </Button>
+            )}
             <Button variant="outline" className="gap-2" onClick={() => setUploadOpen(true)}>
               <Upload className="h-4 w-4" /> Upload meeting
             </Button>
@@ -148,6 +156,7 @@ function MeetingsInner() {
         </div>
       )}
 
+      <ZoomImportDialog open={zoomOpen} onOpenChange={setZoomOpen} />
       <MeetingUploadDialog
         open={uploadOpen}
         onOpenChange={(v) => {

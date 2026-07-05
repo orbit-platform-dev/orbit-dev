@@ -19,9 +19,10 @@ type Category = Integration["category"];
 const CATEGORIES: Category[] = ["Engineering", "Conferencing", "Communication", "Product", "CRM", "Calendar", "Support"];
 
 // Connectable destinations: issue trackers (Jira / Linear) + PRD doc tools
-// (Google Docs / Notion / Confluence / Linear / Jira) + Google Calendar (real
-// OAuth — powers Orbit call links on invites); everything else is "coming soon".
-const CONNECTABLE = new Set(["jira", "linear", "google-docs", "confluence", "notion", "calendar"]);
+// (Google Docs / Notion / Confluence / Linear / Jira) + real OAuth providers
+// (Google Calendar → Orbit links on invites; Zoom → recording imports);
+// everything else is "coming soon".
+const CONNECTABLE = new Set(["jira", "linear", "google-docs", "confluence", "notion", "calendar", "zoom"]);
 const normalizeStatus = (i: Integration): Integration =>
   CONNECTABLE.has(i.key)
     ? { ...i, status: i.status === "connected" || i.status === "syncing" ? "connected" : "disconnected" }
@@ -40,16 +41,23 @@ export default function IntegrationsPage() {
     if (data) setItems(data.map(normalizeStatus));
   }, [data]);
 
-  // Landing back from Google's consent screen (?calendar=connected|error).
+  // Landing back from an OAuth consent screen (?calendar=… or ?zoom=…).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const result = params.get("calendar");
-    if (!result) return;
-    if (result === "connected") toast.success("Google Calendar connected", { description: "Upcoming calls now show on the Meetings page." });
-    else toast.error("Google Calendar connection failed", { description: params.get("reason") ?? undefined });
+    const results: [string, string][] = [["calendar", "Google Calendar"], ["zoom", "Zoom"]];
+    let handled = false;
+    for (const [key, label] of results) {
+      const result = params.get(key);
+      if (!result) continue;
+      handled = true;
+      if (result === "connected") toast.success(`${label} connected`);
+      else toast.error(`${label} connection failed`, { description: params.get("reason") ?? undefined });
+    }
+    if (!handled) return;
     window.history.replaceState(null, "", "/integrations");
     qc.invalidateQueries({ queryKey: qk.integrations });
     qc.invalidateQueries({ queryKey: qk.calendarStatus });
+    qc.invalidateQueries({ queryKey: qk.zoomStatus });
   }, [qc]);
 
   const setStatus = (key: Integration["key"], status: IntegrationStatus, lastSync?: string) => {
@@ -58,15 +66,25 @@ export default function IntegrationsPage() {
     );
   };
 
-  // Persist connect/disconnect; optimistic + refetch. Google Calendar is a real
-  // OAuth flow — the browser leaves for Google's consent screen and comes back.
+  // Persist connect/disconnect; optimistic + refetch. Calendar and Zoom are real
+  // OAuth flows — the browser leaves for the consent screen and comes back.
+  const OAUTH_AUTH_URL: Partial<Record<Integration["key"], () => Promise<{ url: string }>>> = {
+    calendar: api.getCalendarAuthUrl,
+    zoom: api.getZoomAuthUrl,
+  };
+  const OAUTH_DISCONNECT: Partial<Record<Integration["key"], () => Promise<void>>> = {
+    calendar: api.disconnectCalendar,
+    zoom: api.disconnectZoom,
+  };
+
   const connect = async (i: Integration) => {
-    if (i.key === "calendar") {
+    const authUrl = OAUTH_AUTH_URL[i.key];
+    if (authUrl) {
       try {
-        const { url } = await api.getCalendarAuthUrl();
+        const { url } = await authUrl();
         window.location.href = url;
       } catch (err) {
-        toast.error("Google Calendar isn't configured", { description: (err as Error).message });
+        toast.error(`${i.name} isn't configured`, { description: (err as Error).message });
       }
       return;
     }
@@ -78,12 +96,12 @@ export default function IntegrationsPage() {
   const disconnect = async (i: Integration) => {
     setStatus(i.key, "disconnected");
     try {
-      if (i.key === "calendar") await api.disconnectCalendar();
-      else await api.patchIntegration(i.key, "disconnected");
+      await (OAUTH_DISCONNECT[i.key]?.() ?? api.patchIntegration(i.key, "disconnected"));
       toast(`${i.name} disconnected`);
     } catch { toast.error(`Couldn't disconnect ${i.name}`); }
     qc.invalidateQueries({ queryKey: qk.integrations });
     qc.invalidateQueries({ queryKey: qk.calendarStatus });
+    qc.invalidateQueries({ queryKey: qk.zoomStatus });
   };
 
   const counts = useMemo(() => {

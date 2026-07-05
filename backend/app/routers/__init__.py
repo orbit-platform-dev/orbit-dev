@@ -12,8 +12,9 @@ from . import (
     projects,
     tasks,
     timeline,
+    zoom,
 )
 
 api_router = APIRouter()
-for module in (meetings, calls, calendar, agents, projects, tasks, graph, timeline, integrations, activity, dashboard):
+for module in (meetings, calls, calendar, zoom, agents, projects, tasks, graph, timeline, integrations, activity, dashboard):
     api_router.include_router(module.router)

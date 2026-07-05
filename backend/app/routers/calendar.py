@@ -249,7 +249,7 @@ async def _write_link_into_event(client: httpx.AsyncClient, token: str, ev: dict
     if url not in description:
         patch["description"] = f"{description}\n\n📞 Join with Orbit: {url}".lstrip()
     location = ev.get("location") or ""
-    if not location or "meet.google.com" in location:
+    if not location or "meet.google.com" in location or "zoom.us" in location:
         patch["location"] = url
     if ev.get("hangoutLink") or ev.get("conferenceData"):
         patch["conferenceData"] = None  # Orbit owns the space

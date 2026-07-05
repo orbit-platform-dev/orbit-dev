@@ -456,6 +456,15 @@ export interface CalendarEvent {
   linkedInInvite?: boolean; // the Orbit link made it onto the Google invite
 }
 
+export interface ZoomRecording {
+  uuid: string;
+  topic: string;
+  startTime?: string | null;
+  durationMin: number;
+  hasTranscript: boolean;
+  meetingId?: string | null; // set once imported into Orbit
+}
+
 export interface CallRoomInfo {
   roomId: string;
   title: string;

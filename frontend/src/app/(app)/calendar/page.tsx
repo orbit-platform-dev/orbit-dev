@@ -390,15 +390,15 @@ function EventPopover({ event: ev, children }: { event: CalendarEvent; children:
 
 // --- Connect screen (nothing connected yet) ----------------------------------
 function ConnectScreen({ configured }: { configured: boolean }) {
-  const [connecting, setConnecting] = React.useState(false);
-  const connect = async () => {
-    setConnecting(true);
+  const [connecting, setConnecting] = React.useState<"google" | "zoom" | null>(null);
+  const connect = async (provider: "google" | "zoom") => {
+    setConnecting(provider);
     try {
-      const { url } = await api.getCalendarAuthUrl();
+      const { url } = await (provider === "google" ? api.getCalendarAuthUrl() : api.getZoomAuthUrl());
       window.location.href = url;
     } catch (err) {
-      toast.error("Google Calendar isn't configured", { description: (err as Error).message });
-      setConnecting(false);
+      toast.error(`${provider === "google" ? "Google Calendar" : "Zoom"} isn't configured`, { description: (err as Error).message });
+      setConnecting(null);
     }
   };
 
@@ -415,8 +415,8 @@ function ConnectScreen({ configured }: { configured: boolean }) {
           <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
             Orbit replaces the Meet link on your upcoming meetings — every invited party joins through Orbit.
           </p>
-          <Button className="mt-5 w-full gap-2" onClick={connect} disabled={connecting}>
-            {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+          <Button className="mt-5 w-full gap-2" onClick={() => connect("google")} disabled={connecting !== null}>
+            {connecting === "google" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
             Connect Google Calendar
           </Button>
           {!configured && (
@@ -429,9 +429,12 @@ function ConnectScreen({ configured }: { configured: boolean }) {
           <IntegrationLogo k="zoom" className="h-12 w-12 text-base" />
           <h2 className="mt-4 text-base font-semibold">Zoom</h2>
           <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-            Put Orbit links on Zoom-scheduled meetings and import cloud recordings.
+            Import cloud-recording transcripts as meetings — analyzed like every Orbit call.
           </p>
-          <Button variant="outline" className="mt-5 w-full" disabled>Coming soon</Button>
+          <Button variant="outline" className="mt-5 w-full gap-2" onClick={() => connect("zoom")} disabled={connecting !== null}>
+            {connecting === "zoom" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+            Connect Zoom
+          </Button>
         </div>
       </div>
     </div>

@@ -31,20 +31,21 @@ Non-negotiable product principles (every feature must serve these):
 orbit-dev/
 ├── backend/      FastAPI (async) + LangGraph agent pipeline + SQLAlchemy
 ├── frontend/     Next.js (App Router) + Tailwind + xyflow graph
-└── docker-compose.yml   db (Postgres) · redis · adminer · api · web
+└── docker-dev-compose.yml   db (Postgres) · redis · adminer · api · web
 ```
 
 ## Commands
 
 **Dev hybrid (what we usually run):** API + Postgres in Docker, frontend on the host.
+The compose file is **docker-dev-compose.yml** (non-default name → always pass `-f`).
 
 ```bash
 # Backend stack (api on :8000, adminer DB UI on :8080)
-docker compose up -d db redis api adminer
+docker compose -f docker-dev-compose.yml up -d db redis api adminer
 
 # IMPORTANT: the api image BAKES the code (no volume mount). After ANY backend
 # edit you must rebuild for it to take effect:
-docker compose up -d --build api
+docker compose -f docker-dev-compose.yml up -d --build api
 
 # Frontend (on :3000) — live reload, point it at the API via frontend/.env.local
 cd frontend && npm install && npm run dev
@@ -69,9 +70,9 @@ There are no automated tests yet.
 
 FastAPI monolith, four layers (all under `backend/app/`):
 
-1. **HTTP** — 11 routers (`routers/`): `meetings`, `calls`, `calendar`, `graph`,
-   `projects`, `tasks`, `agents`, `timeline`, `integrations`, `activity`,
-   `dashboard`. Mounted in `routers/__init__.py`. Auth via `deps.get_current_user`
+1. **HTTP** — 12 routers (`routers/`): `meetings`, `calls`, `calendar`, `zoom`,
+   `graph`, `projects`, `tasks`, `agents`, `timeline`, `integrations`,
+   `activity`, `dashboard`. Mounted in `routers/__init__.py`. Auth via `deps.get_current_user`
    (Clerk JWT; **disabled in dev** when `CLERK_JWKS_URL` unset → everyone is
    `DEMO_PRINCIPAL`). The call-room endpoints (`GET /calls/{id}`, the WS) are
    **deliberately public** — external guests join calls by link.
@@ -161,6 +162,23 @@ public in `middleware.ts` so guests can join by link).
   `POST /calendar/events/{id}/orbit-link` (same replace behavior).
   `PATCH /calendar/settings {autoLink}` toggles.
 
+- **Zoom** (`routers/zoom.py`): real OAuth (Basic-auth token exchange; Zoom
+  **rotates refresh tokens** — always persist the new one). Zoom's API can't
+  host links inside a Zoom meeting, so invite ownership happens on the calendar
+  side (`zoom.us` links in event location are replaced like Meet). What Zoom
+  adds: `GET /zoom/recordings` (cloud recordings, last 30 days — Zoom's range
+  cap) and `POST /zoom/recordings/import` → downloads the per-speaker VTT
+  transcript, parses it (`parse_vtt`), creates a `Meeting(source="zoom")`
+  tagged `zoom:{uuid}` (idempotent re-import) and runs the standard pipeline.
+  Needs a paid Zoom plan with cloud recording + audio transcript enabled.
+  Connections for both providers live in the `calendar_connections` table,
+  keyed by provider id (`google` / `zoom`).
+- **Activity hygiene**: `ActivityEvent.meeting_id` ties rows to meetings;
+  deleting a meeting (or re-analyzing → `delete_execution`) removes its
+  activity, and `visible_activity()` (routers/activity.py, also used by
+  dashboard) filters out rows whose meeting/project no longer exists — "What
+  Orbit did" never shows ghosts.
+
 ## Frontend architecture
 
 Next.js App Router under `frontend/src/app/(app)/`: `dashboard`, `calendar`,
@@ -207,6 +225,15 @@ Next.js App Router under `frontend/src/app/(app)/`: `dashboard`, `calendar`,
 - **Comments: only important ones.** A comment must carry a constraint, a why,
   a protocol, or a gotcha the code can't show. No narration, no decorative
   markers on self-evident code.
+- **No `window.confirm`** — use the shared `ConfirmDialog`
+  (`components/shared/confirm-dialog.tsx`): async-aware, destructive variant,
+  stays open on failure.
+- **External-source queries refetch on focus.** The app's QueryClient disables
+  `refetchOnWindowFocus` globally; queries backed by external systems (calendar
+  events) override with `"always"` so switching back to the Orbit tab re-syncs.
+- Branding renders through `OrbitMark`/`OrbitWordmark`
+  (`components/shared/logo.tsx` → `/public/orbit-logo.svg`; the circular crop +
+  zoom trims the SVG's baked-in black background).
 
 - Backend schemas serialize **camelCase** (`alias_generator=to_camel`) — keep
   frontend `lib/types.ts` in sync. **PATCH request bodies also accept camelCase**

@@ -34,6 +34,7 @@ import type {
   Project,
   Task,
   TimelineEvent,
+  ZoomRecording,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
@@ -270,6 +271,30 @@ export async function addOrbitLink(
 export async function patchCalendarSettings(autoLink: boolean): Promise<CalendarStatus> {
   if (USE_MOCK) throw new Error(NEEDS_BACKEND);
   return liveSend("/calendar/settings", "PATCH", { autoLink });
+}
+
+// Zoom: real OAuth; recordings' transcripts import into Meetings.
+export async function getZoomStatus(): Promise<CalendarStatus> {
+  if (USE_MOCK) return { configured: false, connected: false };
+  return live("/zoom/status");
+}
+export async function getZoomAuthUrl(): Promise<{ url: string }> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  const res = await fetch(`${API_URL}/zoom/connect`);
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `Connect failed: ${res.status}`);
+  return res.json();
+}
+export async function disconnectZoom(): Promise<void> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  await liveSend("/zoom/disconnect", "POST");
+}
+export async function getZoomRecordings(): Promise<ZoomRecording[]> {
+  if (USE_MOCK) return [];
+  return live("/zoom/recordings");
+}
+export async function importZoomRecording(uuid: string): Promise<{ meetingId: string; status: string }> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend("/zoom/recordings/import", "POST", { uuid });
 }
 
 /** Start an ad-hoc Orbit call room right now. */

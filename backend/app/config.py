@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     google_client_id: str | None = None
     google_client_secret: str | None = None
     google_redirect_uri: str = "http://localhost:8000/calendar/oauth/callback"
+    # Zoom OAuth app (create one at https://marketplace.zoom.us → Develop →
+    # Build App → General App). Redirect URL must match ZOOM_REDIRECT_URI.
+    zoom_client_id: str | None = None
+    zoom_client_secret: str | None = None
+    zoom_redirect_uri: str = "http://localhost:8000/zoom/oauth/callback"
 
     # --- AI / LLM provider (provider-agnostic via PydanticAI) ----------------
     # The agent pipeline only calls a live model when ENABLE_AI=true; otherwise

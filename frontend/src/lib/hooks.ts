@@ -18,6 +18,8 @@ export const qk = {
   activity: ["activity"] as const,
   calendarStatus: ["calendar", "status"] as const,
   calendarEvents: ["calendar", "events"] as const,
+  zoomStatus: ["zoom", "status"] as const,
+  zoomRecordings: ["zoom", "recordings"] as const,
 };
 
 export const useDashboard = () => useQuery({ queryKey: qk.dashboard, queryFn: api.getDashboard, refetchInterval: 8000 });
@@ -62,6 +64,11 @@ export const useCalendarEvents = (connected: boolean, timeMin?: string, days = 7
     refetchOnWindowFocus: "always",
     placeholderData: (prev) => prev, // keep the grid on screen while refetching
   });
+
+export const useZoomStatus = () =>
+  useQuery({ queryKey: qk.zoomStatus, queryFn: api.getZoomStatus });
+export const useZoomRecordings = (enabled: boolean) =>
+  useQuery({ queryKey: qk.zoomRecordings, queryFn: api.getZoomRecordings, enabled });
 
 /** The connected push target (Jira preferred, then Linear), or null if none. */
 export function useConnectedProvider(): "jira" | "linear" | null {
