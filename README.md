@@ -1,4 +1,7 @@
 # Orbit
+what is orbit ????
+
+Orbit is an execution platform with its own meeting platform. Teams can run customer meetings inside Orbit or import them from Zoom. After every conversation, Orbit prepares every downstream company update—CRM, product plans, engineering work, timelines, customer follow-ups—for human review before synchronizing approved changes to existing tools.
 
 **Meetings → shipped, on autopilot.**
 
