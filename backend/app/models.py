@@ -9,10 +9,47 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
+
+# Embedding dimension (Gemini text-embedding-004). Changing providers to a
+# different dimension requires a migration that rebuilds the vector columns.
+EMBEDDING_DIM = 768
+
+# Semantic embedding for Context Engine retrieval: a real pgvector column on
+# Postgres (indexable similarity search), plain JSON on dev SQLite (ranked in
+# Python — same behavior, no index).
+def _embedding_column():
+    return mapped_column(JSON().with_variant(Vector(EMBEDDING_DIM), "postgresql"), nullable=True)
+
+
+class Workspace(Base):
+    """Tenant boundary. Every business row carries a workspace_id; the dev/demo
+    instance runs on the seeded default workspace until Clerk orgs are wired."""
+
+    __tablename__ = "workspaces"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Customer(Base):
+    """A real customer entity — meetings, execution plans and knowledge hang off
+    it. `normalized_name` + `aliases` + `domains` are the identity-resolution
+    keys (see services/customers.py); `name` is the display form."""
+
+    __tablename__ = "customers"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
+    name: Mapped[str] = mapped_column(String)
+    normalized_name: Mapped[str] = mapped_column(String, index=True)
+    domains: Mapped[list[str]] = mapped_column(JSON, default=list)
+    aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class Member(Base):
@@ -32,7 +69,11 @@ class Meeting(Base):
     title: Mapped[str] = mapped_column(String)
     source: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String)
+    # `account` stays as the display string (mirrors Customer.name) for UI
+    # backcompat; `customer_id` is the real relationship.
     account: Mapped[str] = mapped_column(String)
+    customer_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
     date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     duration_sec: Mapped[int] = mapped_column(Integer, default=0)
     analysis_progress: Mapped[int] = mapped_column(Integer, default=0)
@@ -41,6 +82,7 @@ class Meeting(Base):
     transcript: Mapped[list[Any]] = mapped_column(JSON, default=list)
     analysis: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    embedding: Mapped[list[float] | None] = _embedding_column()
 
 
 class Agent(Base):
@@ -60,7 +102,12 @@ class Agent(Base):
     recent_runs: Mapped[list[Any]] = mapped_column(JSON, default=list)
 
 
-class Project(Base):
+class ExecutionPlan(Base):
+    """Orbit's central business object: the complete, reviewable execution
+    package prepared from one meeting (+ customer context). Table stays
+    `projects` for backward compatibility with existing data and the
+    `/projects` API surface."""
+
     __tablename__ = "projects"
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String)
@@ -73,20 +120,28 @@ class Project(Base):
     target_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     delivery_estimate: Mapped[str] = mapped_column(String)
     source_meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    customer_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
     revenue_impact: Mapped[float] = mapped_column(Float, default=0)
     owner: Mapped[dict[str, Any]] = mapped_column(JSON)
     team: Mapped[list[Any]] = mapped_column(JSON, default=list)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list)
     documents: Mapped[list[Any]] = mapped_column(JSON, default=list)
     prd: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    crm_update: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     engineering: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     design: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     qa: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     sales: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     customer_update: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     timeline: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    internal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     approval_status: Mapped[str] = mapped_column(String, default="draft")
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# Backward-compatible alias — existing code imports Project.
+Project = ExecutionPlan
 
 
 class Task(Base):
@@ -168,28 +223,75 @@ class CalendarConnection(Base):
     token_expiry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[str] = mapped_column(Text, default="")
     connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    # Automatically put Orbit links on upcoming meetings as they sync (NULL = on).
-    auto_link: Mapped[bool | None] = mapped_column(nullable=True, default=True)
 
 
-class CallRoom(Base):
-    """A live Orbit call. Orbit hosts the call itself (like Lyra) so each
-    participant's mic is transcribed individually; when the call ends the room
-    is finalized into a Meeting and the analysis pipeline runs."""
+class Approval(Base):
+    """Audit record of one approval: who approved which plan, when, and a
+    snapshot of the section keys that were approved."""
 
-    __tablename__ = "call_rooms"
-    id: Mapped[str] = mapped_column(String, primary_key=True)  # room code, e.g. r_ab12cd34
+    __tablename__ = "approvals"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
+    plan_id: Mapped[str] = mapped_column(String, index=True)
+    meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    approved_by: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sections: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
+class KnowledgeItem(Base):
+    """Long-term customer knowledge. Written ONLY from approved artifacts —
+    never raw AI output. `kind`: meeting-summary | crm-update | prd | timeline |
+    follow-up-email | commitment. Commitments carry status open|completed."""
+
+    __tablename__ = "knowledge_items"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
+    customer_id: Mapped[str] = mapped_column(String, index=True)
+    kind: Mapped[str] = mapped_column(String, index=True)
     title: Mapped[str] = mapped_column(String)
-    account: Mapped[str] = mapped_column(String, default="")
-    status: Mapped[str] = mapped_column(String, default="scheduled")  # scheduled | live | ended
-    calendar_event_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    scheduled_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    content: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String, default="active")  # active | open | completed
+    source_meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_plan_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    participants: Mapped[list[Any]] = mapped_column(JSON, default=list)  # [{id,name,joinedAt,leftAt}]
-    transcript: Mapped[list[Any]] = mapped_column(JSON, default=list)  # [{id,speaker,start,end,text}]
-    meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)  # set when finalized
+    embedding: Mapped[list[float] | None] = _embedding_column()
+
+
+class SyncJob(Base):
+    """One outbound synchronization prepared at approval time and executed
+    after it — never before. status: pending | running | done | failed | skipped."""
+
+    __tablename__ = "sync_jobs"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
+    plan_id: Mapped[str] = mapped_column(String, index=True)
+    customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    kind: Mapped[str] = mapped_column(String)  # crm-update | publish-prd | create-tasks | send-email
+    destination: Mapped[str] = mapped_column(String)  # salesforce | notion | jira | email | ...
+    status: Mapped[str] = mapped_column(String, default="pending")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ChatConversation(Base):
+    """One Ask-Orbit conversation (like a Claude/GPT chat). Messages are the
+    full transcript [{role, content, at, sources?}]; the customer binding makes
+    every later turn retrieve that customer's context automatically."""
+
+    __tablename__ = "chat_conversations"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
+    customer_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String, default="New conversation")
+    messages: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class ActivityEvent(Base):

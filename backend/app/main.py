@@ -20,7 +20,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
-    description="Turns customer meetings into PRDs, plans, tasks and shipped features — orchestrated by AI agents.",
+    description="The execution platform: turns customer conversations into reviewed, approved updates "
+                "that sync into the tools your team already uses — they stay the system of record.",
     lifespan=lifespan,
 )
 

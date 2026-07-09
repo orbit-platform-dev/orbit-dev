@@ -1,16 +1,10 @@
 import { cn } from "@/lib/utils";
+import { OrbitLogo } from "./orbit-mark";
 
-type Props ={
-  className?:string
-}
-
-export function OrbitMark({ className }: Props) {
-  return (
-    <span className={cn("inline-block h-7 w-7 shrink-0 overflow-hidden rounded-full", className)}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/orbit-logo.svg" alt="Orbit" className="h-full w-full scale-125 object-cover" />
-    </span>
-  );
+// The official mark is a transparent inline SVG (see ./orbit-mark.tsx), used
+// exactly as the landing page uses it — no background-cropping tricks needed.
+export function OrbitMark({ className }: { className?: string }) {
+  return <OrbitLogo className={cn("h-7 w-7 shrink-0", className)} />;
 }
 
 export function OrbitWordmark({ className }: { className?: string }) {

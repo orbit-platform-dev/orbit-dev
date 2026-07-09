@@ -41,15 +41,12 @@ export default function DashboardPage() {
     <div>
       <PageHeader
         title={`${greeting()} ${demoUser.name.split(" ")[0]}`}
-        description={`${formatDate(new Date(), { weekday: "long", month: "long", day: "numeric" })} · Here's what your agents have been up to.`}
+        description={`${formatDate(new Date(), { weekday: "long", month: "long", day: "numeric" })} · Here's what Orbit prepared for your review.`}
         actions={
           <>
             <Button asChild variant="outline" className="gap-2 text-muted-foreground">
               <Link href="/chat">
                 <Sparkles className="h-4 w-4" /> Ask Orbit
-                <Badge variant="muted" className="px-1.5 py-0 text-[10px]">
-                  Soon
-                </Badge>
               </Link>
             </Button>
             <Button asChild className="gap-2">

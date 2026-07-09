@@ -12,11 +12,17 @@ from sqlalchemy import delete
 
 from ..agents.orchestrator import run_pipeline, signals_to_analysis
 from ..agents.persistence import delete_execution, persist_execution
+from ..context.engine import build_context_package, render_context
 from ..database import SessionLocal
 from ..deps import Depends, get_current_user, get_db
-from ..models import ActivityEvent, Meeting, Project, TimelineEvent
+from ..models import ActivityEvent, Approval, ExecutionPlan, Meeting, TimelineEvent
 from ..redis_client import publish_event
 from ..schemas import MeetingOut, RunTranscriptIn, UploadMeetingIn
+from ..services.customers import resolve_customer
+from ..services.embeddings import embed_text
+from ..services.knowledge import record_approved_plan
+from ..services.sync import create_sync_jobs
+from ..services.workspace import get_workspace_id
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 logger = logging.getLogger("orbit.meetings")
@@ -45,9 +51,23 @@ async def _analyze_in_background(meeting_id: str) -> None:
             await db.commit()
 
         try:
-            state = await run_pipeline(m.id, transcript_text, m.account, on_progress=on_progress)
+            # Context Engine: the WIDE slice of this customer's history — every
+            # generator (CRM, PRD, email, plan) sees the full picture, never a
+            # single meeting; the agents decide what's relevant.
+            context = ""
+            if m.customer_id:
+                pkg = await build_context_package(
+                    db, m.customer_id, exclude_meeting_id=m.id,
+                    query_text=transcript_text[:2000], wide=True)
+                context = render_context(pkg)
+            state = await run_pipeline(m.id, transcript_text, m.account, on_progress=on_progress,
+                                       context=context)
             analysis = signals_to_analysis(state.get("signals", {}))
             m.analysis = analysis
+            # Embed the meeting's essence so the Context Engine can find it
+            # semantically later; None (AI off / API error) degrades gracefully.
+            m.embedding = await embed_text(
+                f"{m.title}\n{analysis.get('summary', '')}\n" + " ".join(analysis.get("keyTakeaways", [])))
             if analysis.get("featureRequests") or analysis.get("painPoints"):
                 m.linked_project_id = await persist_execution(m, state, db)
             else:
@@ -88,14 +108,18 @@ async def get_meeting(meeting_id: str, db=Depends(get_db), _=Depends(get_current
 
 
 @router.post("", response_model=MeetingOut, status_code=201)
-async def upload_meeting(body: UploadMeetingIn, background: BackgroundTasks, db=Depends(get_db), _=Depends(get_current_user)):
+async def upload_meeting(body: UploadMeetingIn, background: BackgroundTasks, db=Depends(get_db),
+                         ws: str = Depends(get_workspace_id)):
     has_transcript = bool(body.transcript_text)
+    customer = await resolve_customer(db, ws, body.account)
     m = Meeting(
         id=f"m_{uuid.uuid4().hex[:8]}",
         title=body.title,
         source=body.source,
         status="analyzing" if has_transcript else "transcribing",
-        account=body.account,
+        account=customer.name if customer else body.account,
+        customer_id=customer.id if customer else None,
+        workspace_id=ws,
         date=datetime.now(timezone.utc),
         duration_sec=0,
         analysis_progress=5,
@@ -119,7 +143,8 @@ async def upload_meeting(body: UploadMeetingIn, background: BackgroundTasks, db=
 
 
 @router.post("/transcript")
-async def run_transcript(body: RunTranscriptIn, background: BackgroundTasks, db=Depends(get_db), _=Depends(get_current_user)):
+async def run_transcript(body: RunTranscriptIn, background: BackgroundTasks, db=Depends(get_db),
+                         ws: str = Depends(get_workspace_id)):
     """Create a meeting from a pasted transcript and kick off analysis in the background.
 
     Returns immediately with the new meeting id; the client polls the meeting to watch
@@ -130,12 +155,15 @@ async def run_transcript(body: RunTranscriptIn, background: BackgroundTasks, db=
     if len(body.transcript.split()) < 6:
         raise HTTPException(422, "Transcript is too short to analyze — paste a real meeting transcript.")
 
+    customer = await resolve_customer(db, ws, body.account)
     m = Meeting(
         id=f"m_{uuid.uuid4().hex[:8]}",
         title=body.title,
         source="transcript",
         status="analyzing",
-        account=body.account,
+        account=customer.name if customer else body.account,
+        customer_id=customer.id if customer else None,
+        workspace_id=ws,
         date=datetime.now(timezone.utc),
         duration_sec=0,
         analysis_progress=5,
@@ -194,6 +222,10 @@ async def patch_meeting(meeting_id: str, body: PatchMeetingIn, db=Depends(get_db
     m = await db.get(Meeting, meeting_id)
     if not m:
         raise HTTPException(404, "Meeting not found")
+    if m.linked_project_id:
+        p = await db.get(ExecutionPlan, m.linked_project_id)
+        if p and p.approval_status == "approved":
+            raise HTTPException(409, "Execution plan is approved and locked")
     if body.analysis is not None:
         m.analysis = body.analysis
     await db.commit()
@@ -202,30 +234,45 @@ async def patch_meeting(meeting_id: str, body: PatchMeetingIn, db=Depends(get_db
 
 
 @router.post("/{meeting_id}/approve")
-async def approve_execution(meeting_id: str, db=Depends(get_db), _=Depends(get_current_user)):
-    """Finalize the execution plan. For the MVP this only flips state — no external sync."""
+async def approve_execution(meeting_id: str, db=Depends(get_db), user=Depends(get_current_user)):
+    """Approve the execution plan: lock every artifact, record the audit trail,
+    fold the approved sections into customer Knowledge, and PREPARE SyncJobs.
+    Approval never executes anything — each prepared update runs only when a
+    human explicitly triggers it (POST /projects/{id}/sync-jobs/{job}/run)."""
     m = await db.get(Meeting, meeting_id)
     if not m:
         raise HTTPException(404, "Meeting not found")
     if not m.linked_project_id:
         raise HTTPException(409, "This meeting has no execution plan to approve")
-    p = await db.get(Project, m.linked_project_id)
+    p = await db.get(ExecutionPlan, m.linked_project_id)
     if not p:
         raise HTTPException(404, "Execution plan not found")
+    if p.approval_status == "approved":
+        raise HTTPException(409, "Execution plan is already approved")
 
     now = datetime.now(timezone.utc)
     p.approval_status = "approved"
     p.approved_at = now
     p.status = "in-progress"
+
+    sections = await record_approved_plan(db, m, p)  # approved output → customer knowledge
+    jobs = await create_sync_jobs(db, m, p)          # prepared, not yet executed
+    db.add(Approval(
+        id=f"ap_{uuid.uuid4().hex[:8]}", workspace_id=p.workspace_id, plan_id=p.id,
+        meeting_id=m.id, customer_id=m.customer_id,
+        approved_by={"name": user.get("name") or "You", "sub": user.get("sub", "")},
+        at=now, sections=sections,
+    ))
     db.add(ActivityEvent(
         id=f"ac_{uuid.uuid4().hex[:8]}", actor={"name": "You"}, action="approved the execution plan for",
         target=p.name, target_type="project", at=now, project_id=p.id, meeting_id=m.id,
     ))
     db.add(TimelineEvent(
         id=f"ev_{uuid.uuid4().hex[:8]}", kind="review-approved", title="Execution plan approved",
-        description=f"{p.name} approved — ready for synchronization.", at=now, actor="You",
-        project_id=p.id, meeting_id=m.id,
+        description=f"{p.name} approved and locked — {len(jobs)} update(s) prepared for sync.",
+        at=now, actor="You", project_id=p.id, meeting_id=m.id,
     ))
     await db.commit()
     await publish_event("orbit:pipeline", {"type": "execution.approved", "meetingId": m.id, "projectId": p.id})
-    return {"meetingId": m.id, "projectId": p.id, "approvalStatus": "approved", "approvedAt": now.isoformat()}
+    return {"meetingId": m.id, "projectId": p.id, "approvalStatus": "approved",
+            "approvedAt": now.isoformat(), "syncJobs": len(jobs)}

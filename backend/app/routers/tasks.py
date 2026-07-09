@@ -7,13 +7,20 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from ..deps import Depends, get_current_user, get_db
-from ..models import Integration, Task
+from ..models import ExecutionPlan, Integration, Task
 from ..schemas import TaskOut
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 _CONNECTED = {"connected", "syncing"}
 _EXTERNAL_PREFIX = {"jira": "JIRA", "linear": "LIN"}
+
+
+async def _plan_approved(db, task: Task) -> bool:
+    if not task.project_id:
+        return False
+    p = await db.get(ExecutionPlan, task.project_id)
+    return bool(p and p.approval_status == "approved")
 
 
 class PatchTaskIn(BaseModel):
@@ -42,6 +49,12 @@ async def patch_task(task_id: str, body: PatchTaskIn, db=Depends(get_db), _=Depe
     t = await db.get(Task, task_id)
     if not t:
         raise HTTPException(404, "Task not found")
+    # Approval locks the whole plan — kanban `column` moves stay allowed (that's
+    # delivery tracking, not editing the approved plan).
+    if await _plan_approved(db, t) and any(
+        getattr(body, f) is not None for f in ("priority", "title", "description", "assignee", "decision")
+    ):
+        raise HTTPException(409, "Execution plan is approved and locked")
     for field in ("column", "priority", "title", "description", "assignee"):
         value = getattr(body, field)
         if value is not None:
@@ -80,5 +93,7 @@ async def delete_task(task_id: str, db=Depends(get_db), _=Depends(get_current_us
     """Skip/remove a work item from the plan."""
     t = await db.get(Task, task_id)
     if t:
+        if await _plan_approved(db, t):
+            raise HTTPException(409, "Execution plan is approved and locked")
         await db.delete(t)
         await db.commit()

@@ -194,24 +194,88 @@ def fallback_sales(prd: dict) -> dict:
 
 
 def fallback_route(signals: dict, prd: dict) -> dict:
-    """Deterministic routing when AI is off — involve the obvious teams."""
+    """Deterministic routing when AI is off — involve the obvious sections."""
     has_features = bool(signals.get("featureRequests"))
     has_opportunity = bool(signals.get("opportunities"))
+    crm_worthy = has_opportunity or bool(signals.get("revenueImpact")) or signals.get("urgency") in ("critical", "high")
     return {"teams": [
         {"team": "engineering", "relevant": has_features, "reason": "Implements the requested capability." if has_features else "No build work identified."},
         {"team": "design", "relevant": has_features, "reason": "Shapes the user experience." if has_features else "No user-facing change identified."},
         {"team": "qa", "relevant": has_features, "reason": "Validates the change before release." if has_features else "Nothing to test."},
         {"team": "sales", "relevant": has_opportunity, "reason": "Tied to a revenue opportunity." if has_opportunity else "No clear revenue tie."},
         {"team": "customer-success", "relevant": True, "reason": "Close the loop with the customer."},
+        {"team": "crm", "relevant": crm_worthy, "reason": "Deal state or risk changed in this conversation." if crm_worthy else "Nothing here changes the account record."},
     ]}
+
+
+def fallback_crm_update(signals: dict, account: str) -> dict:
+    """Deterministic CRM update proposal from the extracted signals."""
+    frs = signals.get("featureRequests", [])
+    urgency = signals.get("urgency", "medium")
+    risk = "high" if urgency == "critical" else "medium" if urgency == "high" else "low"
+    revenue = signals.get("revenueImpact") or 0
+    next_steps = [f"Confirm timeline for {f['title']}" for f in frs[:2]] or ["Send meeting follow-up"]
+    fields = []
+    if revenue:
+        fields.append({"field": "Revenue at stake", "value": f"${revenue:,.0f}",
+                       "reason": "Amount surfaced in the conversation."})
+    if frs:
+        fields.append({"field": "Next steps", "value": next_steps[0],
+                       "reason": f"Customer is waiting on {frs[0]['title']}."})
+    if risk != "low":
+        fields.append({"field": "Renewal risk", "value": risk,
+                       "reason": f"Urgency read as {urgency} from the transcript."})
+    return {
+        "accountSummary": (signals.get("summary") or f"Conversation with {account or 'the customer'} analyzed.")[:300],
+        "opportunityStage": "Evaluation" if frs else "Nurture",
+        "riskLevel": risk,
+        "nextSteps": next_steps,
+        "fieldUpdates": fields,
+    }
+
+
+def fallback_chat(question: str, context_text: str) -> dict:
+    """AI-off chat: answer directly from the rendered context package."""
+    if not context_text.strip():
+        return {"answer": "I don't have any history for that customer yet — approved meetings and "
+                          "execution plans will appear here as knowledge builds up.", "sources": []}
+    q = question.lower()
+    sections = {
+        "commitment": "Open commitments to this customer:",
+        "plan": "Approved execution plans:",
+        "prd": "Approved execution plans:",
+        "approve": "Approved execution plans:",
+        "meeting": "Previous meetings:",
+        "request": "Previous meetings:",
+    }
+    wanted = next((v for k, v in sections.items() if k in q), None)
+    lines = context_text.splitlines()
+    if wanted and wanted in lines:
+        start = lines.index(wanted)
+        block = [wanted]
+        for line in lines[start + 1:]:
+            if not line.startswith("- "):
+                break
+            block.append(line)
+        return {"answer": "\n".join(block), "sources": []}
+    return {"answer": "Here's what Orbit knows:\n" + "\n".join(lines[:14]), "sources": []}
 
 
 def fallback_customer_update(signals: dict, account: str) -> dict:
     items = signals.get("featureRequests", [])
     primary = items[0]["title"] if items else "your request"
+    raised = "\n".join(f"  {i}. {it['title']}" for i, it in enumerate(items[:3], start=1))
+    body = (
+        f"Hi {account or 'team'},\n\n"
+        "Thank you for the conversation today — the priorities you raised are clear on our side.\n\n"
+        + (f"What we heard:\n{raised}\n\n" if raised else "")
+        + f"Our commitment: we will come back to you this week with a concrete delivery timeline for {primary}, "
+        "and keep you updated on progress at each milestone.\n\n"
+        "If anything above misses the mark, reply here and we'll correct course.\n\n"
+        "Best regards"
+    )
     return {
-        "subject": f"Update on {primary} for {account}",
-        "body": f"Hi team — following up on our conversation, {primary} is now in active development. "
-        "We'll share a firm timeline this week and keep you posted on progress.",
+        "subject": f"Follow-up: {primary} — next steps",
+        "body": body,
         "commitments": [f"Deliver {it['title']}" for it in items[:3]] or ["Follow up with a timeline"],
     }

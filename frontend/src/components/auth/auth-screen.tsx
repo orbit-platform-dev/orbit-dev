@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowRight, Bot, GitBranch, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, CheckCircle2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { OrbitWordmark } from "@/components/shared/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,9 +11,21 @@ import { Label } from "@/components/ui/label";
 import { clerkEnabled } from "@/lib/auth";
 
 const highlights = [
-  { icon: Sparkles, title: "Meetings → shipped features", desc: "Every call becomes PRDs, plans, and tasks automatically." },
-  { icon: Bot, title: "A team of 8 AI agents", desc: "Product, engineering, design, QA, sales — working in concert." },
-  { icon: GitBranch, title: "Live execution graph", desc: "Watch work flow from conversation to deployment in real time." },
+  {
+    icon: Sparkles,
+    title: "Every conversation, prepared",
+    desc: "CRM update, PRD, work items, timeline and follow-up — drafted from each meeting plus everything Orbit knows about the customer.",
+  },
+  {
+    icon: CheckCircle2,
+    title: "You review, you approve",
+    desc: "Everything is an editable draft. Nothing reaches a customer or a tool without your sign-off.",
+  },
+  {
+    icon: RefreshCw,
+    title: "Your tools stay in charge",
+    desc: "Approved updates sync to Jira, Notion and your CRM — they remain the system of record.",
+  },
 ];
 
 export function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
@@ -39,7 +51,7 @@ export function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
         </div>
         <div className="relative space-y-8">
           <h1 className="max-w-md text-3xl font-semibold leading-tight tracking-tight">
-            Turn every customer conversation into <span className="text-gradient-brand">shipped product.</span>
+            Turn every customer conversation into <span className="text-gradient-brand">approved execution.</span>
           </h1>
           <div className="space-y-5">
             {highlights.map((h, i) => (
@@ -63,7 +75,7 @@ export function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
         </div>
         <div className="relative flex items-center gap-2 text-xs text-muted-foreground">
           <ShieldCheck className="h-3.5 w-3.5" />
-          SOC 2 Type II · SAML SSO · End-to-end encrypted
+          Orbit proposes · You approve · Your tools stay the system of record
         </div>
       </div>
 
@@ -82,7 +94,7 @@ export function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
                 {isSignUp ? "Create your workspace" : "Welcome back"}
               </h2>
               <p className="mt-1.5 text-sm text-muted-foreground">
-                {isSignUp ? "Start turning meetings into momentum." : "Sign in to continue to Orbit."}
+                {isSignUp ? "Start turning conversations into approved execution." : "Sign in to continue to Orbit."}
               </p>
 
               <form

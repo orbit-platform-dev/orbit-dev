@@ -24,9 +24,8 @@ class Settings(BaseSettings):
     clerk_jwks_url: str | None = None
     clerk_issuer: str | None = None
 
-    # --- Orbit Calls + Google Calendar ---------------------------------------
-    # Where the Next.js app lives — used to build shareable /call/{room} links
-    # and as the post-OAuth redirect target.
+    # --- Google Calendar + Zoom OAuth -----------------------------------------
+    # Where the Next.js app lives — the post-OAuth redirect target.
     frontend_url: str = "http://localhost:3000"
     # Google OAuth client (create one at https://console.cloud.google.com →
     # APIs & Services → Credentials → OAuth client ID, type "Web application").
@@ -34,6 +33,10 @@ class Settings(BaseSettings):
     google_client_id: str | None = None
     google_client_secret: str | None = None
     google_redirect_uri: str = "http://localhost:8000/calendar/oauth/callback"
+    # Google Meet reuses the same OAuth client with its own callback + scopes;
+    # this URI must also be authorized on the client, and the 'Google Meet REST
+    # API' must be enabled in the Cloud project.
+    meet_redirect_uri: str = "http://localhost:8000/meet/oauth/callback"
     # Zoom OAuth app (create one at https://marketplace.zoom.us → Develop →
     # Build App → General App). Redirect URL must match ZOOM_REDIRECT_URI.
     zoom_client_id: str | None = None
@@ -52,6 +55,9 @@ class Settings(BaseSettings):
     enable_ai: bool = False
     default_model: str = "google-gla:gemini-2.0-flash"
     llm_api_key: str | None = None
+    # Embedding model for the Context Engine's semantic retrieval (uses the
+    # same LLM_API_KEY). Output is requested at models.EMBEDDING_DIM dimensions.
+    embedding_model: str = "gemini-embedding-001"
     ollama_base_url: str | None = None  # defaults to http://localhost:11434/v1
 
     # Back-compat: a bare ANTHROPIC_API_KEY is still accepted as the LLM key.

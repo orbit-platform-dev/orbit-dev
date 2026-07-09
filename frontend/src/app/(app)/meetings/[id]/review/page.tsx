@@ -7,29 +7,27 @@ import { motion } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  ArrowLeft, ArrowUpRight, Bug, CalendarClock, CheckCircle2, Crosshair, FileText,
-  ListChecks, Lock, Mail, Pencil, Plug, Rocket, Sparkles, Workflow,
+  ArrowLeft, ArrowUpRight, Bug, CalendarClock, CheckCircle2, Contact, Crosshair,
+  FileDown, FileText, ListChecks, Loader2, Lock, Mail, Pencil, Plug, Rocket,
+  Send, Sparkles, Workflow,
 } from "lucide-react";
-import { qk, useConnectedProvider, useMeeting, useProject, useTasks } from "@/lib/hooks";
+import { qk, useConnectedProvider, useIntegrations, useMeeting, useProject, useSyncJobs, useTasks } from "@/lib/hooks";
 import * as api from "@/lib/api";
-import type { MeetingAnalysis, Project, Task } from "@/lib/types";
+import type { MeetingAnalysis, Project, SyncJob, Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { GraphCanvas } from "@/components/graph/graph-canvas";
-import { WorkItemCard, type Provider } from "@/components/execution/work-item-card";
+import { WorkItemCard } from "@/components/execution/work-item-card";
 import { ObjectList, StringList } from "@/components/execution/editable";
-import { PrdPublish } from "@/components/execution/prd-publish";
-import { PublishDialog } from "@/components/execution/publish-dialog";
+import { downloadPrdPdf } from "@/components/execution/prd-pdf";
 import { downloadPlanPdf } from "@/components/execution/plan-pdf";
-import { PUBLISH_DESTINATIONS, type PrdDestination, type PublishOutcome } from "@/components/execution/publish-destinations";
 
 const DISC: Record<string, { label: string; color: string }> = {
   product: { label: "Product", color: "#8b5cf6" },
@@ -158,7 +156,7 @@ export default function ExecutionReviewPage() {
               <CheckCircle2 className="h-6 w-6 text-success" />
               <div className="flex-1">
                 <div className="text-sm font-semibold">Execution Plan Approved</div>
-                <div className="text-xs text-muted-foreground">Ready for synchronization. Integration push (Jira / Linear) comes next.</div>
+                <div className="text-xs text-muted-foreground">Locked — nothing can change now. Run each prepared update below when you&apos;re ready; your tools stay the system of record.</div>
               </div>
               <Badge variant="success" className="gap-1"><Lock className="h-3 w-3" /> Locked</Badge>
             </div>
@@ -169,11 +167,25 @@ export default function ExecutionReviewPage() {
       {/* 1. Customer Intent */}
       {a && <IntentSection meetingId={id} analysis={a} locked={approved} onSaved={invalidate} />}
 
-      {/* 2. PRD */}
+      {/* 2. CRM Update proposal */}
+      <CrmSection project={project} locked={approved} onSaved={invalidate} />
+
+      {/* 3. PRD */}
       <PrdSection project={project} locked={approved} onSaved={invalidate} />
 
-      {/* 3. Execution Plan */}
-      <Section icon={ListChecks} title="Execution Plan" hint={`${tasks.length} work items across the relevant teams — each explains why.`}>
+      {/* 4. Execution Plan */}
+      <Section icon={ListChecks} title="Execution Plan" hint={`${tasks.length} work items across the relevant teams — each explains why.`}
+        action={
+          <div className="flex items-center gap-1.5">
+            {tasks.length > 0 && (
+              <Button size="sm" variant="ghost" className="gap-1.5 text-muted-foreground"
+                onClick={() => downloadPlanPdf(tasks.filter((t) => t.links?.decision !== "declined"), project.name)}>
+                <FileDown className="h-3.5 w-3.5" /> PDF
+              </Button>
+            )}
+            <SectionSync planId={pid} kind="create-tasks" approved={approved} onDone={invalidate} />
+          </div>
+        }>
         {tasks.length === 0 ? (
           <p className="text-sm text-muted-foreground">No work items generated.</p>
         ) : (
@@ -190,7 +202,7 @@ export default function ExecutionReviewPage() {
                   </div>
                   <div className="space-y-2">
                     {items.map((t) => (
-                      <WorkItemCard key={t.id} task={t} members={members} connectedProvider={connectedProvider} canPush={approved} canEdit={!approved} onChanged={invalidate} />
+                      <WorkItemCard key={t.id} task={t} members={members} connectedProvider={connectedProvider} canPush={false} canEdit={!approved} onChanged={invalidate} />
                     ))}
                   </div>
                 </div>
@@ -219,50 +231,77 @@ export default function ExecutionReviewPage() {
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-6 py-3">
           <div className="text-sm">
             {approved ? (
-              <span className="flex items-center gap-2 text-success"><CheckCircle2 className="h-4 w-4" /> Approved — ready for synchronization.</span>
+              <span className="flex items-center gap-2 text-success"><CheckCircle2 className="h-4 w-4" /> Approved and locked — use each section&apos;s push button to sync.</span>
             ) : (
-              <span className="text-muted-foreground">Review the plan above, then approve to finalize it.</span>
+              <span className="text-muted-foreground">Review the plan above, then approve to lock it. Nothing is sent until you push it.</span>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {approved && <PushPlanDialog tasks={tasks} projectName={project.name} onPushed={invalidate} />}
-            <Button onClick={approve} disabled={approved || approving} className="gap-2">
-              {approved ? <><Lock className="h-4 w-4" /> Approved</> : <><Rocket className="h-4 w-4" /> {approving ? "Approving…" : "Approve execution plan"}</>}
-            </Button>
-          </div>
+          <Button onClick={approve} disabled={approved || approving} className="gap-2">
+            {approved ? <><Lock className="h-4 w-4" /> Approved</> : <><Rocket className="h-4 w-4" /> {approving ? "Approving…" : "Approve execution plan"}</>}
+          </Button>
         </div>
       </div>
     </div>
   );
 }
 
-function PushPlanDialog({ tasks, projectName, onPushed }: { tasks: Task[]; projectName: string; onPushed: () => void }) {
-  // Accepted, not-yet-pushed items are eligible to push; the PDF covers all accepted items.
-  const pending = tasks.filter((t) => t.links?.decision !== "declined" && !t.links?.pushed);
-  const planItems = tasks.filter((t) => t.links?.decision !== "declined");
+// --- Per-section synchronization ---------------------------------------------
+// Every pushable section carries its own push button: disabled until the plan
+// is approved AND the destination tool is connected; "Synced" once delivered.
+const SYNC_META: Record<Exclude<SyncJob["kind"], "send-email">, {
+  label: string; keys: string[]; connectHint: string;
+}> = {
+  "crm-update": { label: "Sync CRM", keys: ["salesforce", "hubspot"], connectHint: "Connect Salesforce or HubSpot to sync" },
+  "publish-prd": { label: "Publish", keys: ["notion", "confluence", "google-docs"], connectHint: "Connect Notion, Confluence or Google Docs to publish" },
+  "create-tasks": { label: "Create issues", keys: ["jira", "linear"], connectHint: "Connect Jira or Linear to create issues" },
+};
 
-  const publish = async (dest: PrdDestination): Promise<PublishOutcome> => {
-    if (dest.integrationKey === null) {
-      await downloadPlanPdf(planItems, projectName); // PDF
-      return { key: dest.key, name: dest.name };
-    }
-    if (dest.integrationKey === "jira" || dest.integrationKey === "linear") {
-      for (const t of pending) await api.pushTask(t.id, dest.integrationKey); // create issues
-      return { key: dest.key, name: dest.name, url: api.stubBoardUrl(dest.integrationKey) };
-    }
-    // Doc tools: publish the plan as a document (stub link until the integration exists).
-    return { key: dest.key, name: dest.name, url: api.stubDocUrl(dest.integrationKey) };
+function SectionSync({ planId, kind, approved, onDone }: {
+  planId: string; kind: keyof typeof SYNC_META; approved: boolean; onDone: () => void;
+}) {
+  const qc = useQueryClient();
+  const { data: jobs } = useSyncJobs(planId, approved);
+  const { data: integrations } = useIntegrations();
+  const [busy, setBusy] = React.useState(false);
+
+  const meta = SYNC_META[kind];
+  const job = jobs?.find((j) => j.kind === kind);
+  const connected = meta.keys.some((k) =>
+    integrations?.some((i) => i.key === k && (i.status === "connected" || i.status === "syncing")));
+
+  if (approved && job?.status === "done") {
+    const url = (job.result as { url?: string } | null)?.url;
+    return (
+      <div className="flex items-center gap-1.5">
+        {url && (
+          <Button asChild size="sm" variant="ghost" className="gap-1 text-xs text-muted-foreground">
+            <a href={url} target="_blank" rel="noreferrer">Open <ArrowUpRight className="h-3 w-3" /></a>
+          </Button>
+        )}
+        <Badge variant="success" className="gap-1"><CheckCircle2 className="h-3 w-3" /> Synced</Badge>
+      </div>
+    );
+  }
+
+  const hint = !approved ? "Enabled after approval" : !connected ? meta.connectHint : undefined;
+  const run = async () => {
+    if (!job) return;
+    setBusy(true);
+    try {
+      await api.runSyncJob(planId, job.id);
+      qc.invalidateQueries({ queryKey: qk.syncJobs(planId) });
+      onDone();
+      toast.success(`${meta.label} — synchronized`);
+    } catch (err) { toast.error("Couldn't sync", { description: (err as Error).message }); }
+    finally { setBusy(false); }
   };
 
   return (
-    <PublishDialog
-      trigger={<Button variant="outline" className="gap-2"><ArrowUpRight className="h-4 w-4" /> Push to tools</Button>}
-      title="Where should these work items go?"
-      description={`${pending.length} work item${pending.length === 1 ? "" : "s"} ready · declined and already-pushed items are skipped.`}
-      destinations={PUBLISH_DESTINATIONS}
-      publish={publish}
-      onDone={onPushed}
-    />
+    <Button size="sm" variant="outline" className="gap-1.5" title={hint}
+      disabled={!approved || !connected || !job || busy} onClick={run}>
+      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpRight className="h-3.5 w-3.5" />}
+      {job?.status === "failed" ? "Retry" : meta.label}
+    </Button>
   );
 }
 
@@ -324,10 +363,40 @@ function PrdSection({ project, locked, onSaved }: { project: Project; locked: bo
   const prd = project.prd;
   const [editing, setEditing] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const [generating, setGenerating] = React.useState(false);
   const [draft, setDraft] = React.useState(() => clonePrd(prd, project.name));
   React.useEffect(() => { if (!editing) setDraft(clonePrd(prd, project.name)); }, [prd, project.name, editing]);
-  if (!prd) return null;
   const set = <K extends keyof PrdDraft>(k: K, v: PrdDraft[K]) => setDraft((d) => ({ ...d, [k]: v }));
+
+  const generate = async () => {
+    setGenerating(true);
+    try {
+      await api.generatePrd(project.id);
+      onSaved(); toast.success("PRD drafted — review and edit it below");
+    } catch (err) { toast.error("Couldn't generate the PRD", { description: (err as Error).message }); }
+    finally { setGenerating(false); }
+  };
+
+  // No PRD until a human asks for one.
+  if (!prd) {
+    return (
+      <Section icon={FileText} title="PRD" hint="Generated on demand — from this meeting plus the customer's history.">
+        <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border py-8 text-center">
+          <p className="max-w-sm text-sm text-muted-foreground">
+            {locked
+              ? "This plan was approved without a PRD."
+              : "No PRD yet. Orbit will draft one from the customer intent above and everything it knows about this customer."}
+          </p>
+          {!locked && (
+            <Button onClick={generate} disabled={generating} className="gap-2">
+              {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {generating ? "Generating…" : "Generate PRD"}
+            </Button>
+          )}
+        </div>
+      </Section>
+    );
+  }
 
   const save = async () => {
     setBusy(true);
@@ -339,11 +408,15 @@ function PrdSection({ project, locked, onSaved }: { project: Project; locked: bo
   };
 
   return (
-    <Section icon={FileText} title="Draft PRD" hint="Editable — Orbit's first draft."
+    <Section icon={FileText} title="PRD" hint={locked ? "Approved." : "Editable — Orbit's first draft."}
       action={editing
         ? <div className="flex gap-1.5"><Button size="sm" onClick={save} disabled={busy}>Save</Button><Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button></div>
         : <div className="flex items-center gap-1.5">
-            <PrdPublish projectId={project.id} prd={prd} projectName={project.name} onChanged={onSaved} />
+            <Button size="sm" variant="ghost" className="gap-1.5 text-muted-foreground"
+              onClick={() => downloadPrdPdf(prd, project.name)}>
+              <FileDown className="h-3.5 w-3.5" /> PDF
+            </Button>
+            <SectionSync planId={project.id} kind="publish-prd" approved={locked} onDone={onSaved} />
             {!locked && <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setEditing(true)}><Pencil className="h-3.5 w-3.5" /> Edit</Button>}
           </div>}>
       {editing ? (
@@ -419,45 +492,200 @@ function PrdSection({ project, locked, onSaved }: { project: Project; locked: bo
   );
 }
 
+type CrmDraft = {
+  accountSummary: string; opportunityStage: string; riskLevel: string;
+  nextSteps: string[]; fieldUpdates: { field: string; value: string; reason: string }[];
+};
+
+function cloneCrm(crm: Project["crmUpdate"]): CrmDraft {
+  return {
+    accountSummary: crm?.accountSummary ?? "",
+    opportunityStage: crm?.opportunityStage ?? "",
+    riskLevel: crm?.riskLevel ?? "low",
+    nextSteps: [...(crm?.nextSteps ?? [])],
+    fieldUpdates: (crm?.fieldUpdates ?? []).map((f) => ({ ...f })),
+  };
+}
+
+const RISK_COLOR: Record<string, string> = { low: "#10b981", medium: "#f59e0b", high: "#ef4444" };
+
+function CrmSection({ project, locked, onSaved }: { project: Project; locked: boolean; onSaved: () => void }) {
+  const crm = project.crmUpdate;
+  const skipped = crm?.skipped;
+  const [editing, setEditing] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [draft, setDraft] = React.useState(() => cloneCrm(crm));
+  React.useEffect(() => { if (!editing) setDraft(cloneCrm(crm)); }, [crm, editing]);
+  if (!crm) return null;
+  const set = <K extends keyof CrmDraft>(k: K, v: CrmDraft[K]) => setDraft((d) => ({ ...d, [k]: v }));
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.patchProject(project.id, { crmUpdate: { ...crm, ...draft } });
+      onSaved(); setEditing(false); toast.success("CRM update edited");
+    } catch { toast.error("Could not save CRM update"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Section icon={Contact} title="CRM Update" hint="Proposed account-record changes — reaches your CRM only when you push it."
+      action={!skipped && (editing
+        ? <div className="flex gap-1.5"><Button size="sm" onClick={save} disabled={busy}>Save</Button><Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button></div>
+        : <div className="flex items-center gap-1.5">
+            <SectionSync planId={project.id} kind="crm-update" approved={locked} onDone={onSaved} />
+            {!locked && <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setEditing(true)}><Pencil className="h-3.5 w-3.5" /> Edit</Button>}
+          </div>)}>
+      {skipped ? (
+        <p className="text-sm text-muted-foreground">Skipped — {crm?.reason || "nothing here changes the account record."}</p>
+      ) : editing ? (
+        <div className="space-y-3">
+          <Field label="Account summary"><Textarea value={draft.accountSummary} onChange={(e) => set("accountSummary", e.target.value)} rows={3} /></Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Opportunity stage"><Input value={draft.opportunityStage} onChange={(e) => set("opportunityStage", e.target.value)} /></Field>
+            <Field label="Risk level">
+              <Select value={draft.riskLevel} onValueChange={(v) => set("riskLevel", v)}>
+                <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>{["low", "medium", "high"].map((r) => <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>)}</SelectContent>
+              </Select>
+            </Field>
+          </div>
+          <Field label="Next steps"><StringList value={draft.nextSteps} onChange={(v) => set("nextSteps", v)} placeholder="Next step" addLabel="Add step" /></Field>
+          <Field label="Field updates">
+            <ObjectList value={draft.fieldUpdates} onChange={(v) => set("fieldUpdates", v)} addLabel="Add field update"
+              blank={() => ({ field: "", value: "", reason: "" })}>
+              {(f, setF) => (
+                <div className="space-y-1.5">
+                  <div className="flex gap-1.5">
+                    <Input value={f.field} onChange={(e) => setF({ field: e.target.value })} placeholder="Field" className="h-8 w-40 text-sm" />
+                    <Input value={f.value} onChange={(e) => setF({ value: e.target.value })} placeholder="Value" className="h-8 text-sm" />
+                  </div>
+                  <Input value={f.reason} onChange={(e) => setF({ reason: e.target.value })} placeholder="Why (meeting evidence)" className="h-8 text-sm" />
+                </div>
+              )}
+            </ObjectList>
+          </Field>
+        </div>
+      ) : (
+        <>
+          {crm.accountSummary && <p className="text-sm text-muted-foreground">{crm.accountSummary}</p>}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {crm.opportunityStage && <Badge variant="muted">Stage: {crm.opportunityStage}</Badge>}
+            {crm.riskLevel && (
+              <Badge variant="muted" className="gap-1.5 capitalize">
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: RISK_COLOR[crm.riskLevel] ?? "#888" }} />
+                {crm.riskLevel} risk
+              </Badge>
+            )}
+          </div>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            {!!crm.nextSteps?.length && (
+              <Field label="Next steps"><ul className="list-disc space-y-0.5 pl-4 text-sm text-muted-foreground">{crm.nextSteps.map((s, i) => <li key={i}>{s}</li>)}</ul></Field>
+            )}
+            {!!crm.fieldUpdates?.length && (
+              <Field label="Field updates">
+                <div className="space-y-1.5">
+                  {crm.fieldUpdates.map((f, i) => (
+                    <div key={i} className="text-sm">
+                      <span className="font-medium text-foreground/80">{f.field}:</span>{" "}
+                      <span className="text-muted-foreground">{f.value}</span>
+                      {f.reason && <div className="text-xs text-muted-foreground/70">{f.reason}</div>}
+                    </div>
+                  ))}
+                </div>
+              </Field>
+            )}
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
 function EmailSection({ project, locked, onSaved }: { project: Project; locked: boolean; onSaved: () => void }) {
   const cu = project.customerUpdate;
   const skipped = cu?.skipped;
   const [editing, setEditing] = React.useState(false);
+  const [to, setTo] = React.useState(cu?.to ?? "");
   const [subject, setSubject] = React.useState(cu?.subject ?? "");
   const [body, setBody] = React.useState(cu?.body ?? "");
   const [commitments, setCommitments] = React.useState<string[]>(cu?.commitments ?? []);
   const [busy, setBusy] = React.useState(false);
   React.useEffect(() => {
     if (!editing) {
-      setSubject(cu?.subject ?? ""); setBody(cu?.body ?? ""); setCommitments(cu?.commitments ?? []);
+      setTo(cu?.to ?? ""); setSubject(cu?.subject ?? ""); setBody(cu?.body ?? ""); setCommitments(cu?.commitments ?? []);
     }
   }, [cu, editing]);
+
+  // Sending is a sync job: prepared at approval, executed only by this button.
+  const qc = useQueryClient();
+  const { data: jobs } = useSyncJobs(project.id, locked);
+  const emailJob = jobs?.find((j) => j.kind === "send-email");
+  const sent = emailJob?.status === "done";
+  const [sending, setSending] = React.useState(false);
+  const recipient = (cu?.to ?? to).trim();
+
+  const send = async () => {
+    if (!emailJob) return;
+    setSending(true);
+    try {
+      await api.runSyncJob(project.id, emailJob.id, recipient);
+      qc.invalidateQueries({ queryKey: qk.syncJobs(project.id) });
+      toast.success(`Follow-up sent to ${recipient}`);
+    } catch (err) { toast.error("Couldn't send", { description: (err as Error).message }); }
+    finally { setSending(false); }
+  };
 
   const save = async () => {
     setBusy(true);
     try {
-      await api.patchProject(project.id, { customerUpdate: { ...cu, subject, body, commitments } });
+      await api.patchProject(project.id, { customerUpdate: { ...cu, to: to.trim(), subject, body, commitments } });
       onSaved(); setEditing(false); toast.success("Follow-up updated");
     } catch { toast.error("Could not save email"); }
     finally { setBusy(false); }
   };
 
   return (
-    <Section icon={Mail} title="Customer Follow-up" hint="Editable draft — sending comes with integrations."
-      action={!locked && !skipped && (editing
+    <Section icon={Mail} title="Customer Follow-up"
+      hint={locked ? "Approved — send it when you're ready." : "Editable draft — nothing is sent before approval."}
+      action={!skipped && (editing
         ? <div className="flex gap-1.5"><Button size="sm" onClick={save} disabled={busy}>Save</Button><Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button></div>
-        : <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setEditing(true)}><Pencil className="h-3.5 w-3.5" /> Edit</Button>)}>
+        : <div className="flex items-center gap-1.5">
+            {!locked && <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setEditing(true)}><Pencil className="h-3.5 w-3.5" /> Edit</Button>}
+            {locked && emailJob && (sent ? (
+              <Badge variant="success" className="gap-1"><CheckCircle2 className="h-3 w-3" /> Sent</Badge>
+            ) : (
+              <Button size="sm" className="gap-1.5" onClick={send} disabled={sending || !recipient}
+                title={recipient ? undefined : "Add a recipient first"}>
+                {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Send email
+              </Button>
+            ))}
+          </div>)}>
       {skipped ? (
         <p className="text-sm text-muted-foreground">Skipped — {cu?.reason || "no follow-up needed."}</p>
       ) : editing ? (
         <div className="space-y-3">
+          <Field label="To"><Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="customer@company.com" /></Field>
           <Field label="Subject"><Input value={subject} onChange={(e) => setSubject(e.target.value)} /></Field>
           <Field label="Body"><Textarea value={body} onChange={(e) => setBody(e.target.value)} rows={7} /></Field>
           <Field label="Commitments"><StringList value={commitments} onChange={setCommitments} placeholder="What we committed to" addLabel="Add commitment" /></Field>
         </div>
       ) : (
         <div className="rounded-lg border border-border bg-background/40 p-4">
-          <div className="text-sm font-semibold">{cu?.subject || "Follow-up"}</div>
+          {/* Recipient: auto-assigned from the customer's learned contact; delivery
+              metadata stays settable after approval (the content is what's locked). */}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="font-semibold uppercase tracking-wider text-muted-foreground/70">To</span>
+            {cu?.to ? (
+              <span className="rounded-md border border-border bg-card px-2 py-0.5 font-medium text-foreground/80">{cu.to}</span>
+            ) : locked && !sent ? (
+              <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="customer@company.com"
+                className="h-7 max-w-60 text-xs" />
+            ) : (
+              <span className="italic">no recipient yet</span>
+            )}
+          </div>
+          <div className="mt-3 text-sm font-semibold">{cu?.subject || "Follow-up"}</div>
           <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{cu?.body}</p>
           {!!cu?.commitments?.length && (
             <div className="mt-3"><Field label="Commitments"><ul className="list-disc space-y-0.5 pl-4 text-sm text-muted-foreground">{cu.commitments.map((c, i) => <li key={i}>{c}</li>)}</ul></Field></div>

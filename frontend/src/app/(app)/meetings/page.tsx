@@ -9,7 +9,7 @@ import { Clock, CloudDownload, Search, Trash2, Upload, Users, Video, Workflow } 
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Meeting } from "@/lib/types";
-import { qk, useMeetings, useZoomStatus } from "@/lib/hooks";
+import { qk, useMeetings, useMeetStatus, useZoomStatus } from "@/lib/hooks";
 import { deleteMeeting } from "@/lib/api";
 import { formatDate, formatDuration, timeAgo } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
@@ -29,7 +29,7 @@ import { sourceMeta } from "@/components/meetings/meeting-source";
 import { MeetingUploadDialog } from "@/components/meetings/upload-dialog";
 import { UpcomingCalls } from "@/components/meetings/upcoming-calls";
 import { ZoomImportDialog } from "@/components/meetings/zoom-import";
-import { createInstantCall } from "@/lib/api";
+import { MeetImportDialog } from "@/components/meetings/meet-import";
 
 function MeetingsInner() {
   const { data: meetings, isLoading } = useMeetings();
@@ -46,17 +46,8 @@ function MeetingsInner() {
 
   const { data: zoom } = useZoomStatus();
   const [zoomOpen, setZoomOpen] = React.useState(false);
-  const [starting, setStarting] = React.useState(false);
-  const startCall = async () => {
-    setStarting(true);
-    try {
-      const { roomId } = await createInstantCall();
-      router.push(`/call/${roomId}`);
-    } catch (err) {
-      toast.error("Couldn't start the call", { description: (err as Error).message });
-      setStarting(false);
-    }
-  };
+  const { data: meet } = useMeetStatus();
+  const [meetOpen, setMeetOpen] = React.useState(false);
 
   const filtered = (meetings ?? []).filter((m) => {
     const q = query.toLowerCase();
@@ -81,11 +72,13 @@ function MeetingsInner() {
                 <CloudDownload className="h-4 w-4" /> Import from Zoom
               </Button>
             )}
-            <Button variant="outline" className="gap-2" onClick={() => setUploadOpen(true)}>
+            {meet?.connected && (
+              <Button variant="outline" className="gap-2" onClick={() => setMeetOpen(true)}>
+                <Video className="h-4 w-4" /> Import from Meet
+              </Button>
+            )}
+            <Button className="gap-2" onClick={() => setUploadOpen(true)}>
               <Upload className="h-4 w-4" /> Upload meeting
-            </Button>
-            <Button className="gap-2" onClick={startCall} disabled={starting}>
-              <Video className="h-4 w-4" /> {starting ? "Starting…" : "Start Orbit call"}
             </Button>
           </div>
         }
@@ -111,7 +104,6 @@ function MeetingsInner() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All sources</SelectItem>
-            <SelectItem value="orbit-call">Orbit Call</SelectItem>
             <SelectItem value="zoom">Zoom</SelectItem>
             <SelectItem value="google-meet">Google Meet</SelectItem>
             <SelectItem value="upload">Upload</SelectItem>
@@ -157,6 +149,7 @@ function MeetingsInner() {
       )}
 
       <ZoomImportDialog open={zoomOpen} onOpenChange={setZoomOpen} />
+      <MeetImportDialog open={meetOpen} onOpenChange={setMeetOpen} />
       <MeetingUploadDialog
         open={uploadOpen}
         onOpenChange={(v) => {

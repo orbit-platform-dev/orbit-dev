@@ -111,7 +111,8 @@ export interface Meeting {
   date: string;
   durationSec: number;
   participants: Stakeholder[];
-  account: string;
+  account: string; // display name — mirrors the linked Customer
+  customerId?: ID;
   recordingUrl?: string;
   thumbnailUrl?: string;
   transcript: TranscriptSegment[];
@@ -204,6 +205,7 @@ export interface ProjectPRD {
 }
 
 export interface CustomerUpdate {
+  to?: string; // recipient — auto-filled from the customer's learned contact
   subject?: string;
   body?: string;
   commitments?: string[];
@@ -265,18 +267,111 @@ export interface Project {
   targetDate: string;
   deliveryEstimate: string;
   sourceMeetingId?: ID;
+  customerId?: ID;
   revenueImpact: number;
   tags: string[];
   prd?: ProjectPRD;
+  crmUpdate?: CRMUpdate;
   engineering?: EngineeringPlan;
   design?: DesignPlan;
   qa?: QAPlan;
   sales?: SalesPlan;
   customerUpdate?: CustomerUpdate;
   timeline?: ExecutionTimeline;
+  internalNotes?: string;
   approvalStatus?: "draft" | "approved";
   approvedAt?: string;
   documents: AgentDocument[];
+}
+
+/** Proposed CRM record update — reviewed, approved, then synced. */
+export interface CRMUpdate {
+  accountSummary?: string;
+  opportunityStage?: string;
+  riskLevel?: "low" | "medium" | "high" | string;
+  nextSteps?: string[];
+  fieldUpdates?: { field: string; value: string; reason: string }[];
+  skipped?: boolean;
+  reason?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Customers, knowledge & synchronization
+// ---------------------------------------------------------------------------
+
+export interface Customer {
+  id: ID;
+  name: string;
+  domains: string[];
+  aliases: string[];
+  createdAt: string;
+  meetingCount: number;
+  planCount: number;
+  approvedPlanCount: number;
+  openCommitments: number;
+  lastMeetingAt?: string | null;
+}
+
+export type KnowledgeKind =
+  | "meeting-summary" | "crm-update" | "prd" | "timeline" | "follow-up-email" | "commitment";
+
+export interface KnowledgeItem {
+  id: ID;
+  customerId: ID;
+  kind: KnowledgeKind;
+  title: string;
+  content: Record<string, unknown>;
+  status: "active" | "open" | "completed";
+  sourceMeetingId?: string | null;
+  sourcePlanId?: string | null;
+  approvedAt?: string | null;
+  createdAt: string;
+}
+
+export interface SyncJob {
+  id: ID;
+  planId: ID;
+  customerId?: ID | null;
+  kind: "crm-update" | "publish-prd" | "create-tasks" | "send-email";
+  destination: string;
+  status: "pending" | "running" | "done" | "failed" | "skipped";
+  payload: Record<string, unknown>;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  createdAt: string;
+  completedAt?: string | null;
+}
+
+export interface ChatResponse {
+  answer: string;
+  sources: { type: string; id: string; title: string }[];
+  customerId?: string | null;
+  customerName?: string | null;
+  conversationId?: string | null;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  sources?: ChatResponse["sources"];
+  at?: string;
+}
+
+export interface ChatConversationSummary {
+  id: ID;
+  title: string;
+  customerId?: string | null;
+  customerName?: string | null;
+  updatedAt: string;
+  messageCount: number;
+}
+
+export interface ChatConversationDetail {
+  id: ID;
+  title: string;
+  customerId?: string | null;
+  customerName?: string | null;
+  messages: ChatMessage[];
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +383,7 @@ export type GraphNodeKind =
   | "business-goal"
   | "feature-request"
   | "customer-intent"
+  | "crm-update"
   | "prd"
   | "execution-plan"
   | "engineering"
@@ -296,7 +392,8 @@ export type GraphNodeKind =
   | "sales"
   | "timeline"
   | "deployment"
-  | "customer-followup";
+  | "customer-followup"
+  | "synchronization";
 
 export type GraphNodeStatus = "completed" | "active" | "pending" | "blocked" | "skipped";
 
@@ -433,14 +530,13 @@ export interface Integration {
 }
 
 // ---------------------------------------------------------------------------
-// Orbit Calls + Google Calendar
+// Google Calendar (read-only sync)
 // ---------------------------------------------------------------------------
 
 export interface CalendarStatus {
   configured: boolean; // GOOGLE_CLIENT_ID/SECRET present on the backend
   connected: boolean;
   email?: string | null;
-  autoLink?: boolean; // Orbit links every upcoming meeting automatically
 }
 
 export interface CalendarEvent {
@@ -451,9 +547,6 @@ export interface CalendarEvent {
   attendees: { email: string; name: string }[];
   meetLink?: string | null;
   htmlLink?: string | null;
-  orbitRoomId?: string | null;
-  orbitUrl?: string | null;
-  linkedInInvite?: boolean; // the Orbit link made it onto the Google invite
 }
 
 export interface ZoomRecording {
@@ -463,17 +556,6 @@ export interface ZoomRecording {
   durationMin: number;
   hasTranscript: boolean;
   meetingId?: string | null; // set once imported into Orbit
-}
-
-export interface CallRoomInfo {
-  roomId: string;
-  title: string;
-  account: string;
-  status: "scheduled" | "live" | "ended";
-  scheduledStart?: string | null;
-  startedAt?: string | null;
-  meetingId?: string | null;
-  liveParticipants: number;
 }
 
 // ---------------------------------------------------------------------------

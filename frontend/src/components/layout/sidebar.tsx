@@ -91,9 +91,6 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <Link href="/chat" onClick={onNavigate}>
             <Sparkles className="h-4 w-4 text-primary" />
             <span className="flex-1 text-left">Ask Orbit</span>
-            <Badge variant="muted" className="px-1.5 py-0 text-[10px]">
-              Soon
-            </Badge>
           </Link>
         </Button>
       </div>

@@ -9,7 +9,6 @@ import { ArrowRight, CalendarDays, Users } from "lucide-react";
 import { useCalendarEvents, useCalendarStatus } from "@/lib/hooks";
 import type { CalendarEvent } from "@/lib/types";
 import { formatTime } from "@/lib/utils";
-import { EventActions } from "@/components/calendar/event-actions";
 import { Button } from "@/components/ui/button";
 
 const SOON_MS = 30 * 60_000;
@@ -31,8 +30,8 @@ export function UpcomingCalls() {
       <div className="mb-6 flex items-center gap-3 rounded-xl border border-dashed border-border bg-card/50 px-4 py-3">
         <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
         <p className="text-sm text-muted-foreground">
-          Connect your calendar and every upcoming meeting becomes an{" "}
-          <span className="font-medium text-foreground/90">Orbit call</span> automatically.
+          Connect your calendar to see today&apos;s upcoming{" "}
+          <span className="font-medium text-foreground/90">customer conversations</span> here.
         </p>
         <Button size="sm" variant="outline" className="ml-auto shrink-0" asChild>
           <Link href="/calendar">Connect</Link>
@@ -93,7 +92,6 @@ function SoonCard({ event: ev, now }: { event: CalendarEvent; now: number }) {
           )}
         </div>
       </div>
-      <EventActions event={ev} compact />
     </div>
   );
 }

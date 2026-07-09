@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
 
-from ..models import ActivityEvent, GraphEdge, GraphNode, Meeting, Project, Task
+from ..models import ActivityEvent, Customer, GraphEdge, GraphNode, Meeting, Project, Task
 
 
 def _key(name: str) -> str:
@@ -119,6 +119,7 @@ async def delete_execution(meeting_id: str, db) -> None:
 async def persist_execution(m: Meeting, state: dict, db) -> str:
     signals = state.get("signals") or {}
     prd = state.get("prd") or {}
+    crm = state.get("crm") or {}
     eng = state.get("engineering") or {}
     design = state.get("design") or {}
     qa = state.get("qa") or {}
@@ -131,6 +132,14 @@ async def persist_execution(m: Meeting, state: dict, db) -> str:
     primary = (prd.get("title") or (frs[0]["title"] if frs else None) or (prd.get("goals") or [m.title])[0])
     weeks = timeline.get("durationWeeks") or eng.get("estimateWeeks") or 6
 
+    # Auto-assign the follow-up recipient from what Orbit learned about this
+    # customer (stored when a previous follow-up was sent); editable in review.
+    if cu and not cu.get("skipped") and not cu.get("to") and m.customer_id:
+        customer = await db.get(Customer, m.customer_id)
+        contact = (customer.meta or {}).get("contactEmail") if customer else None
+        if contact:
+            cu = {**cu, "to": contact}
+
     await delete_execution(m.id, db)  # replace any prior execution (idempotent re-runs)
 
     pid = f"p_{uuid.uuid4().hex[:8]}"
@@ -139,10 +148,15 @@ async def persist_execution(m: Meeting, state: dict, db) -> str:
         status="in-progress", health="at-risk" if signals.get("urgency") in ("critical", "high") else "on-track",
         progress=20, start_date=now, target_date=now + timedelta(weeks=weeks),
         delivery_estimate=timeline.get("deliveryEstimate") or f"~{weeks} weeks", source_meeting_id=m.id,
+        customer_id=m.customer_id, workspace_id=m.workspace_id or "ws_default",
         revenue_impact=float(signals.get("revenueImpact") or 0),
         owner={"id": "u_1", "name": "You", "email": "", "role": "Owner", "title": "Owner", "status": "active"},
         team=[], tags=m.tags or [], documents=[],
-        prd=_map_prd(prd, now), engineering=_map_engineering(eng), design=_map_design(design),
+        # PRD is generated on demand (review screen's Generate PRD button), so
+        # the human decides when it exists; the pipeline's internal draft above
+        # only steered routing and the downstream sections.
+        prd=None, crm_update=crm or None,
+        engineering=_map_engineering(eng), design=_map_design(design),
         qa=_map_qa(qa), sales=_map_sales(sales),
         customer_update=cu or None, timeline=timeline or None, approval_status="draft",
     ))
@@ -159,6 +173,7 @@ async def persist_execution(m: Meeting, state: dict, db) -> str:
     qa_ok, qa_why = _team("qa")
     sales_ok, sales_why = _team("sales")
     cs_ok, cs_why = _team("customer-success")
+    crm_ok, crm_why = _team("crm")
 
     def _team_node(nid: str, kind: str, title: str, subtitle: str, agent: str, ok: bool, why: str) -> GraphNode:
         return _node(nid, kind, title, subtitle if ok else (why or "Not needed for this conversation"),
@@ -171,8 +186,15 @@ async def persist_execution(m: Meeting, state: dict, db) -> str:
         _node(g("intent"), "customer-intent", "Customer Intent",
               f"{len(frs)} requests · {len(signals.get('bugs', []))} bugs · {len(signals.get('painPoints', []))} pains",
               "meeting-intelligence", pid, now, reason="What the customer actually needs, extracted from the call."),
-        _node(g("prd"), "prd", "PRD", (prd.get("title") or f"{len(prd.get('userStories', []))} stories")[:80],
-              "product-manager", pid, now, reason="Defines what to build, why it matters, and how success is measured."),
+        _team_node(g("crm"), "crm-update", "CRM Update",
+                   (crm.get("accountSummary") or "Account record update")[:80] if crm_ok else "",
+                   "crm-analyst", crm_ok, crm_why or "Keeps the account record true to what the customer said."),
+        GraphNode(
+            id=g("prd"), kind="prd", title="PRD", subtitle="Not generated yet",
+            status="pending", agent="product-manager", progress=0, owner=None, project_id=pid,
+            meta={"reason": "Defines what to build, why it matters, and how success is measured — generated on demand in review."},
+            history=[{"at": now.isoformat(), "event": "Awaiting Generate PRD", "actor": "product-manager"}],
+        ),
         _node(g("plan"), "execution-plan", "Execution Plan", f"{len(work_items)} work items",
               "execution-planner", pid, now, reason="The cross-functional work needed to deliver the PRD."),
         _team_node(g("eng"), "engineering", "Engineering", f"{weeks} wks · {len(eng.get('components', []))} components", "engineering-planner", eng_ok, eng_why),
@@ -182,6 +204,13 @@ async def persist_execution(m: Meeting, state: dict, db) -> str:
         _node(g("timeline"), "timeline", "Timeline", timeline.get("deliveryEstimate") or "n/a",
               "execution-planner", pid, now, reason="Estimated delivery, milestones and critical path from the work items."),
         _team_node(g("cs"), "customer-followup", "Customer Email", cu.get("subject", "") or "Follow-up drafted", "customer-success", cs_ok, cs_why),
+        GraphNode(
+            id=g("sync"), kind="synchronization", title="Synchronization",
+            subtitle="Awaiting approval", status="pending", agent=None, progress=0,
+            owner=None, project_id=pid,
+            meta={"reason": "Approved updates sync to the tools your team already uses — they stay the system of record."},
+            history=[{"at": now.isoformat(), "event": "Prepared — runs after approval", "actor": "orbit-sync"}],
+        ),
     ]
 
     # Work items become tasks across every relevant discipline (not just engineering),
@@ -205,9 +234,10 @@ async def persist_execution(m: Meeting, state: dict, db) -> str:
 
     e = lambda a, b, anim=False: GraphEdge(id=f"e_{m.id}_{a}_{b}", source=g(a), target=g(b), animated=anim)
     db.add_all([
-        e("meeting", "intent"), e("intent", "prd"), e("prd", "plan", True),
+        e("meeting", "intent"), e("intent", "crm"), e("intent", "prd"), e("prd", "plan", True),
         e("plan", "eng", True), e("plan", "design", True), e("plan", "sales", True),
         e("eng", "qa", True), e("design", "qa"),
         e("plan", "timeline", True), e("timeline", "cs", True),
+        e("crm", "sync"), e("cs", "sync", True),
     ])
     return pid

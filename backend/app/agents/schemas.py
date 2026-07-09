@@ -134,9 +134,38 @@ class CustomerUpdateDraft(_Camel):
     commitments: list[str]
 
 
+class CRMFieldUpdate(_Camel):
+    field: str = Field(description="CRM field to update, e.g. 'Stage', 'Next steps', 'Renewal risk'")
+    value: str
+    reason: str = Field(description="why this update, tied to meeting evidence")
+
+
+class CRMUpdateDraft(_Camel):
+    """Proposed CRM record update — reviewed and approved before any sync."""
+
+    account_summary: str = Field(description="2-3 sentence account status after this meeting")
+    opportunity_stage: str = Field(default="", description="proposed deal/opportunity stage")
+    risk_level: str = Field(default="low", description="low | medium | high")
+    next_steps: list[str] = Field(default_factory=list)
+    field_updates: list[CRMFieldUpdate] = Field(default_factory=list)
+
+
+class ChatSource(_Camel):
+    type: str = Field(description="meeting | plan | commitment | knowledge")
+    id: str
+    title: str
+
+
+class ChatAnswer(_Camel):
+    """Answer to a workspace question, grounded in the retrieved context."""
+
+    answer: str
+    sources: list[ChatSource] = Field(default_factory=list)
+
+
 # --- Execution Router -------------------------------------------------------
 class TeamDecision(_Camel):
-    team: str = Field(description="engineering | design | qa | sales | customer-success")
+    team: str = Field(description="engineering | design | qa | sales | customer-success | crm")
     relevant: bool
     reason: str
 

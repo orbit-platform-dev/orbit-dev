@@ -1,12 +1,14 @@
 import {
   CalendarClock,
   Code2,
+  Contact,
   Crosshair,
   FileText,
   HeartHandshake,
   Lightbulb,
   ListChecks,
   PenTool,
+  RefreshCw,
   Rocket,
   ShieldCheck,
   Target,
@@ -21,6 +23,7 @@ export const kindMeta: Record<GraphNodeKind, { label: string; icon: LucideIcon; 
   "business-goal": { label: "Business Goal", icon: Target, color: "#f43f5e" },
   "feature-request": { label: "Feature Request", icon: Lightbulb, color: "#f59e0b" },
   "customer-intent": { label: "Customer Intent", icon: Crosshair, color: "#f59e0b" },
+  "crm-update": { label: "CRM Update", icon: Contact, color: "#f97316" },
   prd: { label: "PRD", icon: FileText, color: "#8b5cf6" },
   "execution-plan": { label: "Execution Plan", icon: ListChecks, color: "#6366f1" },
   engineering: { label: "Engineering", icon: Code2, color: "#0ea5e9" },
@@ -30,6 +33,7 @@ export const kindMeta: Record<GraphNodeKind, { label: string; icon: LucideIcon; 
   timeline: { label: "Timeline", icon: CalendarClock, color: "#22d3ee" },
   deployment: { label: "Deployment", icon: Rocket, color: "#22d3ee" },
   "customer-followup": { label: "Customer Follow-up", icon: HeartHandshake, color: "#14b8a6" },
+  synchronization: { label: "Synchronization", icon: RefreshCw, color: "#64748b" },
 };
 
 // Layout positions keyed by node KIND, so any meeting's generated graph lays out
@@ -39,6 +43,7 @@ export const kindPositions: Record<GraphNodeKind, { x: number; y: number }> = {
   "business-goal": { x: 40, y: 130 },
   "feature-request": { x: 680, y: 130 },
   "customer-intent": { x: 360, y: 130 },
+  "crm-update": { x: 40, y: 300 },
   prd: { x: 360, y: 260 },
   "execution-plan": { x: 360, y: 390 },
   engineering: { x: 120, y: 540 },
@@ -48,4 +53,5 @@ export const kindPositions: Record<GraphNodeKind, { x: number; y: number }> = {
   deployment: { x: 600, y: 680 },
   timeline: { x: 360, y: 820 },
   "customer-followup": { x: 360, y: 950 },
+  synchronization: { x: 360, y: 1080 },
 };

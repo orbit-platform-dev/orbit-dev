@@ -11,8 +11,7 @@ let handler: (...args: any[]) => any = () => NextResponse.next();
 if (clerkEnabled) {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { clerkMiddleware, createRouteMatcher } = require("@clerk/nextjs/server");
-  // /call is public: external guests join Orbit calls by link, without an account.
-  const isPublic = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/call(.*)"]);
+  const isPublic = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handler = clerkMiddleware(async (auth: any, req: any) => {
     if (!isPublic(req)) await auth.protect();

@@ -21,7 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { runTranscript } from "@/lib/api";
-import { qk } from "@/lib/hooks";
+import { qk, useCustomers } from "@/lib/hooks";
 
 export function MeetingUploadDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [dragging, setDragging] = React.useState(false);
@@ -29,7 +29,9 @@ export function MeetingUploadDialog({ open, onOpenChange }: { open: boolean; onO
   const [phase, setPhase] = React.useState<"idle" | "uploading" | "analyzing">("idle");
   const [progress, setProgress] = React.useState(0);
   const [title, setTitle] = React.useState("");
+  const [account, setAccount] = React.useState("");
   const [transcript, setTranscript] = React.useState("");
+  const { data: customers } = useCustomers();
   const inputRef = React.useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -39,6 +41,7 @@ export function MeetingUploadDialog({ open, onOpenChange }: { open: boolean; onO
     setProgress(0);
     setFileName(null);
     setTitle("");
+    setAccount("");
     setTranscript("");
   };
 
@@ -69,7 +72,9 @@ export function MeetingUploadDialog({ open, onOpenChange }: { open: boolean; onO
     }
     setPhase("analyzing");
     try {
-      const { meetingId } = await runTranscript({ transcript, title: title.trim() || undefined });
+      const { meetingId } = await runTranscript({
+        transcript, title: title.trim() || undefined, account: account.trim() || undefined,
+      });
       toast.success("Analyzing the call…", { description: "Watch Orbit build the plan in real time." });
       for (const key of [qk.meetings, qk.dashboard, qk.graph, qk.projects, qk.tasks, qk.timeline, qk.activity]) {
         queryClient.invalidateQueries({ queryKey: key });
@@ -189,6 +194,19 @@ export function MeetingUploadDialog({ open, onOpenChange }: { open: boolean; onO
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                 />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="t-account">Customer</Label>
+                <Input
+                  id="t-account"
+                  list="customer-suggestions"
+                  placeholder="e.g. Acme Inc — links this meeting to the customer's history"
+                  value={account}
+                  onChange={(e) => setAccount(e.target.value)}
+                />
+                <datalist id="customer-suggestions">
+                  {(customers ?? []).map((c) => <option key={c.id} value={c.name} />)}
+                </datalist>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="t-body" className="flex items-center gap-1.5">

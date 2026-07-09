@@ -2,7 +2,7 @@ name: orbit
 
 services:
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16  # postgres 16 + the pgvector extension (semantic retrieval)
     environment:
       POSTGRES_USER: orbit
       POSTGRES_PASSWORD: orbit

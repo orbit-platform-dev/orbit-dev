@@ -1,16 +1,16 @@
 "use client";
 
 // Orbit Calendar — a Google Calendar-style week grid, themed for Orbit.
-// Read-only: events are created in your calendar apps; Orbit syncs them and
-// makes its call link THE meeting link. ‹ › pages week by week; click an
-// event for details + Join.
+// Read-only: events are created in your calendar apps; Orbit only syncs them
+// so upcoming customer conversations are visible. ‹ › pages week by week;
+// click an event for details.
 
 import * as React from "react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   CalendarDays, ChevronLeft, ChevronRight, ExternalLink, Link2, Loader2,
-  Orbit as OrbitIcon, RefreshCw, Users,
+  RefreshCw, Users,
 } from "lucide-react";
 import { qk, useCalendarEvents, useCalendarStatus } from "@/lib/hooks";
 import * as api from "@/lib/api";
@@ -18,11 +18,8 @@ import type { CalendarEvent } from "@/lib/types";
 import { cn, formatTime } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
-import { EventActions } from "@/components/calendar/event-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -64,23 +61,12 @@ export default function CalendarPage() {
     const params = new URLSearchParams(window.location.search);
     const result = params.get("calendar");
     if (!result) return;
-    if (result === "connected") toast.success("Google Calendar connected", { description: "Orbit is now the link on your upcoming meetings." });
+    if (result === "connected") toast.success("Google Calendar connected", { description: "Your upcoming meetings now sync into Orbit." });
     else toast.error("Google Calendar connection failed", { description: params.get("reason") ?? undefined });
     window.history.replaceState(null, "", "/calendar");
     qc.invalidateQueries({ queryKey: qk.calendarStatus });
     qc.invalidateQueries({ queryKey: qk.integrations });
   }, [qc]);
-
-  const setAutoLink = async (on: boolean) => {
-    try {
-      await api.patchCalendarSettings(on);
-      qc.invalidateQueries({ queryKey: qk.calendarStatus });
-      qc.invalidateQueries({ queryKey: qk.calendarEvents });
-      toast.success(on ? "Auto-link on — Orbit becomes the link on every upcoming meeting" : "Auto-link off — link meetings manually");
-    } catch (err) {
-      toast.error("Couldn't update the setting", { description: (err as Error).message });
-    }
-  };
 
   if (statusLoading) {
     return <div className="space-y-4"><Skeleton className="h-10 w-64" /><Skeleton className="h-96 w-full" /></div>;
@@ -93,14 +79,6 @@ export default function CalendarPage() {
       <PageHeader
         title="Calendar"
         description="Your upcoming conversations — each one ready to become execution."
-        actions={
-          <div className="flex items-center gap-2">
-            <Switch id="auto-link" checked={status.autoLink !== false} onCheckedChange={setAutoLink} />
-            <Label htmlFor="auto-link" className="cursor-pointer text-xs text-muted-foreground">
-              Auto-link meetings
-            </Label>
-          </div>
-        }
       >
         <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
           {isFetching ? <RefreshCw className="h-3 w-3 animate-spin" /> : <CalendarDays className="h-3 w-3" />}
@@ -312,17 +290,11 @@ function NowLine() {
 
 function EventBlock({ p }: { p: Positioned }) {
   const { ev } = p;
-  const linked = !!ev.orbitRoomId;
   const width = 100 / p.lanes;
   return (
     <EventPopover event={ev}>
       <button
-        className={cn(
-          "absolute z-10 overflow-hidden rounded-md border-l-2 px-1.5 py-1 text-left transition-colors",
-          linked
-            ? "border-primary bg-primary/15 hover:bg-primary/25"
-            : "border-muted-foreground/50 bg-muted/70 hover:bg-muted",
-        )}
+        className="absolute z-10 overflow-hidden rounded-md border-l-2 border-primary bg-primary/15 px-1.5 py-1 text-left transition-colors hover:bg-primary/25"
         style={{
           top: p.top,
           height: p.height,
@@ -330,8 +302,7 @@ function EventBlock({ p }: { p: Positioned }) {
           width: `calc(${width}% - 4px)`,
         }}
       >
-        <div className={cn("truncate text-[11px] font-semibold leading-tight", linked ? "text-primary" : "text-foreground/80")}>
-          {linked && <OrbitIcon className="mr-0.5 inline h-2.5 w-2.5 align-[-1px]" />}
+        <div className="truncate text-[11px] font-semibold leading-tight text-primary">
           {ev.title}
         </div>
         {p.height >= 40 && ev.start && (
@@ -365,23 +336,12 @@ function EventPopover({ event: ev, children }: { event: CalendarEvent; children:
           </p>
         )}
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {ev.orbitRoomId && (
-            <Badge variant="muted" className="gap-1 border-primary/30 bg-primary/10 text-primary">
-              <OrbitIcon className="h-3 w-3" /> Orbit
-            </Badge>
-          )}
           {ev.meetLink && <Badge variant="muted">Meet</Badge>}
-          {ev.orbitRoomId && !ev.linkedInInvite && (
-            <Badge variant="muted" className="border-warning/40 text-warning">not on invite</Badge>
-          )}
           {ev.attendees.length > 0 && (
             <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
               <Users className="h-3 w-3" />{ev.attendees.length}
             </span>
           )}
-        </div>
-        <div className="mt-3 flex items-center gap-1.5">
-          <EventActions event={ev} />
         </div>
       </PopoverContent>
     </Popover>
@@ -406,14 +366,14 @@ function ConnectScreen({ configured }: { configured: boolean }) {
     <div>
       <PageHeader
         title="Calendar"
-        description="Connect a calendar and Orbit becomes your meeting platform — every invite carries an Orbit call link, every call becomes execution."
+        description="Connect a calendar to see your upcoming customer conversations — each one ready to become execution."
       />
       <div className="mx-auto mt-6 grid max-w-3xl gap-4 sm:grid-cols-2">
         <div className="flex flex-col items-center rounded-2xl border border-border bg-card p-8 text-center shadow-card">
           <IntegrationLogo k="calendar" className="h-12 w-12 text-base" />
           <h2 className="mt-4 text-base font-semibold">Google Calendar</h2>
           <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-            Orbit replaces the Meet link on your upcoming meetings — every invited party joins through Orbit.
+            Syncs your upcoming meetings into Orbit — read-only, your calendar stays the source of truth.
           </p>
           <Button className="mt-5 w-full gap-2" onClick={() => connect("google")} disabled={connecting !== null}>
             {connecting === "google" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
@@ -429,7 +389,7 @@ function ConnectScreen({ configured }: { configured: boolean }) {
           <IntegrationLogo k="zoom" className="h-12 w-12 text-base" />
           <h2 className="mt-4 text-base font-semibold">Zoom</h2>
           <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-            Import cloud-recording transcripts as meetings — analyzed like every Orbit call.
+            Import cloud-recording transcripts as meetings — analyzed like every other conversation.
           </p>
           <Button variant="outline" className="mt-5 w-full gap-2" onClick={() => connect("zoom")} disabled={connecting !== null}>
             {connecting === "zoom" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}

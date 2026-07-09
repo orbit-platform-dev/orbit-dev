@@ -20,9 +20,9 @@ const CATEGORIES: Category[] = ["Engineering", "Conferencing", "Communication", 
 
 // Connectable destinations: issue trackers (Jira / Linear) + PRD doc tools
 // (Google Docs / Notion / Confluence / Linear / Jira) + real OAuth providers
-// (Google Calendar → Orbit links on invites; Zoom → recording imports);
+// (Google Calendar → read-only meeting sync; Zoom / Google Meet → transcript imports);
 // everything else is "coming soon".
-const CONNECTABLE = new Set(["jira", "linear", "google-docs", "confluence", "notion", "calendar", "zoom"]);
+const CONNECTABLE = new Set(["jira", "linear", "google-docs", "confluence", "notion", "calendar", "zoom", "google-meet"]);
 const normalizeStatus = (i: Integration): Integration =>
   CONNECTABLE.has(i.key)
     ? { ...i, status: i.status === "connected" || i.status === "syncing" ? "connected" : "disconnected" }
@@ -44,7 +44,7 @@ export default function IntegrationsPage() {
   // Landing back from an OAuth consent screen (?calendar=… or ?zoom=…).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const results: [string, string][] = [["calendar", "Google Calendar"], ["zoom", "Zoom"]];
+    const results: [string, string][] = [["calendar", "Google Calendar"], ["zoom", "Zoom"], ["meet", "Google Meet"]];
     let handled = false;
     for (const [key, label] of results) {
       const result = params.get(key);
@@ -58,6 +58,7 @@ export default function IntegrationsPage() {
     qc.invalidateQueries({ queryKey: qk.integrations });
     qc.invalidateQueries({ queryKey: qk.calendarStatus });
     qc.invalidateQueries({ queryKey: qk.zoomStatus });
+    qc.invalidateQueries({ queryKey: qk.meetStatus });
   }, [qc]);
 
   const setStatus = (key: Integration["key"], status: IntegrationStatus, lastSync?: string) => {
@@ -71,10 +72,12 @@ export default function IntegrationsPage() {
   const OAUTH_AUTH_URL: Partial<Record<Integration["key"], () => Promise<{ url: string }>>> = {
     calendar: api.getCalendarAuthUrl,
     zoom: api.getZoomAuthUrl,
+    "google-meet": api.getMeetAuthUrl,
   };
   const OAUTH_DISCONNECT: Partial<Record<Integration["key"], () => Promise<void>>> = {
     calendar: api.disconnectCalendar,
     zoom: api.disconnectZoom,
+    "google-meet": api.disconnectMeet,
   };
 
   const connect = async (i: Integration) => {
@@ -102,6 +105,7 @@ export default function IntegrationsPage() {
     qc.invalidateQueries({ queryKey: qk.integrations });
     qc.invalidateQueries({ queryKey: qk.calendarStatus });
     qc.invalidateQueries({ queryKey: qk.zoomStatus });
+    qc.invalidateQueries({ queryKey: qk.meetStatus });
   };
 
   const counts = useMemo(() => {
@@ -133,7 +137,7 @@ export default function IntegrationsPage() {
     <div>
       <PageHeader
         title="Integrations"
-        description="Connect Orbit to your meetings, comms, engineering and CRM stack so your agents can ingest and act everywhere your team works."
+        description="Orbit doesn't replace your tools. It's the review and approval layer between customer conversations and execution — approved updates sync into the software your team already uses, which stays the system of record."
       >
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
           <SummaryChip className="border-success/30 bg-success/10 text-success" value={counts.connected} label="connected" />

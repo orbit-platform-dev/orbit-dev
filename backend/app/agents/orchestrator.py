@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable, TypedDict
+import operator
+from typing import Annotated, Any, Awaitable, Callable, TypedDict
 
 from ..config import settings
 from . import definitions as d
@@ -18,8 +19,10 @@ class PipelineState(TypedDict, total=False):
     meeting_id: str
     transcript: str
     account: str
+    context: str  # rendered ContextPackage — same block for every generator
     signals: dict[str, Any]
     prd: dict[str, Any]
+    crm: dict[str, Any]
     engineering: dict[str, Any]
     design: dict[str, Any]
     qa: dict[str, Any]
@@ -28,7 +31,8 @@ class PipelineState(TypedDict, total=False):
     teams: dict[str, Any]
     work_plan: dict[str, Any]
     timeline: dict[str, Any]
-    events: list[dict[str, Any]]
+    # Reducer channel: parallel branches append safely instead of colliding.
+    events: Annotated[list[dict[str, Any]], operator.add]
 
 
 async def _run_agent(key: str, output_type, prompt: str, fallback):
@@ -46,28 +50,43 @@ async def _run_agent(key: str, output_type, prompt: str, fallback):
     return fallback()
 
 
+def _with_context(state: PipelineState, prompt: str) -> str:
+    """Every generator consumes the same Context Package (when history exists)."""
+    ctx = state.get("context") or ""
+    if not ctx:
+        return prompt
+    return f"{d.CONTEXT_PREAMBLE}{ctx}\n\n{prompt}"
+
+
+async def generate_prd_draft(signals: dict[str, Any], context: str = "") -> dict[str, Any]:
+    """On-demand PRD generation (the review screen's Generate PRD button).
+
+    Same agent and same Context Package rules as the pipeline — but run against
+    the CURRENT (possibly human-edited) customer intent."""
+    prompt = f"Meeting signals:\n{signals}"
+    if context:
+        prompt = f"{d.CONTEXT_PREAMBLE}{context}\n\n{prompt}"
+    return await _run_agent("product-manager", s.PRDDraft, prompt, lambda: fb.fallback_prd(signals))
+
+
 # --- Nodes ------------------------------------------------------------------
 async def node_intelligence(state: PipelineState) -> PipelineState:
     t = state["transcript"]
     out = await _run_agent(
         "meeting-intelligence", s.MeetingSignals,
-        f"Account: {state.get('account')}\n\nTranscript:\n{t}",
+        _with_context(state, f"Account: {state.get('account')}\n\nTranscript:\n{t}"),
         lambda: fb.fallback_signals(t, state.get("account", "")),
     )
-    state["signals"] = out
-    state.setdefault("events", []).append({"agent": "meeting-intelligence", "step": "Signals extracted"})
-    return state
+    return {"signals": out, "events": [{"agent": "meeting-intelligence", "step": "Signals extracted"}]}
 
 
 async def node_pm(state: PipelineState) -> PipelineState:
     out = await _run_agent(
         "product-manager", s.PRDDraft,
-        f"Meeting signals:\n{state['signals']}",
+        _with_context(state, f"Meeting signals:\n{state['signals']}"),
         lambda: fb.fallback_prd(state["signals"]),
     )
-    state["prd"] = out
-    state.setdefault("events", []).append({"agent": "product-manager", "step": "PRD drafted"})
-    return state
+    return {"prd": out, "events": [{"agent": "product-manager", "step": "PRD drafted"}]}
 
 
 def _relevant(state: PipelineState, team: str) -> tuple[bool, str]:
@@ -82,90 +101,86 @@ async def node_route(state: PipelineState) -> PipelineState:
     """Decide which teams this conversation actually needs — like a human operator would."""
     out = await _run_agent(
         "execution-router", s.ExecutionPlan,
-        f"Meeting signals:\n{state['signals']}\n\nPRD:\n{state['prd']}",
+        _with_context(state, f"Meeting signals:\n{state['signals']}\n\nPRD:\n{state['prd']}"),
         lambda: fb.fallback_route(state.get("signals", {}), state.get("prd", {})),
     )
-    state["teams"] = {
+    teams = {
         d["team"]: {"relevant": bool(d.get("relevant", True)), "reason": d.get("reason", "")}
         for d in out.get("teams", []) if d.get("team")
     }
-    state.setdefault("events", []).append({"agent": "execution-router", "step": "Teams routed"})
-    return state
+    return {"teams": teams, "events": [{"agent": "execution-router", "step": "Teams routed"}]}
 
 
 async def node_engineering(state: PipelineState) -> PipelineState:
     relevant, reason = _relevant(state, "engineering")
     if not relevant:
-        state["engineering"] = {"skipped": True, "reason": reason}
-        return state
+        return {"engineering": {"skipped": True, "reason": reason}}
     out = await _run_agent(
         "engineering-planner", s.EngineeringDraft,
-        f"PRD:\n{state['prd']}",
+        _with_context(state, f"PRD:\n{state['prd']}"),
         lambda: fb.fallback_engineering(state["prd"]),
     )
-    state["engineering"] = out
-    state.setdefault("events", []).append({"agent": "engineering-planner", "step": "Engineering planned"})
-    return state
+    return {"engineering": out, "events": [{"agent": "engineering-planner", "step": "Engineering planned"}]}
 
 
 async def node_design(state: PipelineState) -> PipelineState:
     relevant, reason = _relevant(state, "design")
     if not relevant:
-        state["design"] = {"skipped": True, "reason": reason}
-        return state
+        return {"design": {"skipped": True, "reason": reason}}
     out = await _run_agent(
         "design-planner", s.DesignDraft,
-        f"PRD:\n{state['prd']}",
+        _with_context(state, f"PRD:\n{state['prd']}"),
         lambda: fb.fallback_design(state["prd"]),
     )
-    state["design"] = out
-    state.setdefault("events", []).append({"agent": "design-planner", "step": "Design planned"})
-    return state
+    return {"design": out, "events": [{"agent": "design-planner", "step": "Design planned"}]}
 
 
 async def node_qa(state: PipelineState) -> PipelineState:
     relevant, reason = _relevant(state, "qa")
     if not relevant:
-        state["qa"] = {"skipped": True, "reason": reason}
-        return state
+        return {"qa": {"skipped": True, "reason": reason}}
     out = await _run_agent(
         "qa-planner", s.QADraft,
-        f"PRD:\n{state['prd']}\nEngineering:\n{state.get('engineering')}",
+        _with_context(state, f"PRD:\n{state['prd']}\nEngineering:\n{state.get('engineering')}"),
         lambda: fb.fallback_qa(state["prd"]),
     )
-    state["qa"] = out
-    state.setdefault("events", []).append({"agent": "qa-planner", "step": "QA planned"})
-    return state
+    return {"qa": out, "events": [{"agent": "qa-planner", "step": "QA planned"}]}
 
 
 async def node_sales(state: PipelineState) -> PipelineState:
     relevant, reason = _relevant(state, "sales")
     if not relevant:
-        state["sales"] = {"skipped": True, "reason": reason}
-        return state
+        return {"sales": {"skipped": True, "reason": reason}}
     out = await _run_agent(
         "sales-planner", s.SalesDraft,
-        f"Capability from PRD:\n{state['prd']}",
+        _with_context(state, f"Capability from PRD:\n{state['prd']}"),
         lambda: fb.fallback_sales(state["prd"]),
     )
-    state["sales"] = out
-    state.setdefault("events", []).append({"agent": "sales-planner", "step": "Sales enabled"})
-    return state
+    return {"sales": out, "events": [{"agent": "sales-planner", "step": "Sales enabled"}]}
+
+
+async def node_crm(state: PipelineState) -> PipelineState:
+    relevant, reason = _relevant(state, "crm")
+    if not relevant:
+        return {"crm": {"skipped": True, "reason": reason}}
+    out = await _run_agent(
+        "crm-analyst", s.CRMUpdateDraft,
+        _with_context(state, f"Account: {state.get('account')}\nSignals:\n{state['signals']}"),
+        lambda: fb.fallback_crm_update(state["signals"], state.get("account", "")),
+    )
+    return {"crm": out, "events": [{"agent": "crm-analyst", "step": "CRM update proposed"}]}
 
 
 async def node_customer(state: PipelineState) -> PipelineState:
     relevant, reason = _relevant(state, "customer-success")
     if not relevant:
-        state["customer_update"] = {"skipped": True, "reason": reason}
-        return state
+        return {"customer_update": {"skipped": True, "reason": reason}}
     out = await _run_agent(
         "customer-success", s.CustomerUpdateDraft,
-        f"Account: {state.get('account')}\nSignals:\n{state['signals']}",
+        _with_context(state, f"Account: {state.get('account')}\nSignals:\n{state['signals']}"),
         lambda: fb.fallback_customer_update(state["signals"], state.get("account", "")),
     )
-    state["customer_update"] = out
-    state.setdefault("events", []).append({"agent": "customer-success", "step": "Follow-up drafted"})
-    return state
+    return {"customer_update": out, "events": [{"agent": "customer-success", "step": "Follow-up drafted"}]}
 
 
 _POINTS_PER_WEEK = 6
@@ -209,13 +224,11 @@ async def node_plan(state: PipelineState) -> PipelineState:
     """Generate the cross-functional execution plan (work items), then derive its timeline."""
     out = await _run_agent(
         "execution-planner", s.WorkPlan,
-        f"PRD:\n{state.get('prd')}\n\nSignals:\n{state.get('signals')}\n\nRelevant teams:\n{state.get('teams')}",
+        _with_context(state, f"PRD:\n{state.get('prd')}\n\nSignals:\n{state.get('signals')}\n\nRelevant teams:\n{state.get('teams')}"),
         lambda: fb.fallback_workplan(state.get("prd", {}), state.get("signals", {}), state.get("teams", {})),
     )
-    state["work_plan"] = out
-    state["timeline"] = _derive_timeline(out.get("items", []))
-    state.setdefault("events", []).append({"agent": "execution-planner", "step": "Execution plan built"})
-    return state
+    return {"work_plan": out, "timeline": _derive_timeline(out.get("items", [])),
+            "events": [{"agent": "execution-planner", "step": "Execution plan built"}]}
 
 
 def _build_graph():
@@ -225,6 +238,7 @@ def _build_graph():
     g = StateGraph(PipelineState)
     g.add_node("intelligence", node_intelligence)
     g.add_node("pm", node_pm)
+    g.add_node("crm", node_crm)
     g.add_node("engineering", node_engineering)
     g.add_node("design", node_design)
     g.add_node("qa", node_qa)
@@ -236,6 +250,7 @@ def _build_graph():
     g.add_edge(START, "intelligence")
     g.add_edge("intelligence", "pm")
     g.add_edge("pm", "route")
+    g.add_edge("route", "crm")
     g.add_edge("route", "engineering")
     g.add_edge("route", "design")
     g.add_edge("engineering", "qa")
@@ -243,6 +258,7 @@ def _build_graph():
     g.add_edge("engineering", "sales")
     g.add_edge("qa", "plan")
     g.add_edge("sales", "plan")
+    g.add_edge("crm", "plan")
     g.add_edge("plan", "customer")
     g.add_edge("customer", END)
     return g.compile()
@@ -252,8 +268,9 @@ def _build_graph():
 # the % is derived from how far the pipeline has actually gotten (not a placeholder).
 _PROGRESS_STEPS: list[tuple[str, int, str]] = [
     ("signals", 15, "Signals extracted"),
-    ("prd", 30, "PRD drafted"),
-    ("teams", 40, "Teams routed"),
+    ("prd", 28, "PRD drafted"),
+    ("teams", 38, "Sections routed"),
+    ("crm", 46, "CRM update proposed"),
     ("engineering", 55, "Engineering planned"),
     ("design", 62, "Design planned"),
     ("qa", 68, "QA planned"),
@@ -277,9 +294,15 @@ ProgressCallback = Callable[[int, str], Awaitable[None]]
 
 async def run_pipeline(
     meeting_id: str, transcript: str, account: str, on_progress: ProgressCallback | None = None,
+    context: str = "",
 ) -> PipelineState:
-    """Execute the full pipeline for a meeting, reporting real per-stage progress."""
-    state: PipelineState = {"meeting_id": meeting_id, "transcript": transcript, "account": account, "events": []}
+    """Execute the full pipeline for a meeting, reporting real per-stage progress.
+
+    `context` is the rendered ContextPackage from the Context Engine — the same
+    structured slice of customer history for every generator (empty on a first
+    meeting)."""
+    state: PipelineState = {"meeting_id": meeting_id, "transcript": transcript, "account": account,
+                            "context": context, "events": []}
 
     async def _report(s: PipelineState) -> None:
         if on_progress:
@@ -297,9 +320,14 @@ async def run_pipeline(
     except Exception:
         # LangGraph unavailable — run the (near-linear) pipeline directly, still reporting progress.
         logger.warning("LangGraph streaming unavailable; running sequential pipeline", exc_info=True)
-        for node in (node_intelligence, node_pm, node_route, node_engineering,
+        for node in (node_intelligence, node_pm, node_route, node_crm, node_engineering,
                      node_design, node_qa, node_sales, node_plan, node_customer):
-            state = await node(state)
+            update = await node(state)
+            for k, v in update.items():
+                if k == "events":
+                    state["events"] = [*state.get("events", []), *v]
+                else:
+                    state[k] = v
             await _report(state)
         return state
 

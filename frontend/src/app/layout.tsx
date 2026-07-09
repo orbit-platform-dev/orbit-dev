@@ -8,7 +8,7 @@ export const metadata: Metadata = {
     template: "%s · Orbit",
   },
   description:
-    "Orbit turns customer meetings into PRDs, plans, tasks and shipped features — orchestrated by a team of AI agents.",
+    "Orbit is the execution platform: customer conversations become reviewed, approved updates that sync into the tools your team already uses.",
   icons: { icon: "/orbit-logo.svg" },
 };
 

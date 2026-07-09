@@ -140,7 +140,8 @@ export function WorkItemCard({
               <Pencil className="h-3.5 w-3.5" />
             </Button>
           )}
-          {declined ? (
+          {/* Accept/decline are review-time decisions — locked with the plan. */}
+          {canEdit && (declined ? (
             <Button variant="ghost" size="icon-sm" title="Restore" disabled={busy}
               onClick={() => run(() => api.patchTask(task.id, { decision: "accepted" }), "Restored")}>
               <Undo2 className="h-3.5 w-3.5" />
@@ -150,7 +151,7 @@ export function WorkItemCard({
               onClick={() => run(() => api.patchTask(task.id, { decision: "declined" }), "Declined")}>
               <X className="h-3.5 w-3.5" />
             </Button>
-          )}
+          ))}
         </div>
       </div>
 
@@ -163,7 +164,13 @@ export function WorkItemCard({
 
       {!declined && (
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          {/* Assign (@ teammates) */}
+          {/* Assign (@ teammates) — read-only once the plan is approved */}
+          {!canEdit ? (
+            <span className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-xs font-medium">
+              <UserPlus className="h-3 w-3 text-muted-foreground" />
+              {task.assignee?.name || "Unassigned"}
+            </span>
+          ) : (
           <Popover open={assignOpen} onOpenChange={setAssignOpen}>
             <PopoverTrigger asChild>
               <button className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-xs font-medium hover:border-primary/40">
@@ -187,6 +194,7 @@ export function WorkItemCard({
               </div>
             </PopoverContent>
           </Popover>
+          )}
 
           {/* Remove from plan */}
           {editable && !compact && (

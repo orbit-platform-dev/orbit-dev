@@ -1,4 +1,5 @@
 import {
+  Building2,
   CalendarDays,
   LayoutDashboard,
   Video,
@@ -24,6 +25,7 @@ export const navSections: NavSection[] = [
   {
     items: [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { label: "Customers", href: "/customers", icon: Building2 },
       { label: "Calendar", href: "/calendar", icon: CalendarDays },
       { label: "Meetings", href: "/meetings", icon: Video, badgeKey: "meetings" },
       { label: "Execution Graph", href: "/graph", icon: Workflow },

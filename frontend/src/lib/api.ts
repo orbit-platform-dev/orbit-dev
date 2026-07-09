@@ -24,8 +24,13 @@ import type {
   Agent,
   CalendarEvent,
   CalendarStatus,
-  CallRoomInfo,
+  ChatConversationDetail,
+  ChatConversationSummary,
+  ChatResponse,
+  Customer,
   CustomerRequest,
+  KnowledgeItem,
+  SyncJob,
   ExecutionGraph,
   FollowUp,
   Integration,
@@ -135,12 +140,17 @@ export async function getProject(id: string): Promise<Project | undefined> {
 /** Edit the still-draft artifacts (PRD, follow-up email, timeline, name). */
 export async function patchProject(
   id: string,
-  body: Partial<{ name: string; prd: unknown; customerUpdate: unknown; timeline: unknown }>,
+  body: Partial<{ name: string; prd: unknown; crmUpdate: unknown; customerUpdate: unknown; timeline: unknown; internalNotes: string }>,
 ): Promise<Project | undefined> {
   if (USE_MOCK) return delay(120).then(() => undefined);
   return liveSend(`/projects/${id}`, "PATCH", body);
 }
-/** Finalize the execution plan (MVP: flips state, no external sync). */
+/** Generate the PRD on demand — none exists until the user asks for one. */
+export async function generatePrd(projectId: string): Promise<Project> {
+  if (USE_MOCK) throw new Error("PRD generation needs the backend — set NEXT_PUBLIC_API_URL.");
+  return liveSend(`/projects/${projectId}/generate-prd`, "POST");
+}
+/** Approve the execution plan: locks it, updates knowledge, prepares sync jobs. */
 export async function approveExecution(meetingId: string): Promise<{ approvalStatus: string; approvedAt: string } | undefined> {
   if (USE_MOCK) return delay(150).then(() => ({ approvalStatus: "approved", approvedAt: new Date().toISOString() }));
   return liveSend(`/meetings/${meetingId}/approve`, "POST");
@@ -234,7 +244,61 @@ export async function getIntegrations(): Promise<Integration[]> {
   return live("/integrations");
 }
 
-// --- Orbit Calls + Google Calendar ------------------------------------------
+// --- Customers, knowledge, sync & chat ---------------------------------------
+export async function getCustomers(): Promise<Customer[]> {
+  if (USE_MOCK) return [];
+  return live("/customers");
+}
+export async function getCustomer(id: string): Promise<Customer> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return live(`/customers/${id}`);
+}
+export async function createCustomer(input: { name: string; domain?: string; contactEmail?: string }): Promise<Customer> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend("/customers", "POST", input);
+}
+export async function patchKnowledge(itemId: string, status: "open" | "completed"): Promise<KnowledgeItem> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend(`/customers/knowledge/${itemId}`, "PATCH", { status });
+}
+export async function getCustomerKnowledge(id: string, kind?: string): Promise<KnowledgeItem[]> {
+  if (USE_MOCK) return [];
+  return live(`/customers/${id}/knowledge${kind ? `?kind=${kind}` : ""}`);
+}
+/** Synchronization status per destination — prepared at approval, run explicitly. */
+export async function getSyncJobs(planId: string): Promise<SyncJob[]> {
+  if (USE_MOCK) return [];
+  return live(`/projects/${planId}/sync-jobs`);
+}
+/** Explicitly execute one prepared update (Send / Publish / Create issues / Sync CRM). */
+export async function runSyncJob(planId: string, jobId: string, to?: string): Promise<SyncJob> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend(`/projects/${planId}/sync-jobs/${jobId}/run`, "POST", { to: to || undefined });
+}
+/** Ask Orbit — grounded in the Context Engine (structured retrieval, no DB dumps).
+ *  Conversations persist server-side; pass conversationId to continue one. */
+export async function sendChat(
+  message: string, customerId?: string | null, conversationId?: string | null,
+): Promise<ChatResponse> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend("/chat", "POST", {
+    message, customerId: customerId ?? undefined, conversationId: conversationId ?? undefined,
+  });
+}
+export async function listChatConversations(): Promise<ChatConversationSummary[]> {
+  if (USE_MOCK) return [];
+  return live("/chat/conversations");
+}
+export async function getChatConversation(id: string): Promise<ChatConversationDetail> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return live(`/chat/conversations/${id}`);
+}
+export async function deleteChatConversation(id: string): Promise<void> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  await liveSend(`/chat/conversations/${id}`, "DELETE");
+}
+
+// --- Google Calendar (read-only sync) + Zoom ---------------------------------
 // All real — these need the backend (and Google OAuth creds for calendar).
 const NEEDS_BACKEND = "This needs the backend — set NEXT_PUBLIC_API_URL.";
 
@@ -260,19 +324,6 @@ export async function getCalendarEvents(timeMin?: string, days = 7): Promise<Cal
   if (timeMin) params.set("time_min", timeMin);
   return live(`/calendar/events?${params}`);
 }
-/** Make Orbit the meeting link on one event (Meet replaced, invite updated). */
-export async function addOrbitLink(
-  eventId: string,
-): Promise<{ roomId: string; url: string; linkedInInvite: boolean }> {
-  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
-  return liveSend(`/calendar/events/${eventId}/orbit-link`, "POST");
-}
-/** Toggle auto-linking of upcoming meetings. */
-export async function patchCalendarSettings(autoLink: boolean): Promise<CalendarStatus> {
-  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
-  return liveSend("/calendar/settings", "PATCH", { autoLink });
-}
-
 // Zoom: real OAuth; recordings' transcripts import into Meetings.
 export async function getZoomStatus(): Promise<CalendarStatus> {
   if (USE_MOCK) return { configured: false, connected: false };
@@ -297,24 +348,29 @@ export async function importZoomRecording(uuid: string): Promise<{ meetingId: st
   return liveSend("/zoom/recordings/import", "POST", { uuid });
 }
 
-/** Start an ad-hoc Orbit call room right now. */
-export async function createInstantCall(title?: string): Promise<{ roomId: string; url: string }> {
-  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
-  return liveSend("/calls", "POST", { title: title || "Instant Orbit call" });
+// Google Meet: real OAuth (same Google client as Calendar); conference-record
+// transcripts import into Meetings, shaped like Zoom's recording summaries.
+export async function getMeetStatus(): Promise<CalendarStatus> {
+  if (USE_MOCK) return { configured: false, connected: false };
+  return live("/meet/status");
 }
-export async function getCallRoom(roomId: string): Promise<CallRoomInfo> {
+export async function getMeetAuthUrl(): Promise<{ url: string }> {
   if (USE_MOCK) throw new Error(NEEDS_BACKEND);
-  return live(`/calls/${roomId}`);
+  const res = await fetch(`${API_URL}/meet/connect`);
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `Connect failed: ${res.status}`);
+  return res.json();
 }
-/** End the call for everyone; finalizes it into a Meeting and starts analysis. */
-export async function endCall(roomId: string): Promise<{ meetingId: string; status: string }> {
+export async function disconnectMeet(): Promise<void> {
   if (USE_MOCK) throw new Error(NEEDS_BACKEND);
-  return liveSend(`/calls/${roomId}/end`, "POST");
+  await liveSend("/meet/disconnect", "POST");
 }
-/** WebSocket endpoint for a call room (signaling + live transcript). */
-export function callSocketUrl(roomId: string): string {
-  if (!API_URL) throw new Error(NEEDS_BACKEND);
-  return `${API_URL.replace(/^http/, "ws")}/ws/calls/${roomId}`;
+export async function getMeetRecordings(): Promise<ZoomRecording[]> {
+  if (USE_MOCK) return [];
+  return live("/meet/recordings");
+}
+export async function importMeetRecording(uuid: string, account?: string): Promise<{ meetingId: string; status: string }> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend("/meet/recordings/import", "POST", { uuid, account: account || undefined });
 }
 
 // --- Activity & dashboard rollups -----------------------------------------

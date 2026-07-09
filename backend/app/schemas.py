@@ -33,6 +33,7 @@ class MeetingOut(CamelModel):
     source: str
     status: str
     account: str
+    customer_id: str | None = None
     date: datetime
     duration_sec: int
     analysis_progress: int
@@ -71,18 +72,21 @@ class ProjectOut(CamelModel):
     target_date: datetime
     delivery_estimate: str
     source_meeting_id: str | None = None
+    customer_id: str | None = None
     revenue_impact: float
     owner: dict[str, Any]
     team: list[Any] = []
     tags: list[str] = []
     documents: list[Any] = []
     prd: dict[str, Any] | None = None
+    crm_update: dict[str, Any] | None = None
     engineering: dict[str, Any] | None = None
     design: dict[str, Any] | None = None
     qa: dict[str, Any] | None = None
     sales: dict[str, Any] | None = None
     customer_update: dict[str, Any] | None = None
     timeline: dict[str, Any] | None = None
+    internal_notes: str | None = None
     approval_status: str = "draft"
     approved_at: datetime | None = None
 
@@ -163,6 +167,46 @@ class ActivityEventOut(CamelModel):
     target_type: str
     at: datetime
     project_id: str | None = None
+
+
+class CustomerOut(CamelModel):
+    id: str
+    name: str
+    domains: list[str] = []
+    aliases: list[str] = []
+    created_at: datetime
+    meeting_count: int = 0
+    plan_count: int = 0
+    approved_plan_count: int = 0
+    open_commitments: int = 0
+    last_meeting_at: datetime | None = None
+
+
+class KnowledgeItemOut(CamelModel):
+    id: str
+    customer_id: str
+    kind: str
+    title: str
+    content: dict[str, Any] = {}
+    status: str
+    source_meeting_id: str | None = None
+    source_plan_id: str | None = None
+    approved_at: datetime | None = None
+    created_at: datetime
+
+
+class SyncJobOut(CamelModel):
+    id: str
+    plan_id: str
+    customer_id: str | None = None
+    kind: str
+    destination: str
+    status: str
+    payload: dict[str, Any] = {}
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
 
 
 class UploadMeetingIn(CamelModel):

@@ -20,6 +20,12 @@ export const qk = {
   calendarEvents: ["calendar", "events"] as const,
   zoomStatus: ["zoom", "status"] as const,
   zoomRecordings: ["zoom", "recordings"] as const,
+  meetStatus: ["meet", "status"] as const,
+  meetRecordings: ["meet", "recordings"] as const,
+  customers: ["customers"] as const,
+  customerKnowledge: (id: string) => ["customers", id, "knowledge"] as const,
+  syncJobs: (planId: string) => ["sync-jobs", planId] as const,
+  chatConversations: ["chat", "conversations"] as const,
 };
 
 export const useDashboard = () => useQuery({ queryKey: qk.dashboard, queryFn: api.getDashboard, refetchInterval: 8000 });
@@ -65,10 +71,33 @@ export const useCalendarEvents = (connected: boolean, timeMin?: string, days = 7
     placeholderData: (prev) => prev, // keep the grid on screen while refetching
   });
 
+export const useCustomers = () =>
+  useQuery({ queryKey: qk.customers, queryFn: api.getCustomers });
+export const useCustomer = (id: string) =>
+  useQuery({ queryKey: [...qk.customers, id], queryFn: () => api.getCustomer(id), enabled: !!id });
+export const useCustomerKnowledge = (id: string) =>
+  useQuery({ queryKey: qk.customerKnowledge(id), queryFn: () => api.getCustomerKnowledge(id), enabled: !!id });
+export const useChatConversations = () =>
+  useQuery({ queryKey: qk.chatConversations, queryFn: api.listChatConversations });
+/** Sync jobs for a plan. Jobs run only on explicit user action, so polling is
+ *  needed just while one is actually executing. */
+export const useSyncJobs = (planId?: string, enabled = true) =>
+  useQuery({
+    queryKey: qk.syncJobs(planId ?? ""),
+    queryFn: () => api.getSyncJobs(planId!),
+    enabled: !!planId && enabled,
+    refetchInterval: (query) =>
+      query.state.data?.some((j) => j.status === "running") ? 1500 : false,
+  });
+
 export const useZoomStatus = () =>
   useQuery({ queryKey: qk.zoomStatus, queryFn: api.getZoomStatus });
 export const useZoomRecordings = (enabled: boolean) =>
   useQuery({ queryKey: qk.zoomRecordings, queryFn: api.getZoomRecordings, enabled });
+export const useMeetStatus = () =>
+  useQuery({ queryKey: qk.meetStatus, queryFn: api.getMeetStatus });
+export const useMeetRecordings = (enabled: boolean) =>
+  useQuery({ queryKey: qk.meetRecordings, queryFn: api.getMeetRecordings, enabled });
 
 /** The connected push target (Jira preferred, then Linear), or null if none. */
 export function useConnectedProvider(): "jira" | "linear" | null {

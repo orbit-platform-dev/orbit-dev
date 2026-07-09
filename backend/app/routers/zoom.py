@@ -1,11 +1,8 @@
 """Zoom integration — real OAuth, no mocks.
 
-Zoom's API can't host links inside a Zoom meeting, so owning-the-call for
-Zoom-scheduled meetings happens on the calendar side (the invite's zoom.us link
-is replaced by the Orbit link during calendar sync). What Zoom OAuth adds is the
-conversations that still happen on Zoom: cloud recordings are listed here and
-imported — their per-speaker VTT transcript becomes a Meeting and runs the
-standard analysis pipeline.
+Zoom stays the meeting platform; Orbit ingests what happened there: cloud
+recordings are listed here and imported — their per-speaker VTT transcript
+becomes a Meeting and runs the standard analysis pipeline.
 
 Requires ZOOM_CLIENT_ID / ZOOM_CLIENT_SECRET in backend/.env; endpoints fail
 loudly (503) with setup instructions when unset. Zoom rotates refresh tokens on
@@ -26,6 +23,8 @@ from sqlalchemy import select
 
 from ..config import settings
 from ..deps import Depends, get_current_user, get_db
+from ..services.customers import resolve_customer
+from ..services.workspace import get_workspace_id
 from ..models import CalendarConnection, Integration, Meeting, TimelineEvent
 from .meetings import _analyze_in_background
 
@@ -248,7 +247,7 @@ class ImportRecordingIn(BaseModel):
 
 @router.post("/recordings/import")
 async def import_recording(body: ImportRecordingIn, background: BackgroundTasks,
-                           db=Depends(get_db), _=Depends(get_current_user)):
+                           db=Depends(get_db), ws: str = Depends(get_workspace_id)):
     """Pull one recording's transcript into a Meeting and analyze it."""
     imported = await _imported_map(db)
     if body.uuid in imported:
@@ -275,12 +274,15 @@ async def import_recording(body: ImportRecordingIn, background: BackgroundTasks,
 
     started = datetime.fromisoformat(rec["start_time"]) if rec.get("start_time") else datetime.now(timezone.utc)
     speakers = list(dict.fromkeys(s["speaker"] for s in segments))
+    customer = await resolve_customer(db, ws, rec.get("topic", ""))
     meeting = Meeting(
         id=f"m_{uuid_mod.uuid4().hex[:8]}",
         title=rec.get("topic", "Zoom meeting"),
         source="zoom",
         status="analyzing",
-        account=rec.get("topic", "Zoom import"),
+        account=customer.name if customer else rec.get("topic", "Zoom import"),
+        customer_id=customer.id if customer else None,
+        workspace_id=ws,
         date=started,
         duration_sec=int(rec.get("duration", 0)) * 60,
         analysis_progress=5,
