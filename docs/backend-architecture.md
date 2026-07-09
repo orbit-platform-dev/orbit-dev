@@ -1,314 +1,349 @@
 # Orbit — Backend System & Agent Architecture
 
-A brief but complete explanation of how the Orbit backend works, with a focus on
-the AI agents: what they are, how they reason, and how a single customer
-transcript flows through them into a company-wide execution plan.
+A brief but complete explanation of how the Orbit backend works: how a customer
+conversation, combined with everything Orbit already knows about that customer,
+becomes a reviewed, approved, synchronized set of company updates.
 
 ---
 
 ## 1. What the backend does
 
-Orbit's backend takes a **customer conversation** (a meeting transcript) and turns
-it into **coordinated execution across the whole company** — a PRD, engineering and
-design plans, a QA strategy, sales enablement, and a customer follow-up — connected
-together in an **execution graph** where every artifact explains *why* it exists.
+Orbit is an **execution platform** — the **review and approval layer** between
+customer conversations and company execution. The backend takes a **meeting
+transcript**, identifies the **customer** behind it, retrieves that customer's
+**history**, and prepares a complete **execution plan**: a CRM update proposal,
+a PRD (on demand), per-team work items, a timeline, and a customer follow-up —
+connected in an **execution graph** where every artifact explains *why* it exists.
 
-It is not a meeting summarizer. The job is **execution coordination**: replacing the
-manual Customer → Sales → Product → Engineering → Design → QA → Customer Success
-handoffs with one automated, explainable pipeline.
+Nothing is executed automatically. A human **reviews and edits every draft,
+approves the plan (which locks it), and explicitly pushes each update** to the
+tools the company already uses — Jira, Notion, the CRM, email. Those tools stay
+the **system of record**. Only approved output becomes the customer's permanent
+**knowledge**, which makes the next meeting's proposals smarter.
 
-**Stack:** FastAPI (async) · LangGraph (agent orchestration) · PydanticAI (typed LLM
-wrapper) · SQLAlchemy 2 (async) · PostgreSQL / SQLite · Redis (optional) · Docker.
+**Stack:** FastAPI (async) · LangGraph (agent orchestration) · PydanticAI (typed
+LLM wrapper) · SQLAlchemy 2 (async) · PostgreSQL + **pgvector** / SQLite ·
+**Alembic** (migrations) · Redis (optional) · Docker.
 
 ---
 
-## 2. The four layers
+## 2. The layers
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│  HTTP LAYER        FastAPI + 9 REST routers                  │
-│                    (meetings, graph, projects, tasks, ...)   │
-├────────────────────────────────────────────────────────────┤
-│  AGENT LAYER  ★    The brain: a LangGraph pipeline of 8      │
-│                    typed PydanticAI agents + a model service │
-├────────────────────────────────────────────────────────────┤
-│  PERSISTENCE       Turns agent output into domain rows       │
-│                    (Project, GraphNodes/Edges, Tasks)        │
-├────────────────────────────────────────────────────────────┤
-│  DATA / INFRA      Async SQLAlchemy · Postgres/SQLite ·      │
-│                    optional Redis · Clerk auth · settings    │
-└────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  HTTP LAYER        FastAPI + 14 REST routers                  │
+│                    meetings · customers · chat · calendar ·   │
+│                    zoom · meet · projects · tasks · graph ·   │
+│                    timeline · integrations · activity · …     │
+├──────────────────────────────────────────────────────────────┤
+│  CONTEXT ENGINE ★  ONE structured ContextPackage per          │
+│                    generation: SQL facts + pgvector semantic  │
+│                    recall over the customer's history         │
+├──────────────────────────────────────────────────────────────┤
+│  AGENT LAYER ★     LangGraph pipeline of 10 typed PydanticAI  │
+│                    agents + provider-agnostic model service   │
+├──────────────────────────────────────────────────────────────┤
+│  SERVICES          customers (identity) · knowledge (approved │
+│                    truth) · sync (prepared jobs) · embeddings │
+│                    · workspace (tenancy)                      │
+├──────────────────────────────────────────────────────────────┤
+│  PERSISTENCE       Agent output → ExecutionPlan, GraphNodes/  │
+│                    Edges, Tasks (idempotent per meeting)      │
+├──────────────────────────────────────────────────────────────┤
+│  DATA / INFRA      Async SQLAlchemy · Alembic (auto-migrate   │
+│                    at startup) · Postgres+pgvector / SQLite · │
+│                    optional Redis · Clerk auth · settings     │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-Everything exists to feed the **agent layer (★)** transcripts and store what it
-produces.
+The two ★ layers are the product: the **Context Engine** decides what history a
+generation sees, and the **agents** turn transcript + context into proposals.
 
 ---
 
 ## 3. The end-to-end flow
 
-When a transcript arrives (`POST /meetings/transcript`), here's the full trip:
-
 ```
-POST /meetings/transcript
+POST /meetings/transcript  { transcript, title, account }
    │
    ▼
-[router]  create Meeting row (status = "analyzing")
-   │
+[identify customer]   resolve_customer(): normalized name → aliases → email
+   │                  domains; "acme" and "Acme Inc" land on the same Customer
    ▼
-_execute_pipeline(meeting)
-   │
-   ├─►  run_pipeline()                ← AGENT LAYER runs the 8 agents
-   │       returns `state` = {
-   │         signals, prd, teams,
-   │         engineering, design, qa, sales, customer_update
-   │       }
-   │
-   ├─►  signals_to_analysis(...)      ← normalize for the UI, attach to meeting
-   │
-   ├─►  if the call had real signals (feature requests / pain points):
-   │        persist_execution()       ← PERSISTENCE writes graph + project + tasks
-   │     else:
-   │        delete_execution()        ← trivial chat → no graph
-   │
-   └─►  commit + return { analysis, full pipeline state }
+[retrieve context]    build_context_package(customer, wide=True):
+   │                  semantically-matched past meetings + approved plans +
+   │                  open commitments + approved knowledge → ONE text block
+   ▼
+[run pipeline]        10 agents (LangGraph), each seeing the SAME context —
+   │                  signals → PRD draft → router → crm ∥ eng ∥ design → qa,
+   │                  sales → work items + timeline → follow-up email
+   ▼
+[persist]             ExecutionPlan (draft) + graph + tasks; meeting embedded
+   │                  for future semantic recall. PRD is NOT stored yet —
+   ▼                  it's generated on demand in review (see §6).
+[REVIEW]              every section is an editable draft; Generate PRD button;
+   │                  nothing has left Orbit
+   ▼
+[APPROVE]             one moment, four effects — and NO execution:
+   │                    1. plan LOCKS (all edits 409, UI mirrors it)
+   │                    2. Approval audit row (who, when, which sections)
+   │                    3. approved sections → KnowledgeItems (+ commitments)
+   │                    4. SyncJobs PREPARED (status: pending)
+   ▼
+[SYNC — explicit]     each section's push button runs ONE job:
+   │                  PRD→Notion · issues→Jira · CRM update · Send email
+   ▼                  (destination connected? else job explains why not)
+[REMEMBER]            knowledge + embeddings feed the NEXT meeting's context
 ```
 
-The same `_execute_pipeline` is shared by two endpoints — `POST /meetings/transcript`
-(paste + analyze) and `POST /meetings/{id}/analyze` (re-run a stored meeting) — so
-both behave identically. Re-running is **idempotent**: persistence deletes the
-meeting's old graph/project/tasks before writing fresh ones.
+Re-analysis is **idempotent**: persistence deletes the meeting's old
+plan/graph/tasks before writing fresh ones.
 
 ---
 
-## 4. The agent system (the core)
+## 4. The Context Engine (`app/context/engine.py`)
 
-### 4.1 What an agent is
+The single door to history. Every generator — the whole pipeline AND chat —
+consumes the same structured `ContextPackage`; nothing ever passes raw tables
+or transcripts to an LLM.
 
-Every agent is built from **three ingredients**:
+**Hybrid retrieval:**
 
-1. **A system prompt** — its role and personality (e.g. *"You are Orbit's Engineering
-   Planner…"*).
-2. **A typed output schema** — a Pydantic model describing exactly what it must
-   return. The model is told to use **constrained decoding** (`NativeOutput`), which
-   forces valid JSON matching the schema. If validation fails, it retries (×3).
-3. **A model** — supplied by the model service, not hard-coded.
+| Data | Retrieval | Why |
+|---|---|---|
+| Open commitments, approved plans, profile | plain indexed SQL | exact facts — you want *all* open commitments, not similar ones |
+| "Which of N past meetings matter *now*?" | **pgvector** cosine search over embeddings | meaning-based: "login problems" finds the "SAML assertion errors" meeting |
+| Approved knowledge (PRDs, CRM updates, emails) | pgvector too, recency backfill | same |
 
-In code, that's a one-liner:
+**Embeddings** (`services/embeddings.py`): Gemini `gemini-embedding-001`,
+768-dim, written when a meeting is analyzed and when knowledge is approved
+(+ a capped backfill at startup). On Postgres they're real `vector` columns
+with HNSW indexes (migration 0003; compose db image `pgvector/pgvector:pg16`)
+— similarity search stays fast at thousands of meetings per customer. On dev
+SQLite the same values are JSON ranked by Python cosine; with no embeddings at
+all (AI off), ranking degrades to keyword overlap + recency. Retrieval never
+breaks.
 
-```python
-Agent(build_model(model),
-      output_type=NativeOutput(output_type),   # schema-constrained JSON
-      system_prompt=system_prompt,
-      retries=3)
+**Caps** keep prompts lean: pipeline and chat use the *wide* set (12 meetings,
+8 plans, 20 commitments, 15 knowledge items), every string clipped. More
+context is not better context — the semantic ranking is what fills those slots
+with the *right* history.
+
+---
+
+## 5. The agent system
+
+### 5.1 What an agent is
+
+1. **A system prompt** — a professional persona (*"write like a senior PM at a
+   top-tier enterprise SaaS company…"*). Prompts demand real-world formats:
+   Given/When/Then acceptance criteria, standard CRM stages, placeholder-free
+   emails.
+2. **A typed output schema** — a Pydantic model enforced via constrained
+   decoding (`NativeOutput`), retried ×3 on validation failure. Outputs
+   serialize to camelCase and drop straight into the frontend.
+3. **A model** — from the provider-agnostic model service.
+
+### 5.2 The model service
+
+`DEFAULT_MODEL = "provider:name"` resolves against a registry
+(`google-gla`, `google`, `ollama`, `anthropic`, `openai`). Switching providers
+is an env change; adding one is a registry entry.
+
+| Use case        | DEFAULT_MODEL                         | Key needed    |
+| --------------- | ------------------------------------- | ------------- |
+| Free dev        | `google-gla:gemini-flash-lite-latest` | Gemini key    |
+| Local / offline | `ollama:llama3.1`                     | none          |
+| Production      | `anthropic:claude-opus-4-8`           | Anthropic key |
+
+### 5.3 The ten agents
+
+| #  | Agent                  | Reads                          | Produces |
+|----|------------------------|--------------------------------|----------|
+| 1  | `meeting-intelligence` | transcript **+ context**       | signals: summary, sentiment, urgency, pains, requests, deadlines, revenue |
+| 2  | `product-manager`      | signals **+ context**          | PRD draft (internal during pipeline; user-triggered for the stored PRD) |
+| 3  | `execution-router` ★   | signals + PRD **+ context**    | **which sections this meeting needs + why** (crm, eng, design, qa, sales, cs) |
+| 4  | `crm-analyst`          | signals **+ context**          | CRM update proposal: account summary, stage, risk, field updates w/ evidence |
+| 5  | `engineering-planner`  | PRD **+ context**              | architecture, components, estimate, risks |
+| 6  | `design-planner`       | PRD **+ context**              | flows, screens |
+| 7  | `qa-planner`           | PRD + engineering **+ context**| test strategy, cases, coverage |
+| 8  | `sales-planner`        | PRD **+ context**              | positioning, talk tracks, segments |
+| 9  | `execution-planner`    | PRD + signals + routing **+ context** | cross-team work items, each with a WHY; timeline derived deterministically |
+| 10 | `customer-success`     | signals + account **+ context**| follow-up email + commitments |
+
+Plus `orbit-chat` (answers questions over the context package — §8) and
+`leadership-advisor` (defined, not yet wired).
+
+**Every agent receives the same rendered context block** — prior asks, approved
+plans, open commitments — with the instruction: reference history, don't
+re-commit delivered work, flag repeated themes. No update is ever drafted from
+a single meeting in isolation.
+
+### 5.4 The LangGraph pipeline
+
 ```
-
-Because outputs are typed and serialize to **camelCase**, an agent's result drops
-straight into the frontend's data shapes with no manual mapping.
-
-### 4.2 The model service — provider-agnostic by design
-
-Agents never name an LLM provider. They call `build_model()`, which reads one
-setting, `DEFAULT_MODEL = "provider:name"`, and looks the provider up in a registry:
-
-```
-DEFAULT_MODEL = "google-gla:gemini-flash-lite-latest"
-                 └ provider ┘ └────── model name ──────┘
-                       │
-        build_model() → registry → returns a PydanticAI model
-        { google-gla, google, ollama, anthropic, openai }
-```
-
-| Use case        | DEFAULT_MODEL                          | Key needed     |
-| --------------- | -------------------------------------- | -------------- |
-| Free dev        | `google-gla:gemini-flash-lite-latest`  | Gemini key     |
-| Local / offline | `ollama:llama3.1`                      | none           |
-| Production      | `anthropic:claude-opus-4-8`            | Anthropic key  |
-
-**Switching providers is an environment change, not a code change.** Adding a new
-provider is a single registry entry.
-
-### 4.3 The eight agents
-
-| # | Agent                  | Reads                | Produces                                            |
-|---|------------------------|----------------------|-----------------------------------------------------|
-| 1 | `meeting-intelligence` | raw transcript       | signals: summary, sentiment, urgency, pain points, feature requests, opportunities, action items |
-| 2 | `product-manager`      | signals              | PRD: problem, goals, non-goals, metrics, user stories |
-| 3 | `execution-router` ★   | signals + PRD        | **which teams are relevant + why** (the differentiator) |
-| 4 | `engineering-planner`  | PRD                  | architecture, components, week estimate, risks      |
-| 5 | `design-planner`       | PRD                  | user flows, screens                                 |
-| 6 | `qa-planner`           | PRD + engineering    | test strategy, test cases, coverage estimate        |
-| 7 | `sales-planner`        | PRD                  | positioning, talk tracks, target segments           |
-| 8 | `customer-success`     | signals + account    | follow-up email draft + commitments                 |
-
-(A ninth, `leadership-advisor`, is defined but not yet wired in — that's the next
-phase.)
-
-### 4.4 How they're wired — the LangGraph pipeline
-
-The agents form a **directed graph** (a LangGraph `StateGraph`). Every node is an
-async function that reads and updates one shared `state` object. The graph runs in
-"supersteps", so branches that don't depend on each other run in parallel, and a
-node that needs two inputs waits for both.
-
-```
-                    transcript
+            transcript + ContextPackage
                         │
-                        ▼
-              ┌───────────────────┐
-              │ meeting-          │  → signals
-              │ intelligence      │
-              └───────────────────┘
+              meeting-intelligence → signals
                         │
-                        ▼
-              ┌───────────────────┐
-              │  product-manager  │  → PRD
-              └───────────────────┘
+                 product-manager → PRD (internal)
                         │
-                        ▼
-              ┌───────────────────┐
-              │ execution-router ★│  → teams {relevant, reason}
-              └───────────────────┘     decides WHO is needed
-                     ╱       ╲              (fan-out)
-                    ▼         ▼
-             ┌──────────┐ ┌──────────┐
-             │engineering│ │  design  │  ← each skips itself if the
-             └──────────┘ └──────────┘     router marked it irrelevant
-                  │  ╲        │
-                  ▼   ╲       ▼
-             ┌──────┐  ▼  ┌──────┐
-             │ sales│  └─▶│  qa  │   (qa waits for eng + design)
-             └──────┘     └──────┘
-                  ╲         ╱
-                   ▼       ▼
-              ┌────────────────┐
-              │ customer-      │   (waits for qa + sales)
-              │ success        │
-              └────────────────┘
+                execution-router ★ → sections {relevant, reason}
+                ╱        │        ╲                (fan-out)
+        crm-analyst  engineering  design    ← each skips itself if
+                ╲        │  ╲       │          routed irrelevant
+                 ╲       │   ╲      ▼
+                  ╲      │    ╲   qa   (waits for eng + design)
+                   ╲     │    sales
+                    ╲    ▼    ╱
+                  execution-planner → work items + timeline
                         │
-                        ▼
-                    final state
+                 customer-success → follow-up email
 ```
 
-### 4.5 The execution router — reasoning about *who* is needed
+Nodes return **partial state updates** (only the keys they produced) and the
+shared `events` list is a reducer channel (`operator.add`) — that is what makes
+the three-way parallel branch safe. Returning full state from a node causes
+LangGraph's `InvalidUpdateError`.
 
-This is what makes Orbit feel like a human operator rather than a template. Not every
-conversation needs every team: a pricing/copy change needs no QA; a backend-only API
-fix needs no design; an internal fix needs no sales.
+### 5.5 The execution router
 
-After the PRD is drafted, the **`execution-router`** agent decides, for each of
-engineering / design / QA / sales / customer-success, whether it is *genuinely
-relevant to this conversation*, and gives a one-line reason. Downstream nodes then
-**guard on that decision** — an irrelevant team is skipped entirely instead of
-generating throwaway work:
+Not every conversation needs every section: a pricing complaint needs no QA; a
+support escalation may need no CRM stage change. The router decides per section
+with a one-line reason; skipped sections generate nothing and appear in the
+graph as `skipped` — with the reason.
 
-```python
-relevant, reason = _relevant(state, "design")
-if not relevant:
-    state["design"] = {"skipped": True, "reason": reason}
-    return state            # no LLM call, no filler
-```
+### 5.6 Graceful degradation
 
-**Worked example** — a "504 timeouts on our API" transcript routes to:
-
-| Team             | Decision   | Reason                                                        |
-|------------------|------------|---------------------------------------------------------------|
-| Engineering      | ✅ run      | Backend optimization and load testing required                |
-| QA               | ✅ run      | Must validate the fix under simulated peak load               |
-| Customer Success | ✅ run      | Manage the customer's Black-Friday-deadline expectations      |
-| Design           | ⏭ skipped  | Purely a backend issue, no UI/UX change                       |
-| Sales            | ⏭ skipped  | Technical remediation, no commercial change                   |
-
-The graph then shows engineering / QA / CS as completed nodes and design / sales as
-**skipped** nodes — each carrying its reason.
-
-### 4.6 Graceful degradation — the pipeline always completes
-
-Every agent call is wrapped so it can never crash the request:
-
-```python
-if AI is enabled:
-    try:    return await agent.run(prompt)      # real LLM
-    except: log + fall through
-return fallback()                               # deterministic, transcript-derived
-```
-
-There is a **deterministic fallback for every agent** (regex/heuristics over the
-transcript). This means:
-
-- With **no API key / `ENABLE_AI=false`**, the whole product runs **offline** with
-  plausible, transcript-grounded output.
-- On **any LLM failure** (rate limit, bad JSON, timeout), just that node falls back —
-  the pipeline still finishes.
-- If **LangGraph itself** is unavailable, the same nodes run sequentially via a
-  plain fallback path.
+Every agent call falls back to a deterministic, transcript-derived function on
+any LLM failure; with `ENABLE_AI=false` the entire product runs offline. If
+LangGraph itself is unavailable, the same nodes run sequentially. Embedding
+failures degrade retrieval to keyword ranking. The pipeline never crashes the
+request; failed analyses mark the meeting `failed`, never left spinning.
 
 ---
 
-## 5. From agent output to the execution graph
+## 6. From agent output to the review screen
 
-Once the pipeline returns its `state`, the **persistence layer** turns it into the
-rows the UI reads:
+Persistence (`agents/persistence.py`) writes, per meeting:
 
-- **A Project** — the umbrella record (name, health, revenue impact, target date),
-  with each team's plan mapped onto it.
-- **Graph nodes** — Meeting → Feature-Request → PRD → {Engineering, Design, Sales} →
-  QA → Customer-Followup. Node IDs are keyed by meeting (`g_{meetingId}_{kind}`) so
-  the graph is **per-meeting** and re-runs are idempotent. **Every node stores its
-  "why"** (`meta.reason`); skipped teams are saved as `status = "skipped"` with their
-  reason and no tasks.
-- **Graph edges** — the relationships; each edge encodes *why* an artifact exists
-  (this PRD exists *because of* this request).
-- **Tasks** — engineering components become tickets, linked back to the meeting and
-  graph node.
+- **ExecutionPlan** (table `projects`; `Project` is a compat alias) — the
+  central business object: `crm_update`, `engineering`, `design`, `qa`,
+  `sales`, `customer_update`, `timeline`, `internal_notes` as JSON sections,
+  `approval_status`, `customer_id`, `workspace_id`. **`prd` starts empty** —
+  the review screen's *Generate PRD* button (`POST /projects/{id}/generate-prd`)
+  creates it on demand from the *current, possibly human-edited* intent plus
+  the context package. No PRD exists until a human asks.
+- **Graph nodes/edges** — Meeting → Intent → CRM Update → PRD → Plan →
+  {Eng, Design, Sales} → QA → Timeline → Email → **Synchronization**. IDs are
+  per-meeting (`g_{meetingId}_{kind}`); every node stores its "why"
+  (`meta.reason`); the sync node sits `pending` until updates are pushed.
+- **Tasks** — work items across all disciplines, each carrying its reason and
+  confidence.
+- The follow-up email's **recipient is auto-assigned** from the customer's
+  learned contact (`Customer.meta.contactEmail`) and shown as an editable
+  "To" field.
 
-A **signal guard** decides whether any of this happens: only meetings with real
-feature requests or pain points get a graph; trivial chatter is cleaned up.
+A signal guard keeps trivial chatter out: only meetings with real feature
+requests or pain points produce a plan.
 
 ---
 
-## 6. The data model (brief)
+## 7. Approval → Knowledge → Synchronization
 
-Ten tables (JSON-rich — nested structures like PRDs live in JSON columns):
+`POST /meetings/{id}/approve` **locks and prepares — it never executes**:
+
+1. **Lock** — plan PATCH, meeting-analysis PATCH, and all task edits
+   (assign/decline/delete included) return 409. Kanban column moves stay open
+   (delivery tracking, not plan editing).
+2. **Audit** — an `Approval` row records who approved which sections, when.
+3. **Knowledge** — `services/knowledge.py` snapshots the approved sections into
+   `KnowledgeItem`s: meeting summary, CRM update, PRD, timeline, email, and
+   each commitment as an individual open item. **Only approved output becomes
+   knowledge — raw AI output is never stored as truth.** Items are embedded for
+   semantic recall.
+4. **SyncJobs prepared** — one pending job per approved section
+   (`crm-update`, `publish-prd`, `create-tasks`, `send-email`). No connected
+   destination → the job is `skipped` with a human-readable reason.
+
+**Execution is a separate, human act**: each section's push button calls
+`POST /projects/{id}/sync-jobs/{job}/run` (Send email requires a recipient;
+sending learns it back onto the Customer). Executors in `services/sync.py` are
+the seam where real destination APIs slot in — currently stubbed links, but
+flowing through the audited job pipeline (status / result / error / retry).
+When the last job finishes, the graph's Synchronization node completes.
+
+---
+
+## 8. Customers, chat and history
+
+- **Customer identity** (`services/customers.py`): meetings resolve their
+  account label to a real `Customer` (normalized name → aliases → email
+  domains; suffixes like "Inc" ignored). Generic labels stay unlinked rather
+  than guessing. Customers can also be created directly (`POST /customers`).
+- **Chat** (`routers/chat.py`): conversations **persist**
+  (`chat_conversations`) like Claude/GPT chats — each carries its transcript
+  and customer binding. Customer detection is fuzzy ("nortwind" → Northwind
+  Labs; ambiguity asks instead of guessing). Every answer is grounded in a
+  *wide* ContextPackage; with AI off, a deterministic context-derived answer is
+  returned. History endpoints: `GET/DELETE /chat/conversations[/{id}]`.
+
+---
+
+## 9. The data model
+
+Sixteen tables (JSON-rich), all business rows carrying `workspace_id`:
 
 ```
-Meeting ──(linked project)──► Project ──┬─► GraphNode ──► GraphEdge
-   │                                     ├─► Task
-   ├─► TimelineEvent                     └─► PRD / Eng / Design / QA / Sales (JSON)
-   └─► ActivityEvent
-Member · Agent · Integration  (supporting data)
+Workspace ─── Customer ──┬─► Meeting (embedding) ──► ExecutionPlan (projects)
+                         │        │                     ├─► GraphNode ─► GraphEdge
+                         │        ├─► TimelineEvent     ├─► Task
+                         │        └─► ActivityEvent     ├─► Approval
+                         ├─► KnowledgeItem (embedding)  └─► SyncJob
+                         └─► ChatConversation
+Member · Agent · Integration · CalendarConnection   (supporting data)
 ```
 
-Each table is exposed through a REST router under one API: `/meetings`, `/graph`,
-`/projects`, `/tasks`, `/agents`, `/timeline`, `/integrations`, `/activity`,
-`/dashboard`.
+**Migrations are Alembic** (`backend/alembic/`), applied automatically at
+startup: fresh DB → create_all + stamp head; pre-Alembic DB → stamp baseline +
+upgrade (+ a drift repair for old dev DBs); managed DB → upgrade. Schema
+changes require a migration, never just a model edit.
 
 ---
 
-## 7. Supporting infrastructure (brief)
+## 10. Supporting infrastructure
 
-- **Database** — async SQLAlchemy. On startup it creates tables and (optionally)
-  seeds a demo dataset. A fresh session is provided per request.
-- **Redis** — **optional**. Backs a pipeline event stream; if not configured, the
-  helpers no-op and the API runs fine without it.
-- **Auth** — Clerk JWT verification. In dev (no Clerk config) auth is **disabled** and
-  every request runs as a demo user.
-- **Config** — one settings object loaded from `.env`. Everything provider / database
-  / auth-related is an environment variable; the app degrades gracefully with none of
-  them set.
+- **Ingestion** — pasted transcripts, **Zoom** (OAuth → cloud-recording VTT
+  import) and **Google Meet** (OAuth → transcript *entries* via the Meet REST
+  API). Google Calendar is a **read-only** schedule sync. Orbit performs no
+  transcription itself.
+- **Redis** — optional event stream; no-ops when unset.
+- **Auth / tenancy** — Clerk JWT (disabled in dev → demo principal);
+  `services/workspace.py` maps org claims to a workspace (dev: `ws_default`).
+- **Config** — one settings object from `.env`; the app degrades gracefully
+  with none of it set.
 
 ---
 
-## 8. The two ideas that explain every decision
+## 11. The ideas that explain every decision
 
-1. **Provider-agnostic + degrade-gracefully** — swap the LLM by env var, and the
-   product still runs even with no LLM at all.
-2. **The graph is the product** — agents don't just summarize; they produce real
-   artifacts and the relationships between them, reason about *who is actually
-   needed*, and explain *why* on every node.
+1. **Orbit proposes; humans approve; tools stay the system of record.**
+   Approval locks — it never executes. Every outbound update is an explicit,
+   audited human action.
+2. **Only approved output becomes knowledge** — and knowledge (retrieved
+   semantically, per customer) feeds every future generation. The loop
+   compounds.
+3. **One Context Engine** — a single, capped, hybrid-retrieval package for
+   every generator and the chat. Never dump the database into a prompt.
+4. **Provider-agnostic + degrade-gracefully** — swap the LLM by env var; the
+   product still runs with no LLM at all.
+5. **The graph is the product** — real artifacts, real relationships, a router
+   that reasons about *what's needed*, and a "why" on every node.
 
-> **In one sentence:** a transcript enters through a router, a LangGraph pipeline runs
-> eight typed PydanticAI agents (each with a deterministic fallback) — a routing agent
-> decides which teams even participate — and the persistence layer turns the result
-> into a per-meeting execution graph where every node is a real artifact that explains
-> why it exists.
+> **In one sentence:** a transcript enters, Orbit identifies the customer and
+> retrieves their history through one Context Engine (SQL facts + pgvector
+> semantic recall), a LangGraph pipeline of ten typed agents drafts the full
+> execution package, a human edits and approves it (which locks it, audits it,
+> and turns it into customer knowledge), each update is explicitly pushed to
+> the tools that remain the system of record — and everything approved makes
+> the next conversation smarter.
