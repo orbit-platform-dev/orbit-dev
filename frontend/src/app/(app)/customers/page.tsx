@@ -7,7 +7,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Building2, CalendarDays, Handshake, Plus, Search, Sparkles, Video } from "lucide-react";
+import { Building2, CalendarDays, Handshake, Plus, Search, Sparkles, Trash2, Video } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { qk, useCustomers } from "@/lib/hooks";
@@ -16,6 +16,7 @@ import type { Customer } from "@/lib/types";
 import { timeAgo } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,8 +28,24 @@ import {
 
 export default function CustomersPage() {
   const { data: customers, isLoading } = useCustomers();
+  const qc = useQueryClient();
   const [query, setQuery] = React.useState("");
   const [createOpen, setCreateOpen] = React.useState(false);
+  const [deleteTarget, setDeleteTarget] = React.useState<Customer | null>(null);
+
+  const doDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await api.deleteCustomer(deleteTarget.id);
+      toast.success(`${deleteTarget.name} deleted`);
+      for (const key of [qk.customers, qk.meetings, qk.projects, qk.chatConversations]) {
+        qc.invalidateQueries({ queryKey: key });
+      }
+    } catch (err) {
+      toast.error("Couldn't delete the customer", { description: (err as Error).message });
+      throw err;
+    }
+  };
 
   const filtered = (customers ?? []).filter((c) =>
     !query.trim() || c.name.toLowerCase().includes(query.trim().toLowerCase()));
@@ -69,21 +86,38 @@ export default function CustomersPage() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {filtered.map((c, i) => (
             <motion.div key={c.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}>
-              <CustomerCard customer={c} />
+              <CustomerCard customer={c} onDelete={() => setDeleteTarget(c)} />
             </motion.div>
           ))}
         </div>
       )}
 
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(v) => { if (!v) setDeleteTarget(null); }}
+        title={`Delete ${deleteTarget?.name ?? "customer"}?`}
+        description={<>Their knowledge base and chat history will be permanently removed. Meetings and execution plans are kept, just unlinked.</>}
+        confirmLabel="Delete customer"
+        destructive
+        onConfirm={doDelete}
+      />
       <NewCustomerDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   );
 }
 
-function CustomerCard({ customer: c }: { customer: Customer }) {
+function CustomerCard({ customer: c, onDelete }: { customer: Customer; onDelete: () => void }) {
   return (
-    <Link href={`/customers/${c.id}`} className="glass glass-hover block rounded-xl p-4 transition-all hover:-translate-y-0.5">
-      <div className="flex items-start gap-3">
+    <Link href={`/customers/${c.id}`} className="glass glass-hover group relative block rounded-xl p-4 transition-all hover:-translate-y-0.5">
+      {/* Always visible but quiet — turns red only when you aim at it. */}
+      <button
+        aria-label={`Delete ${c.name}`}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
+        className="absolute right-2.5 top-2.5 rounded-md p-1.5 text-muted-foreground/50 transition-colors hover:bg-destructive/10 hover:text-destructive"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+      <div className="flex items-start gap-3 pr-6">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary text-primary">
           <Building2 className="h-5 w-5" />
         </div>

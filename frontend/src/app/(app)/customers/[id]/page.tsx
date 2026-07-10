@@ -69,7 +69,9 @@ export default function CustomerDetailPage() {
             <Link href={`/chat?customer=${c.id}`}><MessageCircle className="h-4 w-4" /> Ask about {c.name.split(" ")[0]}</Link>
           </Button>
           <Button asChild className="gap-2">
-            <Link href="/meetings?upload=1"><Plus className="h-4 w-4" /> New meeting</Link>
+            <Link href={`/meetings?upload=1&customer=${encodeURIComponent(c.name)}`}>
+              <Plus className="h-4 w-4" /> New meeting
+            </Link>
           </Button>
         </div>
       </div>

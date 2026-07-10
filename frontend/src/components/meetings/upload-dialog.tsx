@@ -23,13 +23,19 @@ import { cn } from "@/lib/utils";
 import { runTranscript } from "@/lib/api";
 import { qk, useCustomers } from "@/lib/hooks";
 
-export function MeetingUploadDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+export function MeetingUploadDialog({ open, onOpenChange, initialAccount }: {
+  open: boolean; onOpenChange: (v: boolean) => void; initialAccount?: string;
+}) {
   const [dragging, setDragging] = React.useState(false);
   const [fileName, setFileName] = React.useState<string | null>(null);
   const [phase, setPhase] = React.useState<"idle" | "uploading" | "analyzing">("idle");
   const [progress, setProgress] = React.useState(0);
   const [title, setTitle] = React.useState("");
   const [account, setAccount] = React.useState("");
+  // Opened from a customer page → that customer is pre-selected.
+  React.useEffect(() => {
+    if (open && initialAccount) setAccount(initialAccount);
+  }, [open, initialAccount]);
   const [transcript, setTranscript] = React.useState("");
   const { data: customers } = useCustomers();
   const inputRef = React.useRef<HTMLInputElement>(null);

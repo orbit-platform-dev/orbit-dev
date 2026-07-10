@@ -151,6 +151,7 @@ function MeetingsInner() {
       <ZoomImportDialog open={zoomOpen} onOpenChange={setZoomOpen} />
       <MeetImportDialog open={meetOpen} onOpenChange={setMeetOpen} />
       <MeetingUploadDialog
+        initialAccount={params.get("customer") ?? undefined}
         open={uploadOpen}
         onOpenChange={(v) => {
           setUploadOpen(v);

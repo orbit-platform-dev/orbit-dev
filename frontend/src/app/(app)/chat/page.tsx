@@ -10,19 +10,22 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
+import { Command } from "cmdk";
 import {
-  ArrowUp, Building2, FileText, Handshake, Loader2, MessageCircle, Plus, Trash2, Video,
+  ArrowUp, Building2, Check, ChevronsUpDown, FileText, Handshake, Loader2,
+  MessageCircle, Plus, Sparkles, Trash2, Video,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
-import type { ChatMessage, ChatConversationSummary } from "@/lib/types";
+import type { ChatMessage, ChatConversationSummary, Customer } from "@/lib/types";
 import { qk, useChatConversations, useCustomers } from "@/lib/hooks";
 import { cn, timeAgo } from "@/lib/utils";
 import { OrbitMark } from "@/components/shared/logo";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const SUGGESTED_PROMPTS = [
   "What did the customer request last month?",
@@ -69,11 +72,18 @@ function ChatInner() {
     }
   };
 
-  const removeConversation = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    await api.deleteChatConversation(id);
-    qc.invalidateQueries({ queryKey: qk.chatConversations });
-    if (id === conversationId) newChat();
+  const [deleteTarget, setDeleteTarget] = React.useState<ChatConversationSummary | null>(null);
+  const removeConversation = async () => {
+    if (!deleteTarget) return;
+    try {
+      await api.deleteChatConversation(deleteTarget.id);
+      qc.invalidateQueries({ queryKey: qk.chatConversations });
+      if (deleteTarget.id === conversationId) newChat();
+      toast.success("Conversation deleted");
+    } catch (err) {
+      toast.error("Couldn't delete", { description: (err as Error).message });
+      throw err;
+    }
   };
 
   const send = async (text?: string) => {
@@ -126,12 +136,22 @@ function ChatInner() {
                   {c.customerName ? `${c.customerName} · ` : ""}{timeAgo(c.updatedAt)}
                 </span>
               </span>
-              <Trash2 onClick={(e) => removeConversation(e, c.id)}
+              <Trash2 onClick={(e) => { e.stopPropagation(); setDeleteTarget(c); }}
                 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/0 transition-colors hover:!text-destructive group-hover:text-muted-foreground" />
             </button>
           ))}
         </div>
       </aside>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(v) => { if (!v) setDeleteTarget(null); }}
+        title="Delete this conversation?"
+        description={<>&ldquo;{deleteTarget?.title}&rdquo; and its messages will be permanently removed.</>}
+        confirmLabel="Delete conversation"
+        destructive
+        onConfirm={removeConversation}
+      />
 
       {/* ── Conversation ── */}
       <div className="flex min-w-0 flex-1 flex-col">
@@ -147,17 +167,7 @@ function ChatInner() {
                 : "Pick a customer, or just name one in your question"}
             </p>
           </div>
-          <Select value={customerId ?? "auto"}
-            onValueChange={(v) => setCustomerId(v === "auto" ? null : v)}>
-            <SelectTrigger className="h-8 w-44 text-xs">
-              <Building2 className="mr-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <SelectValue placeholder="Customer" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="auto">Detect from question</SelectItem>
-              {(customers ?? []).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <CustomerPicker customers={customers ?? []} value={customerId} onChange={setCustomerId} />
         </div>
 
         <div ref={scrollRef} className="flex-1 space-y-5 overflow-y-auto pr-1">
@@ -249,6 +259,68 @@ function ChatInner() {
         </div>
       </div>
     </div>
+  );
+}
+
+// Searchable customer picker — a Select breaks down past a dozen customers;
+// this combobox filters as you type and scales to hundreds.
+function CustomerPicker({ customers, value, onChange }: {
+  customers: Customer[]; value: string | null; onChange: (id: string | null) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const active = customers.find((c) => c.id === value);
+
+  const pick = (id: string | null) => {
+    onChange(id);
+    setOpen(false);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" role="combobox" aria-expanded={open}
+          className="h-8 w-48 justify-between gap-1.5 text-xs font-normal">
+          <span className="flex min-w-0 items-center gap-1.5">
+            {active
+              ? <Building2 className="h-3.5 w-3.5 shrink-0 text-primary" />
+              : <Sparkles className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+            <span className="truncate">{active ? active.name : "Detect from question"}</span>
+          </span>
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64 p-0">
+        <Command>
+          <Command.Input autoFocus placeholder="Search customers…"
+            className="w-full border-b border-border bg-transparent px-3 py-2.5 text-sm outline-none placeholder:text-muted-foreground" />
+          <Command.List className="max-h-64 overflow-y-auto p-1">
+            <Command.Empty className="px-3 py-6 text-center text-xs text-muted-foreground">
+              No customer matches.
+            </Command.Empty>
+            <Command.Item value="detect from question" onSelect={() => pick(null)}
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm data-[selected=true]:bg-accent">
+              <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="flex-1">Detect from question</span>
+              {!active && <Check className="h-3.5 w-3.5 text-primary" />}
+            </Command.Item>
+            {customers.map((c) => (
+              <Command.Item key={c.id} value={c.name} onSelect={() => pick(c.id)}
+                className="flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm data-[selected=true]:bg-accent">
+                <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{c.name}</span>
+                  <span className="block text-[10px] text-muted-foreground">
+                    {c.meetingCount} meeting{c.meetingCount === 1 ? "" : "s"}
+                    {c.openCommitments > 0 && <> · {c.openCommitments} open commitment{c.openCommitments === 1 ? "" : "s"}</>}
+                  </span>
+                </span>
+                {value === c.id && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+              </Command.Item>
+            ))}
+          </Command.List>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 

@@ -261,6 +261,11 @@ export async function patchKnowledge(itemId: string, status: "open" | "completed
   if (USE_MOCK) throw new Error(NEEDS_BACKEND);
   return liveSend(`/customers/knowledge/${itemId}`, "PATCH", { status });
 }
+/** Removes the customer, their knowledge and chat history; meetings/plans survive unlinked. */
+export async function deleteCustomer(id: string): Promise<void> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  await liveSend(`/customers/${id}`, "DELETE");
+}
 export async function getCustomerKnowledge(id: string, kind?: string): Promise<KnowledgeItem[]> {
   if (USE_MOCK) return [];
   return live(`/customers/${id}/knowledge${kind ? `?kind=${kind}` : ""}`);
