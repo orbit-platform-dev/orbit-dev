@@ -108,32 +108,6 @@ class TaskOut(CamelModel):
     updated_at: datetime
 
 
-class GraphNodeOut(CamelModel):
-    id: str
-    kind: str
-    title: str
-    subtitle: str
-    status: str
-    agent: str | None = None
-    progress: int
-    owner: str | None = None
-    project_id: str | None = None
-    meta: dict[str, Any] = {}
-    history: list[Any] = []
-
-
-class GraphEdgeOut(CamelModel):
-    id: str
-    source: str
-    target: str
-    animated: bool
-    label: str | None = None
-
-
-class GraphOut(CamelModel):
-    nodes: list[GraphNodeOut]
-    edges: list[GraphEdgeOut]
-
 
 class TimelineEventOut(CamelModel):
     id: str
@@ -209,6 +183,26 @@ class SyncJobOut(CamelModel):
     completed_at: datetime | None = None
 
 
+class InsightOut(CamelModel):
+    id: str
+    customer_id: str | None = None
+    kind: str
+    title: str
+    detail: str = ""
+    evidence: dict[str, Any] = {}
+    status: str
+    created_at: datetime
+
+
+class GoalOut(CamelModel):
+    id: str
+    title: str
+    detail: str = ""
+    target_date: datetime | None = None
+    status: str
+    created_at: datetime
+
+
 class UploadMeetingIn(CamelModel):
     title: str
     source: str = "upload"
@@ -220,3 +214,5 @@ class RunTranscriptIn(CamelModel):
     transcript: str
     title: str = "Pasted transcript"
     account: str = "Manual upload"
+    # Signal kind: a conversation transcript or a company document.
+    source: str = "transcript"

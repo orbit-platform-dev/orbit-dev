@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     # Back-compat: a bare ANTHROPIC_API_KEY is still accepted as the LLM key.
     anthropic_api_key: str | None = None
 
+    # --- Heartbeat (the OS loop) ----------------------------------------------
+    # Orbit scans for gaps and refreshes the brief on its own schedule; nothing
+    # here EXECUTES actions — detection and briefs are read + insight writes only.
+    heartbeat_enabled: bool = True
+    heartbeat_interval_minutes: int = 30
+    brief_max_age_days: int = 7
+
     @property
     def resolved_api_key(self) -> str | None:
         """The API key handed to the configured provider (None for local/Ollama)."""

@@ -2,8 +2,6 @@ import {
   Building2,
   CalendarDays,
   LayoutDashboard,
-  Video,
-  Workflow,
   Plug,
   Settings,
   type LucideIcon,
@@ -13,7 +11,6 @@ export interface NavItem {
   label: string;
   href: string;
   icon: LucideIcon;
-  badgeKey?: "meetings";
 }
 
 export interface NavSection {
@@ -27,8 +24,6 @@ export const navSections: NavSection[] = [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
       { label: "Customers", href: "/customers", icon: Building2 },
       { label: "Calendar", href: "/calendar", icon: CalendarDays },
-      { label: "Meetings", href: "/meetings", icon: Video, badgeKey: "meetings" },
-      { label: "Execution Graph", href: "/graph", icon: Workflow },
     ],
   },
   {

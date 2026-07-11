@@ -43,7 +43,7 @@ export function IntegrationsSection() {
             <EmptyState
               icon={Plug}
               title="No integrations connected"
-              description="Connect your meeting, communication and engineering tools to feed Orbit."
+              description="Connect the tools Orbit reads signals from and syncs approved work back to."
               action={
                 <Button asChild>
                   <Link href="/integrations">Browse integrations</Link>

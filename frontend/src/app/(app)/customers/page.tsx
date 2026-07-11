@@ -1,6 +1,6 @@
 "use client";
 
-// Customers — the entities everything else hangs off: meetings, execution
+// Customers — the entities everything else hangs off: signals, proposals
 // plans and approved knowledge all belong to a customer.
 
 import * as React from "react";
@@ -38,7 +38,7 @@ export default function CustomersPage() {
     try {
       await api.deleteCustomer(deleteTarget.id);
       toast.success(`${deleteTarget.name} deleted`);
-      for (const key of [qk.customers, qk.meetings, qk.projects, qk.chatConversations]) {
+      for (const key of [qk.customers, qk.meetings, qk.projects]) {
         qc.invalidateQueries({ queryKey: key });
       }
     } catch (err) {
@@ -54,7 +54,7 @@ export default function CustomersPage() {
     <div>
       <PageHeader
         title="Customers"
-        description="Every meeting, execution plan and piece of approved knowledge belongs to a customer."
+        description="Every signal, proposal and piece of approved knowledge belongs to a customer."
         actions={
           <Button className="gap-2" onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" /> New customer
@@ -75,7 +75,7 @@ export default function CustomersPage() {
         <EmptyState
           icon={Building2}
           title={query ? "No customers match" : "No customers yet"}
-          description={query ? "Try a different search." : "Create one, or upload a meeting — Orbit creates the customer automatically."}
+          description={query ? "Try a different search." : "Create one, or add a signal — Orbit creates the customer automatically."}
           action={
             <Button onClick={() => setCreateOpen(true)} className="gap-2">
               <Plus className="h-4 w-4" /> New customer
@@ -96,7 +96,7 @@ export default function CustomersPage() {
         open={deleteTarget !== null}
         onOpenChange={(v) => { if (!v) setDeleteTarget(null); }}
         title={`Delete ${deleteTarget?.name ?? "customer"}?`}
-        description={<>Their knowledge base and chat history will be permanently removed. Meetings and execution plans are kept, just unlinked.</>}
+        description={<>Their knowledge base will be permanently removed. Signals and proposals are kept, just unlinked.</>}
         confirmLabel="Delete customer"
         destructive
         onConfirm={doDelete}
@@ -136,8 +136,7 @@ function CustomerCard({ customer: c, onDelete }: { customer: Customer; onDelete:
         </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1"><Video className="h-3 w-3" /> {c.meetingCount} meeting{c.meetingCount === 1 ? "" : "s"}</span>
-        <span className="flex items-center gap-1"><Sparkles className="h-3 w-3" /> {c.approvedPlanCount}/{c.planCount} plans approved</span>
+        <span className="flex items-center gap-1"><Sparkles className="h-3 w-3" /> {c.approvedPlanCount}/{c.planCount} proposals approved</span>
         {c.lastMeetingAt && (
           <span className="flex items-center gap-1"><CalendarDays className="h-3 w-3" /> last {timeAgo(c.lastMeetingAt)}</span>
         )}
@@ -176,7 +175,7 @@ function NewCustomerDialog({ open, onOpenChange }: { open: boolean; onOpenChange
         <DialogHeader>
           <DialogTitle>New customer</DialogTitle>
           <DialogDescription>
-            Meetings with a matching name (or email domain) link to this customer automatically.
+            Signals with a matching name (or email domain) link to this customer automatically.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">

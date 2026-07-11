@@ -113,7 +113,7 @@ export function TimelineRow({
           </span>
           {event.projectId ? (
             <Link
-              href={event.meetingId ? `/meetings/${event.meetingId}` : "/graph"}
+              href={event.meetingId ? `/meetings/${event.meetingId}` : "/dashboard"}
               className="group inline-flex items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:bg-accent hover:text-foreground"
             >
               <FolderKanban className="h-3 w-3" />
@@ -123,11 +123,11 @@ export function TimelineRow({
           ) : null}
           {event.meetingId ? (
             <Link
-              href={`/meetings/${event.meetingId}`}
+              href={`/signals/${event.meetingId}`}
               className="group inline-flex items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:bg-accent hover:text-foreground"
             >
               <Video className="h-3 w-3" />
-              <span>View meeting</span>
+              <span>View signal</span>
               <ArrowUpRight className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
             </Link>
           ) : null}

@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import {
   ArrowLeft, ArrowUpRight, Bug, CalendarClock, CheckCircle2, Contact, Crosshair,
   FileDown, FileText, ListChecks, Loader2, Lock, Mail, Pencil, Plug, Rocket,
-  Send, Sparkles, Workflow,
+  Send, Sparkles,
 } from "lucide-react";
 import { qk, useConnectedProvider, useIntegrations, useMeeting, useProject, useSyncJobs, useTasks } from "@/lib/hooks";
 import * as api from "@/lib/api";
@@ -23,7 +23,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
-import { GraphCanvas } from "@/components/graph/graph-canvas";
 import { WorkItemCard } from "@/components/execution/work-item-card";
 import { ObjectList, StringList } from "@/components/execution/editable";
 import { downloadPrdPdf } from "@/components/execution/prd-pdf";
@@ -104,13 +103,13 @@ export default function ExecutionReviewPage() {
   };
 
   if (isLoading) return <div className="space-y-4"><Skeleton className="h-10 w-64" /><Skeleton className="h-96 w-full" /></div>;
-  if (!m) return <EmptyState icon={FileText} title="Meeting not found" description="This meeting may have been deleted." />;
+  if (!m) return <EmptyState icon={FileText} title="Signal not found" description="This signal may have been deleted." />;
   if (!project) {
     return (
       <div className="space-y-4">
         <Back id={id} />
-        <EmptyState icon={Sparkles} title="No execution plan yet"
-          description="Analyze this meeting's transcript first — Orbit will generate a plan you can review and approve." />
+        <EmptyState icon={Sparkles} title="No proposal yet"
+          description="Analyze this signal first. Orbit will draft a proposal you can review and approve." />
       </div>
     );
   }
@@ -125,7 +124,7 @@ export default function ExecutionReviewPage() {
     try {
       await api.approveExecution(id);
       invalidate();
-      toast.success("Execution plan approved");
+      toast.success("Proposal approved");
     } catch { toast.error("Could not approve — is the backend running?"); }
     finally { setApproving(false); }
   };
@@ -136,9 +135,9 @@ export default function ExecutionReviewPage() {
 
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Review execution plan</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Review proposal</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {project.name} · from the {m.account} call. Orbit proposes — you approve, edit or skip before anything ships.
+            {project.name} · from the {m.account} call. Orbit proposes. You approve, edit or skip before anything changes.
           </p>
         </div>
         {typeof a?.confidence === "number" && (
@@ -155,7 +154,7 @@ export default function ExecutionReviewPage() {
             <div className="flex items-center gap-3">
               <CheckCircle2 className="h-6 w-6 text-success" />
               <div className="flex-1">
-                <div className="text-sm font-semibold">Execution Plan Approved</div>
+                <div className="text-sm font-semibold">Proposal approved</div>
                 <div className="text-xs text-muted-foreground">Locked — nothing can change now. Run each prepared update below when you&apos;re ready; your tools stay the system of record.</div>
               </div>
               <Badge variant="success" className="gap-1"><Lock className="h-3 w-3" /> Locked</Badge>
@@ -173,8 +172,8 @@ export default function ExecutionReviewPage() {
       {/* 3. PRD */}
       <PrdSection project={project} locked={approved} onSaved={invalidate} />
 
-      {/* 4. Execution Plan */}
-      <Section icon={ListChecks} title="Execution Plan" hint={`${tasks.length} work items across the relevant teams — each explains why.`}
+      {/* 4. Work items */}
+      <Section icon={ListChecks} title="Work items" hint={`${tasks.length} work items across the relevant teams — each explains why.`}
         action={
           <div className="flex items-center gap-1.5">
             {tasks.length > 0 && (
@@ -218,14 +217,6 @@ export default function ExecutionReviewPage() {
       {/* 5. Customer Email */}
       <EmailSection project={project} locked={approved} onSaved={invalidate} />
 
-      {/* 6. Execution Graph */}
-      <Section icon={Workflow} title="Execution Graph" hint="Every artifact, connected — click any node to trace it back."
-        action={<Button asChild variant="outline" size="sm" className="gap-1.5"><Link href={`/graph?meeting=${id}`}><Workflow className="h-3.5 w-3.5" /> Open full graph</Link></Button>}>
-        <div className="h-[460px] overflow-hidden rounded-lg border border-border">
-          <GraphCanvas meetingId={id} />
-        </div>
-      </Section>
-
       {/* Sticky approve bar */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/90 backdrop-blur-xl">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-6 py-3">
@@ -237,7 +228,7 @@ export default function ExecutionReviewPage() {
             )}
           </div>
           <Button onClick={approve} disabled={approved || approving} className="gap-2">
-            {approved ? <><Lock className="h-4 w-4" /> Approved</> : <><Rocket className="h-4 w-4" /> {approving ? "Approving…" : "Approve execution plan"}</>}
+            {approved ? <><Lock className="h-4 w-4" /> Approved</> : <><Rocket className="h-4 w-4" /> {approving ? "Approving…" : "Approve proposal"}</>}
           </Button>
         </div>
       </div>
@@ -251,9 +242,9 @@ export default function ExecutionReviewPage() {
 const SYNC_META: Record<Exclude<SyncJob["kind"], "send-email">, {
   label: string; keys: string[]; connectHint: string;
 }> = {
-  "crm-update": { label: "Sync CRM", keys: ["salesforce", "hubspot"], connectHint: "Connect Salesforce or HubSpot to sync" },
-  "publish-prd": { label: "Publish", keys: ["notion", "confluence", "google-docs"], connectHint: "Connect Notion, Confluence or Google Docs to publish" },
-  "create-tasks": { label: "Create issues", keys: ["jira", "linear"], connectHint: "Connect Jira or Linear to create issues" },
+  "crm-update": { label: "Sync CRM", keys: ["salesforce", "hubspot"], connectHint: "CRM sync is on the roadmap — no CRM connects yet" },
+  "publish-prd": { label: "Publish", keys: ["notion", "confluence", "google-docs"], connectHint: "Doc publishing is on the roadmap — use the PDF export" },
+  "create-tasks": { label: "Create issues", keys: ["linear", "jira"], connectHint: "Connect Linear to create real issues" },
 };
 
 function SectionSync({ planId, kind, approved, onDone }: {
@@ -308,7 +299,7 @@ function SectionSync({ planId, kind, approved, onDone }: {
 function Back({ id }: { id: string }) {
   return (
     <Button asChild variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
-      <Link href={`/meetings/${id}`}><ArrowLeft className="h-4 w-4" /> Back to meeting</Link>
+      <Link href={`/signals/${id}`}><ArrowLeft className="h-4 w-4" /> Back to signal</Link>
     </Button>
   );
 }
@@ -380,7 +371,7 @@ function PrdSection({ project, locked, onSaved }: { project: Project; locked: bo
   // No PRD until a human asks for one.
   if (!prd) {
     return (
-      <Section icon={FileText} title="PRD" hint="Generated on demand — from this meeting plus the customer's history.">
+      <Section icon={FileText} title="PRD" hint="Generated on demand — from this signal plus the customer's history.">
         <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border py-8 text-center">
           <p className="max-w-sm text-sm text-muted-foreground">
             {locked
@@ -560,7 +551,7 @@ function CrmSection({ project, locked, onSaved }: { project: Project; locked: bo
                     <Input value={f.field} onChange={(e) => setF({ field: e.target.value })} placeholder="Field" className="h-8 w-40 text-sm" />
                     <Input value={f.value} onChange={(e) => setF({ value: e.target.value })} placeholder="Value" className="h-8 text-sm" />
                   </div>
-                  <Input value={f.reason} onChange={(e) => setF({ reason: e.target.value })} placeholder="Why (meeting evidence)" className="h-8 text-sm" />
+                  <Input value={f.reason} onChange={(e) => setF({ reason: e.target.value })} placeholder="Why (signal evidence)" className="h-8 text-sm" />
                 </div>
               )}
             </ObjectList>
@@ -631,7 +622,7 @@ function EmailSection({ project, locked, onSaved }: { project: Project; locked: 
     try {
       await api.runSyncJob(project.id, emailJob.id, recipient);
       qc.invalidateQueries({ queryKey: qk.syncJobs(project.id) });
-      toast.success(`Follow-up sent to ${recipient}`);
+      toast.success(`Recorded as sent to ${recipient}`, { description: "Email delivery is on the roadmap — send it from your email client." });
     } catch (err) { toast.error("Couldn't send", { description: (err as Error).message }); }
     finally { setSending(false); }
   };
@@ -657,7 +648,7 @@ function EmailSection({ project, locked, onSaved }: { project: Project; locked: 
             ) : (
               <Button size="sm" className="gap-1.5" onClick={send} disabled={sending || !recipient}
                 title={recipient ? undefined : "Add a recipient first"}>
-                {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Send email
+                {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Mark as sent
               </Button>
             ))}
           </div>)}>

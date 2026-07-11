@@ -48,7 +48,7 @@ export default function TimelinePage() {
     <div>
       <PageHeader
         title="Timeline"
-        description="Every meeting, analysis, plan and follow-up your agents execute — in order, as it happens."
+        description="Every signal, analysis, proposal and follow-up — in order, as it happens."
       >
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Badge variant="muted" className="gap-1.5">

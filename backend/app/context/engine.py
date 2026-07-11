@@ -238,6 +238,81 @@ async def build_context_package(
     )
 
 
+async def build_company_context(db, workspace_id: str, query_text: str | None = None) -> str:
+    """Workspace-wide context — the whole company, not one customer. Feeds
+    company-level chat and the intelligence brief. Same rules as everywhere:
+    capped, clipped, semantic-ranked when embeddings exist."""
+    from ..models import Goal, Insight  # local import: avoid cycle at module load
+
+    qvec = await embeddings.embed_query(query_text) if query_text else None
+    lines: list[str] = []
+
+    signal_count = (await db.execute(
+        select(func.count()).select_from(Meeting).where(Meeting.workspace_id == workspace_id)
+    )).scalar_one()
+    customers = {c.id: c.name for c in (await db.execute(
+        select(Customer).where(Customer.workspace_id == workspace_id))).scalars().all()}
+    lines.append(f"COMPANY CONTEXT ({signal_count} signals on record, {len(customers)} customers):")
+
+    base = select(Meeting).where(Meeting.workspace_id == workspace_id)
+    if qvec is not None:
+        picked = (await db.execute(
+            base.where(Meeting.embedding.is_not(None))
+            .order_by(Meeting.embedding.cosine_distance(qvec)).limit(8))).scalars().all() \
+            if db.get_bind().dialect.name == "postgresql" else sorted(
+                (await db.execute(base.order_by(Meeting.date.desc()).limit(_RECENCY_WINDOW))).scalars().all(),
+                key=lambda m: embeddings.cosine(qvec, m.embedding) if m.embedding else -1, reverse=True)[:8]
+    else:
+        picked = (await db.execute(base.order_by(Meeting.date.desc()).limit(8))).scalars().all()
+    if picked:
+        lines.append("Recent signals:")
+        for m in picked:
+            who = customers.get(m.customer_id, "")
+            date = m.date.isoformat()[:10] if m.date else ""
+            lines.append(f"- [{date}] {who + ': ' if who else ''}{m.title}: "
+                         f"{_clip((m.analysis or {}).get('summary'))}")
+
+    goals = (await db.execute(
+        select(Goal).where(Goal.workspace_id == workspace_id, Goal.status == "open")
+        .order_by(Goal.created_at.desc()).limit(10))).scalars().all()
+    if goals:
+        lines.append("Company goals (declared intentions — measure everything against these):")
+        for g in goals:
+            when = f" (target {g.target_date.isoformat()[:10]})" if g.target_date else ""
+            lines.append(f"- {g.title}{when}" + (f": {_clip(g.detail, 120)}" if g.detail else ""))
+
+    commitments = (await db.execute(
+        select(KnowledgeItem).where(KnowledgeItem.workspace_id == workspace_id,
+                                    KnowledgeItem.kind == "commitment",
+                                    KnowledgeItem.status == "open")
+        .order_by(KnowledgeItem.created_at.desc()).limit(20))).scalars().all()
+    if commitments:
+        lines.append("Open commitments:")
+        for k in commitments:
+            lines.append(f"- [{customers.get(k.customer_id, 'unknown')}] {_clip(k.title, 140)}")
+
+    plans = (await db.execute(
+        select(ExecutionPlan).where(ExecutionPlan.workspace_id == workspace_id,
+                                    ExecutionPlan.approval_status == "approved")
+        .order_by(ExecutionPlan.approved_at.desc()).limit(6))).scalars().all()
+    if plans:
+        lines.append("Approved proposals:")
+        for p in plans:
+            lines.append(f"- {p.name} ({p.delivery_estimate}, approved "
+                         f"{p.approved_at.isoformat()[:10] if p.approved_at else ''})")
+
+    open_insights = (await db.execute(
+        select(Insight).where(Insight.workspace_id == workspace_id, Insight.status == "open",
+                              Insight.kind != "brief")
+        .order_by(Insight.created_at.desc()).limit(12))).scalars().all()
+    if open_insights:
+        lines.append("Open risks and gaps:")
+        for i in open_insights:
+            lines.append(f"- [{i.kind}] {_clip(i.title, 140)}")
+
+    return "\n".join(lines)
+
+
 def render_context(pkg: ContextPackage | None) -> str:
     """Compact prompt block. Empty string when there's no history — generators
     must behave identically to a first meeting in that case."""

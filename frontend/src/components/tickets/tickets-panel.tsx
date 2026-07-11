@@ -33,7 +33,7 @@ export function TicketsPanel({
   scope,
   compact = false,
 }: {
-  scope: { graphNodeId?: string; projectId?: string };
+  scope: { projectId?: string };
   compact?: boolean;
 }) {
   const { data: tasks, isLoading } = useTasks();
@@ -47,7 +47,7 @@ export function TicketsPanel({
   const connected = integration ? integration.status === "connected" || integration.status === "syncing" : false;
 
   const tickets = (tasks ?? []).filter((t) =>
-    scope.graphNodeId ? t.links.graphNodeId === scope.graphNodeId : scope.projectId ? t.projectId === scope.projectId : false,
+    scope.projectId ? t.projectId === scope.projectId : false,
   );
 
   const state = (t: Task): "synced" | "auto" | "suggested" => {

@@ -138,6 +138,9 @@ class ExecutionPlan(Base):
     internal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     approval_status: Mapped[str] = mapped_column(String, default="draft")
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The AI's original output, frozen at generation time. Diffed against the
+    # human-edited sections at approval → Feedback rows (the learning signal).
+    draft_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
 # Backward-compatible alias — existing code imports Project.
@@ -160,30 +163,6 @@ class Task(Base):
     links: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-
-
-class GraphNode(Base):
-    __tablename__ = "graph_nodes"
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    kind: Mapped[str] = mapped_column(String)
-    title: Mapped[str] = mapped_column(String)
-    subtitle: Mapped[str] = mapped_column(String)
-    status: Mapped[str] = mapped_column(String)
-    agent: Mapped[str | None] = mapped_column(String, nullable=True)
-    progress: Mapped[int] = mapped_column(Integer, default=0)
-    owner: Mapped[str | None] = mapped_column(String, nullable=True)
-    project_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    history: Mapped[list[Any]] = mapped_column(JSON, default=list)
-
-
-class GraphEdge(Base):
-    __tablename__ = "graph_edges"
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    source: Mapped[str] = mapped_column(String, ForeignKey("graph_nodes.id"))
-    target: Mapped[str] = mapped_column(String, ForeignKey("graph_nodes.id"))
-    animated: Mapped[bool] = mapped_column(default=False)
-    label: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class TimelineEvent(Base):
@@ -210,6 +189,57 @@ class Integration(Base):
     last_sync: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     account: Mapped[str | None] = mapped_column(String, nullable=True)
     stats: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    # API credentials for key-based integrations (e.g. Linear). OAuth providers
+    # keep using calendar_connections; never expose this through the API.
+    credentials: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+
+class Insight(Base):
+    """One detected piece of company intelligence: a risk, a gap between
+    intention and reality, a repeating trend, a delivered win, or a brief.
+    kind: risk | gap | trend | win | brief. status: open | acknowledged | resolved."""
+
+    __tablename__ = "insights"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
+    customer_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String, index=True)
+    title: Mapped[str] = mapped_column(String)
+    detail: Mapped[str] = mapped_column(Text, default="")
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String, default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Goal(Base):
+    """A declared company intention — what the comparator measures reality
+    against. Without goals, Orbit can only compare against meeting promises."""
+
+    __tablename__ = "goals"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
+    title: Mapped[str] = mapped_column(String)
+    detail: Mapped[str] = mapped_column(Text, default="")
+    target_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String, default="open")  # open | achieved | dropped
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Feedback(Base):
+    """One human correction of an AI draft, captured as a before/after diff at
+    approval time. Recent corrections are rendered back into generation context
+    so the system writes differently because it was edited."""
+
+    __tablename__ = "feedback"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
+    customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    plan_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    section: Mapped[str] = mapped_column(String, index=True)  # prd | crm-update | email | timeline
+    field: Mapped[str] = mapped_column(String)
+    before: Mapped[str] = mapped_column(Text, default="")
+    after: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class CalendarConnection(Base):
@@ -277,21 +307,6 @@ class SyncJob(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
-class ChatConversation(Base):
-    """One Ask-Orbit conversation (like a Claude/GPT chat). Messages are the
-    full transcript [{role, content, at, sources?}]; the customer binding makes
-    every later turn retrieve that customer's context automatically."""
-
-    __tablename__ = "chat_conversations"
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
-    customer_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    title: Mapped[str] = mapped_column(String, default="New conversation")
-    messages: Mapped[list[Any]] = mapped_column(JSON, default=list)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class ActivityEvent(Base):

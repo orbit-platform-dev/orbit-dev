@@ -1,30 +1,32 @@
 "use client";
 
+// Honesty rule: only integrations with a real backend implementation are
+// connectable (OAuth: Calendar / Zoom / Meet; API key: Linear). Everything
+// else renders under "On the roadmap" — no flag-toggle fake connects.
+
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Plug, Search } from "lucide-react";
+import { KeyRound, Loader2, Plug, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Integration, IntegrationStatus } from "@/lib/types";
+import type { Integration } from "@/lib/types";
 import { qk, useIntegrations } from "@/lib/hooks";
 import * as api from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { IntegrationCard } from "@/components/integrations/integration-card";
 
-type Category = Integration["category"];
-const CATEGORIES: Category[] = ["Engineering", "Conferencing", "Communication", "Product", "CRM", "Calendar", "Support"];
-
-// Connectable destinations: issue trackers (Jira / Linear) + PRD doc tools
-// (Google Docs / Notion / Confluence / Linear / Jira) + real OAuth providers
-// (Google Calendar → read-only meeting sync; Zoom / Google Meet → transcript imports);
-// everything else is "coming soon".
-const CONNECTABLE = new Set(["jira", "linear", "google-docs", "confluence", "notion", "calendar", "zoom", "google-meet"]);
+const LIVE = new Set(["calendar", "zoom", "google-meet", "linear"]);
 const normalizeStatus = (i: Integration): Integration =>
-  CONNECTABLE.has(i.key)
+  LIVE.has(i.key)
     ? { ...i, status: i.status === "connected" || i.status === "syncing" ? "connected" : "disconnected" }
     : { ...i, status: "coming-soon" };
 
@@ -32,16 +34,15 @@ export default function IntegrationsPage() {
   const { data, isLoading } = useIntegrations();
   const qc = useQueryClient();
 
-  // Local, mutable state seeded from the hook data.
   const [items, setItems] = useState<Integration[]>([]);
-  const [category, setCategory] = useState<Category | "all">("all");
   const [query, setQuery] = useState("");
+  const [linearOpen, setLinearOpen] = useState(false);
 
   useEffect(() => {
     if (data) setItems(data.map(normalizeStatus));
   }, [data]);
 
-  // Landing back from an OAuth consent screen (?calendar=… or ?zoom=…).
+  // Landing back from an OAuth consent screen (?calendar=… / ?zoom=… / ?meet=…).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const results: [string, string][] = [["calendar", "Google Calendar"], ["zoom", "Zoom"], ["meet", "Google Meet"]];
@@ -61,113 +62,73 @@ export default function IntegrationsPage() {
     qc.invalidateQueries({ queryKey: qk.meetStatus });
   }, [qc]);
 
-  const setStatus = (key: Integration["key"], status: IntegrationStatus, lastSync?: string) => {
-    setItems((prev) =>
-      prev.map((i) => (i.key === key ? { ...i, status, ...(lastSync !== undefined ? { lastSync } : {}) } : i)),
-    );
-  };
-
-  // Persist connect/disconnect; optimistic + refetch. Calendar and Zoom are real
-  // OAuth flows — the browser leaves for the consent screen and comes back.
-  const OAUTH_AUTH_URL: Partial<Record<Integration["key"], () => Promise<{ url: string }>>> = {
-    calendar: api.getCalendarAuthUrl,
-    zoom: api.getZoomAuthUrl,
-    "google-meet": api.getMeetAuthUrl,
-  };
-  const OAUTH_DISCONNECT: Partial<Record<Integration["key"], () => Promise<void>>> = {
-    calendar: api.disconnectCalendar,
-    zoom: api.disconnectZoom,
-    "google-meet": api.disconnectMeet,
-  };
-
-  const connect = async (i: Integration) => {
-    const authUrl = OAUTH_AUTH_URL[i.key];
-    if (authUrl) {
-      try {
-        const { url } = await authUrl();
-        window.location.href = url;
-      } catch (err) {
-        toast.error(`${i.name} isn't configured`, { description: (err as Error).message });
-      }
-      return;
-    }
-    setStatus(i.key, "connected", new Date().toISOString());
-    try { await api.patchIntegration(i.key, "connected"); toast.success(`${i.name} connected`); }
-    catch { setStatus(i.key, "disconnected"); toast.error(`Couldn't connect ${i.name}`); }
-    qc.invalidateQueries({ queryKey: qk.integrations });
-  };
-  const disconnect = async (i: Integration) => {
-    setStatus(i.key, "disconnected");
-    try {
-      await (OAUTH_DISCONNECT[i.key]?.() ?? api.patchIntegration(i.key, "disconnected"));
-      toast(`${i.name} disconnected`);
-    } catch { toast.error(`Couldn't disconnect ${i.name}`); }
+  const refresh = () => {
     qc.invalidateQueries({ queryKey: qk.integrations });
     qc.invalidateQueries({ queryKey: qk.calendarStatus });
     qc.invalidateQueries({ queryKey: qk.zoomStatus });
     qc.invalidateQueries({ queryKey: qk.meetStatus });
   };
 
-  const counts = useMemo(() => {
-    const connected = items.filter((i) => i.status === "connected" || i.status === "syncing").length;
-    const available = items.filter((i) => i.status === "disconnected").length;
-    const comingSoon = items.filter((i) => i.status === "coming-soon").length;
-    return { connected, available, comingSoon };
-  }, [items]);
+  const OAUTH_AUTH_URL: Partial<Record<Integration["key"], () => Promise<{ url: string }>>> = {
+    calendar: api.getCalendarAuthUrl,
+    zoom: api.getZoomAuthUrl,
+    "google-meet": api.getMeetAuthUrl,
+  };
+  const OAUTH_DISCONNECT: Partial<Record<Integration["key"], () => Promise<unknown>>> = {
+    calendar: api.disconnectCalendar,
+    zoom: api.disconnectZoom,
+    "google-meet": api.disconnectMeet,
+    linear: api.disconnectLinear,
+  };
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return items.filter((i) => {
-      if (category !== "all" && i.category !== category) return false;
-      if (!q) return true;
-      return (
-        i.name.toLowerCase().includes(q) ||
-        i.description.toLowerCase().includes(q) ||
-        i.category.toLowerCase().includes(q)
-      );
-    });
-  }, [items, category, query]);
+  const connect = async (i: Integration) => {
+    if (i.key === "linear") {
+      setLinearOpen(true);
+      return;
+    }
+    const authUrl = OAUTH_AUTH_URL[i.key];
+    if (!authUrl) return;
+    try {
+      const { url } = await authUrl();
+      window.location.href = url;
+    } catch (err) {
+      toast.error(`${i.name} isn't configured`, { description: (err as Error).message });
+    }
+  };
 
-  const chips: { key: Category | "all"; label: string }[] = [
-    { key: "all", label: "All" },
-    ...CATEGORIES.map((c) => ({ key: c, label: c })),
-  ];
+  const disconnect = async (i: Integration) => {
+    setItems((prev) => prev.map((x) => (x.key === i.key ? { ...x, status: "disconnected" } : x)));
+    try {
+      await OAUTH_DISCONNECT[i.key]?.();
+      toast(`${i.name} disconnected`);
+    } catch {
+      toast.error(`Couldn't disconnect ${i.name}`);
+    }
+    refresh();
+  };
+
+  const q = query.trim().toLowerCase();
+  const matches = (i: Integration) =>
+    !q || i.name.toLowerCase().includes(q) || i.description.toLowerCase().includes(q) || i.category.toLowerCase().includes(q);
+
+  const live = useMemo(() => items.filter((i) => LIVE.has(i.key)).filter(matches), [items, q]); // eslint-disable-line react-hooks/exhaustive-deps
+  const roadmap = useMemo(() => items.filter((i) => !LIVE.has(i.key)).filter(matches), [items, q]); // eslint-disable-line react-hooks/exhaustive-deps
+  const connectedCount = items.filter((i) => i.status === "connected" || i.status === "syncing").length;
 
   return (
     <div>
       <PageHeader
         title="Integrations"
-        description="Orbit doesn't replace your tools. It's the review and approval layer between customer conversations and execution — approved updates sync into the software your team already uses, which stays the system of record."
+        description="Orbit reads signals from your tools and writes back only what you approve. Your tools stay the system of record."
       >
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-          <SummaryChip className="border-success/30 bg-success/10 text-success" value={counts.connected} label="connected" />
-          <SummaryChip className="border-border bg-muted/40 text-muted-foreground" value={counts.available} label="available" />
-          <SummaryChip className="border-border bg-muted/40 text-muted-foreground" value={counts.comingSoon} label="coming soon" />
+          <SummaryChip className="border-success/30 bg-success/10 text-success" value={connectedCount} label="connected" />
+          <SummaryChip className="border-border bg-muted/40 text-muted-foreground" value={live.length} label="live" />
+          <SummaryChip className="border-border bg-muted/40 text-muted-foreground" value={roadmap.length} label="on the roadmap" />
         </div>
       </PageHeader>
 
-      {/* Controls */}
-      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 no-scrollbar">
-          {chips.map((c) => {
-            const active = category === c.key;
-            return (
-              <button
-                key={c.key}
-                type="button"
-                onClick={() => setCategory(c.key)}
-                className={cn(
-                  "shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                  active
-                    ? "border-primary/40 bg-primary/15 text-primary"
-                    : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              >
-                {c.label}
-              </button>
-            );
-          })}
-        </div>
+      <div className="mb-5 flex justify-end">
         <div className="relative w-full lg:max-w-xs">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -180,40 +141,124 @@ export default function IntegrationsPage() {
         </div>
       </div>
 
-      {/* Grid */}
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-[208px]" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={Plug}
-          title="No integrations found"
-          description="Try a different category or clear your search to see everything you can connect."
-        />
+      ) : live.length === 0 && roadmap.length === 0 ? (
+        <EmptyState icon={Plug} title="No integrations found" description="Clear your search to see everything." />
       ) : (
-        <motion.div
-          key={`${category}-${query}`}
-          initial="hidden"
-          animate="show"
-          variants={{ hidden: {}, show: { transition: { staggerChildren: 0.04 } } }}
-          className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
-        >
-          {filtered.map((i) => (
-            <IntegrationCard
-              key={i.key}
-              integration={i}
-              onConnect={() => connect(i)}
-              onDisconnect={() => disconnect(i)}
-              onReconnect={() => connect(i)}
-              onConfigure={() => toast(`${i.name} settings`, { description: "Configuration is coming to this demo." })}
+        <div className="space-y-8">
+          {live.length > 0 && (
+            <IntegrationSection
+              title="Works today"
+              hint="Real connections — data actually flows."
+              items={live}
+              onConnect={connect}
+              onDisconnect={disconnect}
             />
-          ))}
-        </motion.div>
+          )}
+          {roadmap.length > 0 && (
+            <IntegrationSection
+              title="On the roadmap"
+              hint="Not built yet. Shown so you know where Orbit is heading — nothing here pretends to work."
+              items={roadmap}
+              onConnect={connect}
+              onDisconnect={disconnect}
+            />
+          )}
+        </div>
       )}
+
+      <LinearConnectDialog open={linearOpen} onOpenChange={setLinearOpen} onConnected={refresh} />
     </div>
+  );
+}
+
+function IntegrationSection({ title, hint, items, onConnect, onDisconnect }: {
+  title: string; hint: string; items: Integration[];
+  onConnect: (i: Integration) => void; onDisconnect: (i: Integration) => void;
+}) {
+  return (
+    <section>
+      <div className="mb-3">
+        <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+        <p className="text-xs text-muted-foreground">{hint}</p>
+      </div>
+      <motion.div
+        initial="hidden"
+        animate="show"
+        variants={{ hidden: {}, show: { transition: { staggerChildren: 0.04 } } }}
+        className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+      >
+        {items.map((i) => (
+          <IntegrationCard
+            key={i.key}
+            integration={i}
+            onConnect={() => onConnect(i)}
+            onDisconnect={() => onDisconnect(i)}
+            onReconnect={() => onConnect(i)}
+            onConfigure={() => toast(`${i.name}`, { description: "Connection is managed here; there's nothing else to configure yet." })}
+          />
+        ))}
+      </motion.div>
+    </section>
+  );
+}
+
+function LinearConnectDialog({ open, onOpenChange, onConnected }: {
+  open: boolean; onOpenChange: (v: boolean) => void; onConnected: () => void;
+}) {
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!apiKey.trim()) return;
+    setBusy(true);
+    try {
+      const res = await api.connectLinear(apiKey.trim());
+      toast.success(`Linear connected${res.account ? ` — ${res.account}` : ""}`);
+      onConnected();
+      onOpenChange(false);
+      setApiKey("");
+    } catch (err) {
+      toast.error("Linear rejected the key", { description: (err as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setApiKey(""); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Connect Linear</DialogTitle>
+          <DialogDescription>
+            Orbit validates the key against Linear and uses it only to create the issues you approve.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label htmlFor="linear-key">Personal API key</Label>
+          <Input
+            id="linear-key"
+            type="password"
+            placeholder="lin_api_…"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Linear → Settings → API → Personal API keys. Stored on the backend, never shown again.
+          </p>
+        </div>
+        <Button className="w-full gap-2" disabled={!apiKey.trim() || busy} onClick={submit}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+          {busy ? "Validating…" : "Connect"}
+        </Button>
+      </DialogContent>
+    </Dialog>
   );
 }
 

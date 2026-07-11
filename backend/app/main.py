@@ -8,20 +8,25 @@ from . import __version__
 from .config import settings
 from .database import init_db
 from .routers import api_router
+from .services import heartbeat
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create tables + seed on startup (idempotent).
     await init_db()
+    # The OS loop: scheduled scans + brief refresh. Reads + insight writes only;
+    # it never executes actions or approves anything.
+    heartbeat.start()
     yield
+    await heartbeat.stop()
 
 
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
-    description="The execution platform: turns customer conversations into reviewed, approved updates "
-                "that sync into the tools your team already uses — they stay the system of record.",
+    description="The AI Operating System for companies: signals in, evidence-backed intelligence out, "
+                "humans approve — your tools stay the system of record.",
     lifespan=lifespan,
 )
 

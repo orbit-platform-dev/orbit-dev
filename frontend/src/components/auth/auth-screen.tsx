@@ -13,8 +13,8 @@ import { clerkEnabled } from "@/lib/auth";
 const highlights = [
   {
     icon: Sparkles,
-    title: "Every conversation, prepared",
-    desc: "CRM update, PRD, work items, timeline and follow-up — drafted from each meeting plus everything Orbit knows about the customer.",
+    title: "Signals in, intelligence out",
+    desc: "Conversations, documents and tool data become company context Orbit reasons over — surfacing risks, gaps and what to do next.",
   },
   {
     icon: CheckCircle2,
@@ -51,7 +51,7 @@ export function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
         </div>
         <div className="relative space-y-8">
           <h1 className="max-w-md text-3xl font-semibold leading-tight tracking-tight">
-            Turn every customer conversation into <span className="text-gradient-brand">approved execution.</span>
+            The <span className="text-gradient-brand">AI Operating System</span> for your company.
           </h1>
           <div className="space-y-5">
             {highlights.map((h, i) => (
@@ -94,7 +94,7 @@ export function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
                 {isSignUp ? "Create your workspace" : "Welcome back"}
               </h2>
               <p className="mt-1.5 text-sm text-muted-foreground">
-                {isSignUp ? "Start turning conversations into approved execution." : "Sign in to continue to Orbit."}
+                {isSignUp ? "Make your company legible to AI." : "Sign in to continue to Orbit."}
               </p>
 
               <form

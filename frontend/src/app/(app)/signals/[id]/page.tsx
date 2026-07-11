@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, CheckCircle2, Clock, Code2, FileText, PenTool, RefreshCw, ShieldCheck, Sparkles, Ticket, TrendingUp, Video, Workflow } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, Clock, Code2, FileText, PenTool, RefreshCw, ShieldCheck, Sparkles, Ticket, TrendingUp, Video } from "lucide-react";
 import * as api from "@/lib/api";
 import { qk, useMeeting, useProject } from "@/lib/hooks";
 import { formatDate, formatDuration } from "@/lib/utils";
@@ -67,9 +67,9 @@ export default function MeetingDetailPage() {
     return (
       <EmptyState
         icon={Video}
-        title="Meeting not found"
-        description="This meeting may have been removed."
-        action={<Button asChild variant="outline"><Link href="/meetings">Back to meetings</Link></Button>}
+        title="Signal not found"
+        description="This signal may have been removed."
+        action={<Button asChild variant="outline"><Link href="/dashboard">Back to dashboard</Link></Button>}
       />
     );
   }
@@ -82,8 +82,8 @@ export default function MeetingDetailPage() {
 
   return (
     <div>
-      <Link href="/meetings" className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">
-        <ArrowLeft className="h-4 w-4" /> Meetings
+      <Link href="/dashboard" className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" /> Back to dashboard
       </Link>
 
       {/* Header */}
@@ -115,15 +115,10 @@ export default function MeetingDetailPage() {
         </div>
         {m.linkedProjectId && (
           <div className="flex shrink-0 gap-2">
-            <Button asChild variant="outline" className="gap-2">
-              <Link href={`/graph?meeting=${m.id}`}>
-                <Workflow className="h-4 w-4" /> Execution graph
-              </Link>
-            </Button>
             <Button asChild className="gap-2">
-              <Link href={`/meetings/${m.id}/review`}>
+              <Link href={`/signals/${m.id}/review`}>
                 {project?.approvalStatus === "approved" ? (
-                  <><CheckCircle2 className="h-4 w-4" /> View execution plan</>
+                  <><CheckCircle2 className="h-4 w-4" /> View proposal</>
                 ) : (
                   <><Sparkles className="h-4 w-4" /> Review &amp; approve</>
                 )}
@@ -142,7 +137,7 @@ export default function MeetingDetailPage() {
               <div className="text-sm font-medium">
                 {m.status === "transcribing" ? "Transcribing recording…" : "Agents are analyzing this call…"}
               </div>
-              <div className="text-xs text-muted-foreground">Signals, the PRD, team plans and tickets will appear here shortly.</div>
+              <div className="text-xs text-muted-foreground">The analysis, PRD, work items and follow-up will appear here shortly.</div>
             </div>
             <span className="text-sm tabular-nums text-muted-foreground">{m.analysisProgress}%</span>
           </div>
@@ -192,7 +187,7 @@ export default function MeetingDetailPage() {
                   ))}
                 </motion.div>
               ) : (
-                <EmptyState icon={Sparkles} title="Analysis in progress" description="Your agents are still working on this meeting. Check back in a moment." />
+                <EmptyState icon={Sparkles} title="Analysis in progress" description="Your agents are still working on this signal. Check back in a moment." />
               )}
             </TabsContent>
 
@@ -205,7 +200,7 @@ export default function MeetingDetailPage() {
                 <TabsContent value="sales">{project.sales ? <SalesTab plan={project.sales} /> : <NotGenerated tab="Sales" agent="sales-planner" />}</TabsContent>
                 <TabsContent value="tickets">
                   <Card className="p-5">
-                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold"><Ticket className="h-4 w-4 text-primary" /> Tickets from this meeting</h3>
+                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold"><Ticket className="h-4 w-4 text-primary" /> Tickets from this signal</h3>
                     <TicketsPanel scope={{ projectId: project.id }} />
                   </Card>
                 </TabsContent>
@@ -228,7 +223,7 @@ export default function MeetingDetailPage() {
         <div className="space-y-4 lg:col-span-4">
           <Card className="p-5">
             <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-              <AgentIcon agent="meeting-intelligence" size="sm" /> Meeting intelligence
+              <AgentIcon agent="meeting-intelligence" size="sm" /> Signal intelligence
             </h3>
             {m.analysis ? (
               <div className="grid grid-cols-2 gap-3">

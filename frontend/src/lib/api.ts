@@ -9,7 +9,6 @@ import { agents } from "./mock/agents";
 import { meetings } from "./mock/meetings";
 import { projects } from "./mock/projects";
 import { tasks as allTasks } from "./mock/tasks";
-import { executionGraph } from "./mock/graph";
 import { timelineEvents } from "./mock/timeline";
 import { integrations } from "./mock/integrations";
 import {
@@ -22,17 +21,16 @@ import {
 import type {
   ActivityEvent,
   Agent,
+  Insight,
   CalendarEvent,
   CalendarStatus,
-  ChatConversationDetail,
-  ChatConversationSummary,
-  ChatResponse,
   Customer,
   CustomerRequest,
   KnowledgeItem,
   SyncJob,
-  ExecutionGraph,
   FollowUp,
+  Goal,
+  HeartbeatStatus,
   Integration,
   Meeting,
   MetricTrend,
@@ -85,6 +83,7 @@ export async function runTranscript(input: {
   transcript: string;
   title?: string;
   account?: string;
+  source?: "transcript" | "document";
 }): Promise<TranscriptRunResult> {
   if (USE_MOCK) throw new Error("Transcript analysis needs the backend — set NEXT_PUBLIC_API_URL.");
   const res = await fetch(`${API_URL}/meetings/transcript`, {
@@ -94,6 +93,7 @@ export async function runTranscript(input: {
       transcript: input.transcript,
       title: input.title || "Pasted transcript",
       account: input.account || "Manual upload",
+      source: input.source || "transcript",
     }),
   });
   if (!res.ok) throw new Error(`Analyze failed: ${res.status}`);
@@ -161,37 +161,6 @@ export interface PrdPublication {
   url: string;
   at: string;
 }
-const rid = (n = 12) => Math.random().toString(36).slice(2, 2 + n);
-const MOCK_DOC_URL: Record<string, () => string> = {
-  "google-docs": () => `https://docs.google.com/document/d/${rid(16)}/edit`,
-  notion: () => `https://www.notion.so/orbit/${rid(16)}`,
-  confluence: () => `https://orbit.atlassian.net/wiki/spaces/PRD/pages/${Math.floor(Math.random() * 9e5 + 1e5)}`,
-  linear: () => `https://linear.app/orbit/document/${rid(8)}`,
-  jira: () => `https://orbit.atlassian.net/browse/PRD-${Math.floor(Math.random() * 900 + 100)}`,
-};
-
-/** Placeholder deep link for a doc destination (used until the real integration exists). */
-export function stubDocUrl(target: string): string {
-  return (MOCK_DOC_URL[target] ?? MOCK_DOC_URL.linear)();
-}
-
-const BOARD_URL: Record<string, () => string> = {
-  jira: () => `https://orbit.atlassian.net/jira/software/projects/ORB/boards/1`,
-  linear: () => `https://linear.app/orbit/team/ORB/active`,
-};
-/** Placeholder link to the tracker board after pushing work items (real link later). */
-export function stubBoardUrl(target: string): string {
-  return (BOARD_URL[target] ?? BOARD_URL.jira)();
-}
-/** Publish the PRD to a connected doc tool; returns the created doc's deep link.
- *  The actual create-doc call is stubbed until each integration is built. */
-export async function publishPrd(projectId: string, target: string): Promise<PrdPublication> {
-  if (USE_MOCK) {
-    await delay(400);
-    return { tool: target, url: stubDocUrl(target), at: new Date().toISOString() };
-  }
-  return liveSend(`/projects/${projectId}/publish-prd`, "POST", { target });
-}
 
 // --- Tasks -----------------------------------------------------------------
 export async function getTasks(): Promise<Task[]> {
@@ -211,16 +180,10 @@ export async function deleteTask(id: string): Promise<void> {
   if (USE_MOCK) return delay(120).then(() => undefined);
   await liveSend(`/tasks/${id}`, "DELETE");
 }
-/** Push a work item to a connected tool (Jira/Linear). MVP: faked but persisted. */
+/** Create this work item as a real Linear issue (other trackers are on the roadmap). */
 export async function pushTask(id: string, target: string): Promise<Task | undefined> {
   if (USE_MOCK) return delay(150).then(() => undefined);
   return liveSend(`/tasks/${id}/push`, "POST", { target });
-}
-
-// --- Graph -----------------------------------------------------------------
-export async function getExecutionGraph(meetingId?: string): Promise<ExecutionGraph> {
-  if (USE_MOCK) return delay(240).then(() => executionGraph);
-  return live(`/graph${meetingId ? `?meeting_id=${meetingId}` : ""}`);
 }
 
 // --- Timeline --------------------------------------------------------------
@@ -244,7 +207,7 @@ export async function getIntegrations(): Promise<Integration[]> {
   return live("/integrations");
 }
 
-// --- Customers, knowledge, sync & chat ---------------------------------------
+// --- Customers, knowledge & sync ---------------------------------------------
 export async function getCustomers(): Promise<Customer[]> {
   if (USE_MOCK) return [];
   return live("/customers");
@@ -261,7 +224,7 @@ export async function patchKnowledge(itemId: string, status: "open" | "completed
   if (USE_MOCK) throw new Error(NEEDS_BACKEND);
   return liveSend(`/customers/knowledge/${itemId}`, "PATCH", { status });
 }
-/** Removes the customer, their knowledge and chat history; meetings/plans survive unlinked. */
+/** Removes the customer and their knowledge; signals/proposals survive unlinked. */
 export async function deleteCustomer(id: string): Promise<void> {
   if (USE_MOCK) throw new Error(NEEDS_BACKEND);
   await liveSend(`/customers/${id}`, "DELETE");
@@ -280,27 +243,48 @@ export async function runSyncJob(planId: string, jobId: string, to?: string): Pr
   if (USE_MOCK) throw new Error(NEEDS_BACKEND);
   return liveSend(`/projects/${planId}/sync-jobs/${jobId}/run`, "POST", { to: to || undefined });
 }
-/** Ask Orbit — grounded in the Context Engine (structured retrieval, no DB dumps).
- *  Conversations persist server-side; pass conversationId to continue one. */
-export async function sendChat(
-  message: string, customerId?: string | null, conversationId?: string | null,
-): Promise<ChatResponse> {
-  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
-  return liveSend("/chat", "POST", {
-    message, customerId: customerId ?? undefined, conversationId: conversationId ?? undefined,
-  });
-}
-export async function listChatConversations(): Promise<ChatConversationSummary[]> {
+// --- Company intelligence -----------------------------------------------------
+export async function getInsights(status?: string): Promise<Insight[]> {
   if (USE_MOCK) return [];
-  return live("/chat/conversations");
+  return live(`/insights${status ? `?status=${status}` : ""}`);
 }
-export async function getChatConversation(id: string): Promise<ChatConversationDetail> {
+/** Run the gap/risk/trend detectors now (idempotent). */
+export async function scanInsights(): Promise<Insight[]> {
   if (USE_MOCK) throw new Error(NEEDS_BACKEND);
-  return live(`/chat/conversations/${id}`);
+  return liveSend("/insights/scan", "POST");
 }
-export async function deleteChatConversation(id: string): Promise<void> {
+/** Generate the company intelligence brief from current context. */
+export async function generateBrief(): Promise<Insight> {
   if (USE_MOCK) throw new Error(NEEDS_BACKEND);
-  await liveSend(`/chat/conversations/${id}`, "DELETE");
+  return liveSend("/insights/brief", "POST");
+}
+export async function getHeartbeat(): Promise<HeartbeatStatus> {
+  return live("/insights/heartbeat");
+}
+export async function getGoals(): Promise<Goal[]> {
+  return live("/goals");
+}
+export async function createGoal(body: { title: string; detail?: string; targetDate?: string | null }): Promise<Goal> {
+  return liveSend("/goals", "POST", body);
+}
+export async function patchGoal(id: string, body: Partial<{ title: string; detail: string; targetDate: string | null; status: Goal["status"] }>): Promise<Goal> {
+  return liveSend(`/goals/${id}`, "PATCH", body);
+}
+export async function deleteGoal(id: string): Promise<void> {
+  await liveSend(`/goals/${id}`, "DELETE");
+}
+export async function patchInsight(id: string, status: Insight["status"]): Promise<Insight> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend(`/insights/${id}`, "PATCH", { status });
+}
+/** Connect Linear with a personal API key — validated live against Linear. */
+export async function connectLinear(apiKey: string): Promise<Integration> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend("/integrations/linear/connect", "POST", { apiKey });
+}
+export async function disconnectLinear(): Promise<Integration> {
+  if (USE_MOCK) throw new Error(NEEDS_BACKEND);
+  return liveSend("/integrations/linear/disconnect", "POST");
 }
 
 // --- Google Calendar (read-only sync) + Zoom ---------------------------------

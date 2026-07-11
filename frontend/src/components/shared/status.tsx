@@ -2,7 +2,6 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import type {
   AgentStatus,
-  GraphNodeStatus,
   HealthStatus,
   IntegrationStatus,
   ProjectStatus,
@@ -129,17 +128,4 @@ export function IntegrationStatusBadge({ status }: { status: IntegrationStatus }
       {m.label}
     </Badge>
   );
-}
-
-// --- Graph node status -------------------------------------------------------
-export const graphStatusMeta: Record<GraphNodeStatus, { label: string; variant: Variant; color: string }> = {
-  completed: { label: "Completed", variant: "success", color: "hsl(var(--success))" },
-  active: { label: "Active", variant: "default", color: "hsl(var(--primary))" },
-  pending: { label: "Pending", variant: "muted", color: "hsl(var(--muted-foreground))" },
-  blocked: { label: "Blocked", variant: "destructive", color: "hsl(var(--destructive))" },
-  skipped: { label: "Skipped", variant: "muted", color: "hsl(var(--muted-foreground))" },
-};
-export function GraphStatusBadge({ status }: { status: GraphNodeStatus }) {
-  const m = graphStatusMeta[status];
-  return <Badge variant={m.variant}>{m.label}</Badge>;
 }

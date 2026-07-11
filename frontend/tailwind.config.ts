@@ -57,18 +57,18 @@ const config: Config = {
         success: "hsl(var(--success))",
         warning: "hsl(var(--warning))",
         info: "hsl(var(--info))",
-        // Brand spectrum
+        // Brand spectrum — Orbit violet (matches the landing page identity)
         orbit: {
-          50: "#eef4ff",
-          100: "#d9e6ff",
-          200: "#bccfff",
-          300: "#8eafff",
-          400: "#5982ff",
-          500: "#3358f4",
-          600: "#1f3ce0",
-          700: "#1a2fc4",
-          800: "#1c2c9e",
-          900: "#1c2b7d",
+          50: "#f3f1ff",
+          100: "#e8e4ff",
+          200: "#d3ccff",
+          300: "#b3a6ff",
+          400: "#9280ff",
+          500: "#6d5ef9",
+          600: "#5a45ef",
+          700: "#4b34d6",
+          800: "#3f2fac",
+          900: "#372b88",
         },
       },
       borderRadius: {
@@ -77,9 +77,9 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
       },
       boxShadow: {
-        glow: "0 0 0 1px hsl(var(--border)), 0 8px 40px -12px rgba(0,0,0,0.6)",
+        glow: "0 0 0 1px hsl(var(--border)), 0 10px 40px -14px hsl(247 55% 45% / 0.22)",
         "glow-sm": "0 0 24px -8px hsl(var(--primary) / 0.45)",
-        card: "0 1px 0 0 hsl(var(--border)), 0 12px 32px -16px rgba(0,0,0,0.5)",
+        card: "0 1px 0 0 hsl(var(--border)), 0 14px 34px -20px hsl(247 45% 35% / 0.18)",
       },
       keyframes: {
         "accordion-down": {

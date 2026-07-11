@@ -10,11 +10,11 @@ import { UserAvatar } from "@/components/ui/avatar";
 export function targetHref(e: ActivityEvent): string {
   switch (e.targetType) {
     case "meeting":
-      return "/meetings";
+      return "/dashboard";
     case "integration":
       return "/integrations";
     default:
-      return "/graph";
+      return "/dashboard";
   }
 }
 

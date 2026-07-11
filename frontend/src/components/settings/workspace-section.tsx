@@ -104,7 +104,7 @@ export function WorkspaceSection() {
 
           <Separator />
 
-          <FieldRow label="Default timezone" hint="New meetings and schedules use this timezone.">
+          <FieldRow label="Default timezone" hint="New signals and schedules use this timezone.">
             <Select value={tz} onValueChange={setTz}>
               <SelectTrigger className="md:max-w-md">
                 <SelectValue />
@@ -123,7 +123,7 @@ export function WorkspaceSection() {
 
           <FieldRow
             label="Data region"
-            hint="Where your meeting data and documents are stored at rest. Changing this triggers a migration."
+            hint="Where your signal data and documents are stored at rest. Changing this triggers a migration."
           >
             <Select value={region} onValueChange={setRegion}>
               <SelectTrigger className="md:max-w-md">
@@ -156,7 +156,7 @@ export function WorkspaceSection() {
             <div className="min-w-0">
               <p className="text-sm font-medium">Delete this workspace</p>
               <p className="text-sm text-muted-foreground">
-                Permanently remove {workspace.name}, all meetings, projects and documents. This cannot be undone.
+                Permanently remove {workspace.name}, all signals, proposals and documents. This cannot be undone.
               </p>
             </div>
             <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>

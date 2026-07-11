@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select, update
 
 from ..deps import Depends, get_current_user, get_db
-from ..models import ChatConversation, Customer, ExecutionPlan, KnowledgeItem, Meeting
+from ..models import Customer, ExecutionPlan, KnowledgeItem, Meeting
 from ..schemas import CustomerOut, KnowledgeItemOut
 from ..services.customers import resolve_customer
 from ..services.workspace import get_workspace_id
@@ -78,14 +78,13 @@ async def get_customer(customer_id: str, db=Depends(get_db), _=Depends(get_curre
 
 @router.delete("/{customer_id}", status_code=204)
 async def delete_customer(customer_id: str, db=Depends(get_db), _=Depends(get_current_user)):
-    """Delete the customer entity, its knowledge and its chat history. Meetings
+    """Delete the customer entity and its knowledge. Signals
     and plans are SOURCE DATA — they survive, just unlinked (re-uploading a
     meeting with the same name would create a fresh customer)."""
     c = await db.get(Customer, customer_id)
     if not c:
         raise HTTPException(404, "Customer not found")
     await db.execute(delete(KnowledgeItem).where(KnowledgeItem.customer_id == customer_id))
-    await db.execute(delete(ChatConversation).where(ChatConversation.customer_id == customer_id))
     await db.execute(update(Meeting).where(Meeting.customer_id == customer_id)
                      .values(customer_id=None))
     await db.execute(update(ExecutionPlan).where(ExecutionPlan.customer_id == customer_id)

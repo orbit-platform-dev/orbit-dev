@@ -28,7 +28,7 @@ export function ZoomImportDialog({ open, onOpenChange }: { open: boolean; onOpen
         <DialogHeader>
           <DialogTitle>Import from Zoom</DialogTitle>
           <DialogDescription>
-            Cloud recordings from the last 30 days. Importing turns the transcript into a meeting and analyzes it.
+            Cloud recordings from the last 30 days. Importing turns the transcript into a signal and analyzes it.
           </DialogDescription>
         </DialogHeader>
         {isLoading ? (
@@ -62,7 +62,7 @@ function RecordingRow({ recording: r, onDone }: { recording: ZoomRecording; onDo
       qc.invalidateQueries({ queryKey: qk.meetings });
       qc.invalidateQueries({ queryKey: qk.zoomRecordings });
       onDone();
-      router.push(`/meetings/${res.meetingId}`);
+      router.push(`/signals/${res.meetingId}`);
     } catch (err) {
       toast.error("Import failed", { description: (err as Error).message });
       setImporting(false);
@@ -87,7 +87,7 @@ function RecordingRow({ recording: r, onDone }: { recording: ZoomRecording; onDo
       </div>
       {r.meetingId ? (
         <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs"
-          onClick={() => { onDone(); router.push(`/meetings/${r.meetingId}`); }}>
+          onClick={() => { onDone(); router.push(`/signals/${r.meetingId}`); }}>
           Imported <ArrowUpRight className="h-3 w-3" />
         </Button>
       ) : (

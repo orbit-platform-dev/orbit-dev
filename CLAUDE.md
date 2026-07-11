@@ -4,24 +4,52 @@ Guidance for Claude Code when working in this repo. Read this first.
 
 ## What Orbit is (read before building)
 
-Orbit is an **AI Execution Engine** — it transforms customer conversations into
-**coordinated, company-wide execution**. It answers *"what should the company do
-next?"*, not *"what happened in the meeting?"*
+Orbit is the **AI Operating System for companies** — it makes the company
+legible to AI. Signals go in (conversations, documents, connected-tool data);
+intelligence comes out (evidence-backed insights, company briefs, proposals,
+approved actions). It answers *"what should the company do next?"*, not
+*"what happened in the meeting?"*
 
 It is **NOT** a meeting summarizer, note-taker, or PM/Jira tool. The core problem
 is **execution coordination** — eliminating the manual Customer → Sales → Product →
 Eng → Design → QA → CS → Customer handoffs.
+
+**Honesty rule (hard):** no fake features. If an integration isn't implemented,
+its UI must say so (roadmap), never simulate success or fabricate links/keys.
 
 **Positioning (2026-07-09):** Orbit doesn't replace your tools. It's the review
 and approval layer between customer conversations and execution. Approved
 updates sync into the software your team already uses, which stays the system
 of record. (This killed the own-the-call concept — see Current state.)
 
+**The OS loop (2026-07-11):** Orbit now runs on its own. A **heartbeat**
+(`services/heartbeat.py`, started in the FastAPI lifespan, `HEARTBEAT_*` env)
+scans every workspace on a schedule and refreshes the brief when stale — it
+only reads and writes insights, NEVER executes actions or approves anything.
+The **comparator** (`services/insights.py`) matches by meaning (token overlap →
+difflib → embedding cosine ≥ 0.75 via `SEMANTIC_SIMILARITY`), detects
+cross-customer demand, closes the loop from Linear (completed issue →
+commitment auto-completed + a `win` insight — telling the customer stays
+human), and measures drift against **Goals** (`/goals`, declared intentions,
+rendered into company context). The **learning loop** (`services/learning.py`):
+the AI's sections are frozen into `ExecutionPlan.draft_snapshot` at generation;
+approval diffs human edits against it into `Feedback` rows; recent corrections
+are rendered into every new generation's context. Insight kinds are now
+risk | gap | trend | win | brief.
+
+**AI-OS naming (2026-07-10 migration):** Meetings are **Signals** (a conversation
+OR a document — `Meeting.source="document"`), execution plans are **Proposals**
+in UI copy, the graph is the **Intelligence Graph**, the dashboard is **Company
+intelligence**. Backend identifiers (Meeting, ExecutionPlan, /meetings,
+/projects) are unchanged — the rename is a product-language layer.
+
 Non-negotiable product principles (every feature must serve these):
 
-- **The Execution Graph is the primary interface**, not a visualization. Every
-  **node = a real artifact** (Meeting, Feature Request, PRD, Task, Design, etc.);
-  every **edge = WHY it exists**. Users trace work back to the originating call.
+- **Every artifact carries its WHY.** Tasks/insights store their reason and
+  evidence; users trace work back to the originating signal. (The visual
+  Execution/Intelligence Graph was REMOVED 2026-07-11 — it was a per-meeting
+  render, not company memory. A future persistent company graph is a different
+  thing; don't rebuild the old one.)
 - **Orbit proposes, never forces.** Generated items should be approve / reject /
   edit / skip / assign-able by a human (human-in-the-loop is central).
 - **Every recommendation explains WHY** (stored in `meta.reason` on each node).
@@ -75,9 +103,9 @@ There are no automated tests yet.
 
 FastAPI monolith, four layers (all under `backend/app/`):
 
-1. **HTTP** — 14 routers (`routers/`): `meetings`, `customers`, `chat`, `calendar`,
-   `zoom`, `meet`, `graph`, `projects`, `tasks`, `agents`, `timeline`, `integrations`,
-   `activity`, `dashboard`. Mounted in `routers/__init__.py`. Auth via `deps.get_current_user`
+1. **HTTP** — 14 routers (`routers/`): `meetings`, `customers`, `calendar`,
+   `zoom`, `meet`, `projects`, `tasks`, `agents`, `timeline`, `integrations`,
+   `insights`, `goals`, `activity`, `dashboard`. Mounted in `routers/__init__.py`. Auth via `deps.get_current_user`
    (Clerk JWT; **disabled in dev** when `CLERK_JWKS_URL` unset → everyone is
    `DEMO_PRINCIPAL`). Tenancy via `services/workspace.py::get_workspace_id`
    (Clerk `org_id` claim → workspace; dev traffic lands on the seeded
@@ -87,9 +115,9 @@ FastAPI monolith, four layers (all under `backend/app/`):
    Never add columns via create_all alone — write a migration.
 2. **Agents** (`agents/`) — the brain. See below.
 3. **Persistence** (`agents/persistence.py`) — turns pipeline output into domain
-   rows (Project + GraphNodes/Edges + Tasks).
+   rows (Project + Tasks, each carrying its "why" in links.reason).
 4. **Data/infra** — `database.py` (async SQLAlchemy engine/session), `models.py`
-   (10 tables, JSON-heavy), `redis_client.py` (optional, no-ops if no `REDIS_URL`),
+   (17 tables, JSON-heavy), `redis_client.py` (optional, no-ops if no `REDIS_URL`),
    `config.py` (pydantic-settings from `.env`).
 
 ### The agent pipeline (the core)
@@ -159,14 +187,7 @@ package instead. EMBEDDING_DIM changes require a column-rebuild migration.
 - **Locking is total**: after approval, meeting analysis PATCH, plan PATCH, task
   edit/assign/decline/delete all 409. Kanban `column` moves stay allowed (delivery
   tracking, not plan editing). The UI mirrors this (work-item-card gates on canEdit).
-- **Chat** (`routers/chat.py`): conversations PERSIST (`chat_conversations`,
-  migration 0004) like Claude/GPT — each carries its transcript + a customer
-  binding; later turns reuse that customer's context automatically. `POST /chat
-  {message, customerId?, conversationId?}` entity-links the customer, builds a
-  wide ContextPackage (pgvector-ranked), answers via the `orbit-chat` agent —
-  deterministic context-derived answer when AI is off. History endpoints:
-  GET/DELETE `/chat/conversations[/{id}]`. Frontend: history rail + customer
-  selector at `/chat` (`?customer=` pre-binds).
+- **Chat was removed 2026-07-11** — see Simplification in Current state.
 - **Customers UI**: `/customers` (list + New customer dialog → POST /customers,
   which reuses identity resolution) and `/customers/{id}` — commitments with
   open/complete toggle, meetings, approved Knowledge Base. In the sidebar nav.
@@ -232,8 +253,13 @@ calls) was **removed 2026-07-09** — don't reintroduce it.
 
 ## Frontend architecture
 
-Next.js App Router under `frontend/src/app/(app)/`: `dashboard`, `calendar`,
-`meetings`, `meetings/[id]`, `graph`, `integrations`, `settings` (+ gated `chat`).
+Next.js App Router under `frontend/src/app/(app)/`: `dashboard` (Company
+intelligence — brief, insights, goals, Add-signal dialog via `?upload=1`),
+`customers`, `calendar`, `meetings/[id]` (+ `/review`), `integrations`,
+`settings`. **There is NO meetings list page, NO graph page and NO chat page**
+(simplification 2026-07-11): signals are added from the Dashboard/Customer
+dialogs and reached from Recent signals / customer detail; nav = Dashboard ·
+Customers · Calendar · Integrations · Settings.
 
 - **Calendar tab** (`(app)/calendar/page.tsx`): **read-only Google
   Calendar-style week grid** (user's explicit design choice) — Sunday-start day
@@ -247,8 +273,6 @@ Next.js App Router under `frontend/src/app/(app)/`: `dashboard`, `calendar`,
   minutes (with a countdown) — informational, no join buttons.
   `useCalendarEvents` keeps previous data while refetching (no flicker).
 
-- **Graph** is the centerpiece: `components/graph/` (`graph-canvas`,
-  `execution-node`, `node-detail`, `graph-meta`) using **@xyflow/react**.
 - Data via TanStack Query hooks in `lib/hooks.ts` → REST against
   `NEXT_PUBLIC_API_URL`. Falls back to mock data (`lib/mock/`) if unset.
 - Shared types in `lib/types.ts` (match the backend's camelCase output).
@@ -261,13 +285,13 @@ Next.js App Router under `frontend/src/app/(app)/`: `dashboard`, `calendar`,
   every section — Customer Intent, PRD (all fields), work items (inline edit / reassign
   / decline / remove), timeline, follow-up email — is an editable draft until approval,
   built on reusable editors in `components/execution/editable.tsx`.
-- **Publishing**: one reusable destination picker (`components/execution/publish-dialog.tsx`
-  + the `publish-destinations.ts` service) powers both the PRD "Publish" and the
-  work-items "Push to tools" dialogs. Each shows every destination — PDF · Notion ·
-  Confluence · Google Docs · Jira · Linear — with per-row connection status + in-dialog
-  Connect; connected rows push directly, disconnected offer Connect. **PDF export is
-  real** (`@react-pdf/renderer`; `prd-pdf.tsx` / `plan-pdf.tsx`); **tool pushes are
-  stubbed** behind the seam (`api.publishPrd`, `stubDocUrl` / `stubBoardUrl`).
+- **Publishing / pushing (honest, 2026-07-10)**: the old destination-picker
+  dialog and every stub URL are DELETED. **PDF export is real**
+  (`@react-pdf/renderer`; `prd-pdf.tsx` / `plan-pdf.tsx`, direct buttons on the
+  review screen). **Linear issue creation is real** (per-section "Create
+  issues" sync job and per-task push both call `services/linear.py`). Doc
+  publishing / CRM sync / email delivery refuse with on-the-roadmap messages —
+  never a fabricated link or key.
 
 ## Conventions
 
@@ -287,11 +311,10 @@ Next.js App Router under `frontend/src/app/(app)/`: `dashboard`, `calendar`,
 - Backend schemas serialize **camelCase** (`alias_generator=to_camel`) — keep
   frontend `lib/types.ts` in sync. **PATCH request bodies also accept camelCase**
   (e.g. `PatchProjectIn` uses `to_camel`), so the frontend can send `customerUpdate`.
-- Graph node IDs: `g_{meetingId}_{kind}`; edges `e_{meetingId}_...`; tasks
-  `tk_{meetingId}_...`. This keeps the graph **per-meeting** and re-runs idempotent.
+- Task IDs: `tk_{meetingId}_...` — per-meeting, so re-runs stay idempotent.
 - `persist_execution` calls `delete_execution` first, so analyzing is idempotent.
-- Every persisted graph node stores its per-meeting "why" in `meta.reason`; skipped
-  teams get `status="skipped"` + `meta.skipped` and no tasks.
+- Skipped teams get a reason and generate no tasks; every task stores its
+  per-meeting "why" in `links.reason`.
 
 ## Gotchas (things that have bitten us)
 
@@ -343,12 +366,25 @@ Everything degrades gracefully — the app runs with **none** of these set.
   until approval — Customer Intent, PRD (all fields), work items (inline edit / reassign
   / decline / remove), timeline, follow-up email — then a sticky **Approve** flips
   `Project.approval_status` draft→approved, which **locks** edits (PATCH returns 409).
-- **Publishing:** a unified destination-picker dialog sends the PRD *or* the work-item
-  plan to any of PDF · Notion · Confluence · Google Docs · Jira · Linear (per-row status,
-  in-dialog Connect, redirect links after push). **PDF is real; every tool push is a
-  stub** behind `api.publishPrd` / `POST /projects/{id}/publish-prd` (records
-  `prd.publication`) + `stubDocUrl` / `stubBoardUrl`. `CONNECTABLE` (front + back) =
-  jira · linear · google-docs · confluence · notion.
+- **AI-OS migration shipped (2026-07-10):** Meetings → **Signals** (documents are a
+  first-class source: `POST /meetings/transcript {source:"document"}`); dashboard →
+  **Company intelligence** (latest brief + evidence-backed insights + scan/brief
+  actions); **insights layer** (`services/insights.py` + `routers/insights.py`:
+  deterministic risk/gap/trend detectors — aging commitments, repeated themes,
+  stalled proposals, commitment-vs-Linear gaps — and the `intelligence-brief`
+  agent storing briefs as `Insight(kind="brief")`); **company-wide chat** (no
+  customer matched → `build_company_context`, labeled "Whole company"; the
+  single-customer auto-bind heuristic was removed); **honest integrations**
+  (backend flag-toggle connects return 409 for everything; real connects are
+  OAuth Calendar/Zoom/Meet + **Linear via personal API key**, validated live,
+  credentials stored server-side and NEVER exposed through the API; the
+  integrations page groups "Works today" vs "On the roadmap"); **real Linear
+  actuator** (sync-job `create-tasks` and per-task push create actual issues,
+  storing identifier + externalUrl); fake publish/push paths deleted
+  (`publish-prd` endpoint, `_DOC_URL`, `stubDocUrl`/`stubBoardUrl`,
+  publish-dialog/prd-publish/publish-destinations components, fabricated
+  external keys); the upload dialog's fake Recording/Connect tabs are gone
+  (Conversation + Document only, with an honest roadmap footer).
 - **Also done earlier:** execution router (team relevance + "why" on every node);
   chat gated behind a **Coming soon** overlay; Projects folded into meetings.
 - **Pipeline:** meeting-intelligence → product-manager → execution-router →
@@ -368,7 +404,23 @@ Everything degrades gracefully — the app runs with **none** of these set.
   Alembic migrations (auto-applied at startup), workspace tenancy columns.
   Verified end-to-end (scripted TestClient flow: meeting → customer → context →
   plan → lock → approve → knowledge → sync → chat).
-- **Next:** replace the sync-job executors' stubs with real destination APIs
-  (Salesforce/HubSpot, Notion/Confluence/Google Docs, Jira/Linear, email); a
-  Customers surface in the UI (profile + knowledge timeline); wire in the
-  `leadership-advisor` verdict; real Clerk org → workspace mapping.
+- **Simplification (2026-07-11):** the Signals list page, the graph page, the
+  whole `components/graph/` tree, the backend `/graph` router, GraphNode/GraphEdge
+  models and their tables (migration 0007) are DELETED. Meeting detail + review
+  remain the proposal surface; ingestion is the Add-signal dialog. @xyflow/react
+  uninstalled. **Chat is DELETED too (same day, user decision):** the `/chat`
+  page, sidebar "Ask Orbit" button, customer "Ask about" buttons, `sendChat`/
+  conversation api+hooks+types, backend `/chat` router, `ChatConversation`
+  model + table (migration 0008), the `orbit-chat` prompt/schema/fallback. The
+  question-answering surface is the dashboard (brief + insights) — don't
+  reintroduce a chat tab.
+- **The loop shipped (2026-07-11):** heartbeat (scheduled scans + stale-brief
+  refresh, read/insight-write only), comparator v2 (semantic matching,
+  cross-customer trends, Linear loop closure → `win` insights + auto-completed
+  commitments, goal drift), Goals (minimal company model, in company context +
+  dashboard card), learning loop (draft_snapshot → approval diff → Feedback →
+  corrections block in every generation context). Migration 0006.
+- **Next:** more real connectors behind the same honest seam (Slack signals,
+  Salesforce/HubSpot CRM sync, doc publishing, email delivery); persistent
+  company graph as the substrate (today's graph is still per-meeting); wire in
+  the `leadership-advisor` verdict; real Clerk org → workspace mapping.

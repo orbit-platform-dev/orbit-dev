@@ -18,8 +18,9 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from ..models import (
-    ActivityEvent, Customer, ExecutionPlan, GraphNode, Integration, Meeting, SyncJob, Task, TimelineEvent,
+    ActivityEvent, Customer, ExecutionPlan, Integration, Meeting, SyncJob, Task, TimelineEvent,
 )
+from . import linear
 
 logger = logging.getLogger("orbit.sync")
 
@@ -27,17 +28,9 @@ logger = logging.getLogger("orbit.sync")
 _DESTINATIONS = {
     "crm-update": ["salesforce", "hubspot"],
     "publish-prd": ["notion", "confluence", "google-docs"],
-    "create-tasks": ["jira", "linear"],
+    "create-tasks": ["linear", "jira"],
 }
 _CONNECTED = {"connected", "syncing"}
-
-_DOC_URL = {
-    "google-docs": lambda t: f"https://docs.google.com/document/d/{t}/edit",
-    "notion": lambda t: f"https://www.notion.so/orbit/{t}",
-    "confluence": lambda t: f"https://orbit.atlassian.net/wiki/spaces/PRD/pages/{t}",
-}
-_TASK_PREFIX = {"jira": "JIRA", "linear": "LIN"}
-
 
 def _skipped(section: dict | None) -> bool:
     return not section or bool(section.get("skipped"))
@@ -105,30 +98,37 @@ async def _execute_job(db, job: SyncJob) -> dict:
     integration API is wired in behind this seam."""
     ref = uuid.uuid4().hex[:12]
     if job.kind == "publish-prd":
-        plan = await db.get(ExecutionPlan, job.plan_id)
-        url = _DOC_URL[job.destination](ref)
-        if plan and plan.prd:
-            plan.prd = {**plan.prd, "publication": {"tool": job.destination, "url": url,
-                                                    "at": datetime.now(timezone.utc).isoformat()}}
-        return {"url": url}
+        raise ValueError(f"{job.destination} publishing is on the roadmap")
     if job.kind == "create-tasks":
-        prefix = _TASK_PREFIX.get(job.destination, job.destination.upper())
+        # REAL write: issues are created in Linear via its API. No fabricated keys.
+        if job.destination != "linear":
+            raise ValueError(f"{job.destination} issue creation is on the roadmap")
+        api_key = await linear.get_api_key(db)
+        if not api_key:
+            raise ValueError("Linear is not connected")
         keys = []
         for tid in job.payload.get("taskIds", []):
             t = await db.get(Task, tid)
             if not t:
                 continue
-            external = f"{prefix}-{abs(hash(t.id)) % 900 + 100}"
-            t.links = {**(t.links or {}), "pushed": True, "pushedTo": job.destination, "externalKey": external}
+            created = await linear.create_issue(
+                api_key, t.title,
+                f"{t.description}\n\n—\nCreated by Orbit from an approved proposal. "
+                f"Reason: {(t.links or {}).get('reason', '')}")
+            t.links = {**(t.links or {}), "pushed": True, "pushedTo": "linear",
+                       "externalKey": created["identifier"], "externalUrl": created["url"]}
             t.column = "todo" if t.column == "backlog" else t.column
             t.updated_at = datetime.now(timezone.utc)
-            keys.append(external)
-        return {"externalKeys": keys, "count": len(keys)}
+            keys.append(created["identifier"])
+        return {"externalKeys": keys, "count": len(keys),
+                "url": None, "note": f"{len(keys)} issue(s) created in Linear"}
     if job.kind == "crm-update":
-        return {"note": f"CRM update prepared for {job.destination}", "ref": ref}
+        return {"note": f"CRM update recorded — {job.destination} sync is on the roadmap", "ref": ref}
     if job.kind == "send-email":
+        # Honest: Orbit does not send email yet. This records the send.
         to = job.payload.get("to", "")
-        return {"note": f"Follow-up email sent to {to}" if to else "Follow-up email prepared",
+        return {"note": f"Recorded as sent to {to}. Email delivery integration is on the roadmap — "
+                        "send it from your email client.",
                 "to": to, "subject": job.payload.get("subject", "")}
     raise ValueError(f"Unknown sync job kind: {job.kind}")
 
@@ -187,7 +187,7 @@ async def _learn_contact(db, job: SyncJob) -> None:
 
 
 async def _finalize_if_complete(db, plan_id: str) -> None:
-    """Once no job is left pending/running, complete the graph's sync node."""
+    """Once no job is left pending/running, record the completion."""
     jobs = (await db.execute(select(SyncJob).where(SyncJob.plan_id == plan_id))).scalars().all()
     if any(j.status in ("pending", "running") for j in jobs):
         return
@@ -201,10 +201,4 @@ async def _finalize_if_complete(db, plan_id: str) -> None:
         at=datetime.now(timezone.utc), actor="You",
         project_id=plan.id, meeting_id=plan.source_meeting_id,
     ))
-    if plan.source_meeting_id:
-        node = await db.get(GraphNode, f"g_{plan.source_meeting_id}_sync")
-        if node:
-            node.status = "completed"
-            node.progress = 100
-            node.subtitle = f"{done}/{len(jobs)} destinations updated"
     await db.commit()

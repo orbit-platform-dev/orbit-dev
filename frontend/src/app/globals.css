@@ -11,28 +11,30 @@
     --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "SFMono-Regular", Menlo,
       Consolas, "Liberation Mono", monospace;
 
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+    /* Light theme — premium violet→cyan identity on a faint lavender-white base,
+       mirrored from the landing page. */
+    --background: 228 100% 99%;
+    --foreground: 230 44% 11%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 230 44% 11%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 229 84% 56%;
+    --popover-foreground: 230 44% 11%;
+    --primary: 247 80% 62%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
-    --accent: 220 14% 96%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 0 72% 51%;
+    --secondary: 230 42% 97%;
+    --secondary-foreground: 230 44% 13%;
+    --muted: 230 42% 97%;
+    --muted-foreground: 230 12% 46%;
+    --accent: 232 60% 96%;
+    --accent-foreground: 230 44% 13%;
+    --destructive: 352 78% 55%;
     --destructive-foreground: 0 0% 100%;
-    --success: 152 60% 40%;
+    --success: 160 62% 40%;
     --warning: 32 95% 44%;
     --info: 199 89% 48%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 229 84% 56%;
+    --border: 228 30% 90%;
+    --input: 228 30% 90%;
+    --ring: 247 80% 62%;
     --radius: 0.75rem;
   }
 
@@ -43,7 +45,7 @@
     --card-foreground: 210 40% 98%;
     --popover: 223 44% 6%;
     --popover-foreground: 210 40% 98%;
-    --primary: 229 84% 60%;
+    --primary: 247 84% 68%;
     --primary-foreground: 0 0% 100%;
     --secondary: 222 28% 13%;
     --secondary-foreground: 210 40% 98%;
@@ -58,7 +60,7 @@
     --info: 199 89% 58%;
     --border: 220 24% 15%;
     --input: 220 24% 17%;
-    --ring: 229 84% 60%;
+    --ring: 247 84% 68%;
   }
 }
 
@@ -96,9 +98,16 @@
 }
 
 @layer components {
-  /* Glass card — the signature surface */
+  /* Glass card — the signature surface. Light mode gets a soft violet-tinted
+     lift; dark mode keeps the deep shadow. */
   .glass {
-    @apply border border-border/60 bg-card/60 backdrop-blur-xl;
+    @apply border border-border/70 bg-card/70 backdrop-blur-xl;
+    box-shadow:
+      inset 0 1px 0 0 hsl(0 0% 100% / 0.6),
+      0 12px 36px -20px hsl(247 55% 40% / 0.22);
+  }
+  .dark .glass {
+    @apply border-border/60 bg-card/60;
     box-shadow:
       inset 0 1px 0 0 hsl(0 0% 100% / 0.04),
       0 12px 40px -16px rgba(0, 0, 0, 0.55);
@@ -120,7 +129,7 @@
     @apply bg-gradient-to-br from-foreground to-foreground/55 bg-clip-text text-transparent;
   }
   .text-gradient-brand {
-    @apply bg-gradient-to-r from-orbit-400 via-primary to-orbit-300 bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-[#7C6BFF] via-[#6E8BFF] to-[#22B8E6] bg-clip-text text-transparent;
   }
 
   /* Animated grid backdrop */

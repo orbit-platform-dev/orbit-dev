@@ -4,11 +4,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Orbit Meetings to shipped, on autopilot",
+    default: "Orbit — the AI Operating System for companies",
     template: "%s · Orbit",
   },
   description:
-    "Orbit is the execution platform: customer conversations become reviewed, approved updates that sync into the tools your team already uses.",
+    "Orbit is the AI Operating System for companies: signals in, evidence-backed intelligence out. Humans approve; your tools stay the system of record.",
   icons: { icon: "/orbit-logo.svg" },
 };
 
@@ -20,7 +20,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
         <Providers>{children}</Providers>
       </body>

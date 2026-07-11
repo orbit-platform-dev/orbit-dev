@@ -17,7 +17,7 @@ type ActorMode = "all" | "agents" | "people";
 
 const TARGET_TYPES: TargetType[] = ["meeting", "project", "task", "document", "integration", "agent"];
 const TYPE_LABEL: Record<TargetType, string> = {
-  meeting: "Meetings",
+  meeting: "Signals",
   project: "Projects",
   task: "Tasks",
   document: "Documents",
@@ -93,7 +93,7 @@ export default function ActivityPage() {
     <div>
       <PageHeader
         title="Activity"
-        description="A live feed of everything your team and agents are doing across meetings, projects, tasks and integrations."
+        description="A live feed of everything your team and Orbit are doing across signals, proposals, tasks and integrations."
       />
 
       {/* Filters */}

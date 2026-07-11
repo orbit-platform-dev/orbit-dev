@@ -36,7 +36,7 @@ def _baseline_integrations() -> list:
         models.Integration(key="hubspot", name="HubSpot", category="CRM", description="Sync accounts, deals and signals.", status="coming-soon"),
         models.Integration(key="salesforce", name="Salesforce", category="CRM", description="Map opportunities to pipeline.", status="coming-soon"),
         models.Integration(key="calendar", name="Google Calendar", category="Calendar", description="Sync upcoming meetings into Orbit — read-only, your calendar stays the source of truth.", status="disconnected"),
-        models.Integration(key="google-meet", name="Google Meet", category="Conferencing", description="Import Meet transcripts as meetings — analyzed like every other conversation.", status="disconnected"),
+        models.Integration(key="google-meet", name="Google Meet", category="Conferencing", description="Import Meet transcripts as signals — analyzed like every other conversation.", status="disconnected"),
         models.Integration(key="zoom", name="Zoom", category="Conferencing", description="Import cloud-recording transcripts into Meetings.", status="disconnected"),
         models.Integration(key="gong", name="Gong", category="Conferencing", description="Ingest call recordings and revenue signals.", status="coming-soon"),
         models.Integration(key="intercom", name="Intercom", category="Support", description="Turn support conversations into intent.", status="coming-soon"),
@@ -74,7 +74,7 @@ async def seed_if_empty(db: AsyncSession) -> None:
                 "role": members[i].role, "title": members[i].title, "status": "active"}
 
     agents = [
-        models.Agent(key="meeting-intelligence", name="Meeting Intelligence", role="Ingest & comprehend",
+        models.Agent(key="meeting-intelligence", name="Signal Intelligence", role="Ingest & comprehend",
                      description="Transcribes recordings and extracts pain points, requests, sentiment and revenue signals.",
                      model="claude-opus-4-8", status="running", confidence=96, execution_time_sec=42, completed_tasks=218,
                      color="#6366f1", current_thought="Cross-referencing Northwind's escalation against 3 prior calls.",
@@ -190,71 +190,23 @@ async def seed_if_empty(db: AsyncSession) -> None:
     tasks = [
         models.Task(id="tk_1", key="SSO-12", title="Stand up identity-broker skeleton", description="FastAPI service + Redis stream producer.",
                     column="done", priority="high", discipline="engineering", estimate=5, project_id="p_1", assignee=m(2),
-                    labels=["backend"], links={"meetingId": "m_1", "graphNodeId": "g_eng"}, created_at=ago(days=5), updated_at=ago(days=2)),
+                    labels=["backend"], links={"meetingId": "m_1"}, created_at=ago(days=5), updated_at=ago(days=2)),
         models.Task(id="tk_3", key="SSO-14", title="Implement SAML assertion validator", description="Signature, audience, replay protection.",
                     column="in-progress", priority="urgent", discipline="engineering", estimate=8, project_id="p_1", assignee=m(2),
-                    labels=["backend", "security"], links={"meetingId": "m_1", "prdId": "d2", "graphNodeId": "g_eng"}, created_at=ago(days=4), updated_at=ago(hours=2)),
+                    labels=["backend", "security"], links={"meetingId": "m_1", "prdId": "d2"}, created_at=ago(days=4), updated_at=ago(hours=2)),
         models.Task(id="tk_4", key="SSO-15", title="SCIM Users endpoint", description="POST/PATCH users with filter parsing.",
                     column="todo", priority="high", discipline="engineering", estimate=8, project_id="p_1", assignee=m(2),
-                    labels=["backend"], links={"prdId": "d2", "graphNodeId": "g_eng"}, created_at=ago(days=3), updated_at=ago(days=1)),
+                    labels=["backend"], links={"prdId": "d2"}, created_at=ago(days=3), updated_at=ago(days=1)),
         models.Task(id="tk_5", key="SSO-16", title="Connect-provider stepper UI", description="5-step guided SAML connection flow.",
                     column="in-progress", priority="high", discipline="design", estimate=5, project_id="p_1", assignee=m(3),
-                    labels=["frontend"], links={"graphNodeId": "g_design"}, created_at=ago(days=3), updated_at=ago(hours=5)),
+                    labels=["frontend"], links={}, created_at=ago(days=3), updated_at=ago(hours=5)),
         models.Task(id="tk_7", key="SSO-18", title="Fix: SCIM deactivate must revoke sessions", description="Sessions persist after deprovision.",
                     column="review", priority="urgent", discipline="qa", estimate=3, project_id="p_1", assignee=m(2),
-                    labels=["bug", "security"], links={"graphNodeId": "g_qa"}, created_at=ago(days=1), updated_at=ago(hours=1)),
+                    labels=["bug", "security"], links={}, created_at=ago(days=1), updated_at=ago(hours=1)),
         models.Task(id="tk_2", key="SSO-13", title="Send Northwind committed SSO timeline", description="Customer commitment with August target.",
                     column="in-progress", priority="urgent", discipline="sales", estimate=1, project_id="p_1", assignee=m(4),
-                    labels=["customer", "renewal"], links={"meetingId": "m_1", "graphNodeId": "g_cs"}, created_at=ago(minutes=30), updated_at=ago(minutes=8)),
+                    labels=["customer", "renewal"], links={"meetingId": "m_1"}, created_at=ago(minutes=30), updated_at=ago(minutes=8)),
     ]
 
-    nodes = [
-        ("g_meeting", "meeting", "Northwind Q2 Escalation", "Zoom · 38 min", "completed", "meeting-intelligence", 100, "Hana Kim", {"Account": "Northwind Labs", "Revenue at risk": "$480K"}),
-        ("g_goal", "business-goal", "Secure $480K renewal", "Convert churn risk", "completed", "leadership-advisor", 100, "Mara Vossen", {"Confidence": "82%"}),
-        ("g_feature", "feature-request", "SAML SSO + SCIM", "Demand 94 · Effort L", "completed", "meeting-intelligence", 100, None, {"Demand": "94/100"}),
-        ("g_prd", "prd", "Enterprise SSO & SCIM — PRD", "5 stories · 3 P0", "completed", "product-manager", 100, "Product Manager", {"Stories": 5}),
-        ("g_eng", "engineering", "Identity Broker Plan", "6 wks · 5 components", "active", "engineering-planner", 46, "Devin Okafor", {"Estimate": "6 weeks", "Tasks": 9}),
-        ("g_design", "design", "SSO Setup Flow", "3 flows · 7 screens", "active", "design-planner", 55, "Priya Nair", {"Screens": 7}),
-        ("g_qa", "qa", "SSO Test Plan", "Coverage 58% · 1 failing", "blocked", "qa-planner", 58, "Tomás Reyes", {"Coverage": "58%", "Failing": 1}),
-        ("g_sales", "sales", "Enterprise Security Brief", "3 deals · $1.33M", "active", "sales-planner", 70, "Hana Kim", {"Pipeline": "$1.33M"}),
-        ("g_deploy", "deployment", "Private Beta", "Northwind + Vertex", "pending", None, 0, "Devin Okafor", {"Target": "Aug 14, 2026"}),
-        ("g_cs", "customer-followup", "Northwind Follow-up", "Commitment + timeline", "active", "customer-success", 60, "Leo Bianchi", {"Promises": 4}),
-    ]
-    graph_nodes = [
-        models.GraphNode(id=i, kind=k, title=t, subtitle=st, status=stt, agent=a, progress=pr, owner=o, project_id="p_1",
-                         meta=meta, history=[{"at": ago(minutes=10).isoformat(), "event": "Created", "actor": a or "System"}])
-        for (i, k, t, st, stt, a, pr, o, meta) in nodes
-    ]
-    edges = [("e1", "g_meeting", "g_goal", False), ("e2", "g_goal", "g_feature", False), ("e3", "g_feature", "g_prd", False),
-             ("e4", "g_prd", "g_eng", True), ("e5", "g_prd", "g_design", True), ("e6", "g_eng", "g_qa", True),
-             ("e7", "g_design", "g_qa", False), ("e8", "g_eng", "g_sales", True), ("e9", "g_qa", "g_deploy", False),
-             ("e10", "g_sales", "g_deploy", False), ("e11", "g_deploy", "g_cs", True)]
-    graph_edges = [models.GraphEdge(id=i, source=s, target=t, animated=an) for (i, s, t, an) in edges]
-
-    timeline = [
-        models.TimelineEvent(id="ev_1", kind="meeting-uploaded", title="Northwind Q2 Escalation uploaded", description="38-min Zoom recording ingested.", at=ago(minutes=12), actor="Zoom", meeting_id="m_1", project_id="p_1"),
-        models.TimelineEvent(id="ev_3", kind="ai-analysis", title="AI analysis complete", description="6 pain points, $480K at risk.", at=ago(minutes=9), actor="Meeting Intelligence", agent="meeting-intelligence", meeting_id="m_1", project_id="p_1"),
-        models.TimelineEvent(id="ev_4", kind="prd-generated", title="PRD generated: Enterprise SSO & SCIM", description="2,180-word PRD with 5 stories.", at=ago(minutes=35), actor="Product Manager", agent="product-manager", project_id="p_1"),
-        models.TimelineEvent(id="ev_6", kind="tasks-created", title="9 tasks seeded to board", description="Engineering Planner created 9 tasks.", at=ago(minutes=18), actor="Engineering Planner", agent="engineering-planner", project_id="p_1"),
-        models.TimelineEvent(id="ev_9", kind="qa", title="QA flagged a release risk", description="SCIM deactivate doesn't revoke sessions in time.", at=ago(hours=1), actor="QA Planner", agent="qa-planner", project_id="p_1"),
-        models.TimelineEvent(id="ev_10", kind="customer-updated", title="Customer follow-up drafted", description="Personalized update for Northwind.", at=ago(minutes=3), actor="Customer Success", agent="customer-success", meeting_id="m_1", project_id="p_1"),
-    ]
-
-    integrations = _baseline_integrations()
-
-    activity = [
-        models.ActivityEvent(id="ac_1", actor={"name": "Customer Success", "isAgent": True}, action="drafted a follow-up for", target="Northwind Labs", target_type="meeting", at=ago(minutes=3), project_id="p_1"),
-        models.ActivityEvent(id="ac_2", actor={"name": "Devin Okafor"}, action="moved", target="SSO-14 to In Progress", target_type="task", at=ago(minutes=8), project_id="p_1"),
-        models.ActivityEvent(id="ac_8", actor={"name": "Product Manager", "isAgent": True}, action="published", target="Enterprise SSO & SCIM — PRD", target_type="document", at=ago(minutes=35), project_id="p_1"),
-        models.ActivityEvent(id="ac_4", actor={"name": "QA Planner", "isAgent": True}, action="flagged a failing test on", target="SSO-18", target_type="task", at=ago(hours=1), project_id="p_1"),
-        models.ActivityEvent(id="ac_9", actor={"name": "Meeting Intelligence", "isAgent": True}, action="analyzed", target="Vertex Health onboarding", target_type="meeting", at=ago(hours=4), project_id="p_3"),
-        models.ActivityEvent(id="ac_7", actor={"name": "Mara Vossen"}, action="approved the PRD for", target="Enterprise SSO & SCIM", target_type="project", at=ago(minutes=16), project_id="p_1"),
-    ]
-
-    # Insert FK parents (graph_nodes) before children (graph_edges). SQLite leaves
-    # FKs unenforced, but Postgres checks them — flush the nodes first so the edges
-    # resolve their source/target references.
-    db.add_all([*members, *agents, *meetings, *projects, *tasks, *graph_nodes, *timeline, *integrations, *activity])
-    await db.flush()
-    db.add_all(graph_edges)
+    db.add_all([*members, *agents, *meetings, *projects, *tasks, *timeline, *integrations, *activity])
     await db.commit()

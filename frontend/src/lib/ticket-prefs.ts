@@ -1,7 +1,7 @@
 "use client";
 
 // Lightweight, persisted preference for how agent-suggested work becomes tickets.
-// Shared across the Execution Graph and Projects so the toggle stays in sync.
+// Shared across ticket surfaces so the toggle stays in sync.
 import { useSyncExternalStore } from "react";
 
 export type TicketProvider = "linear" | "jira";

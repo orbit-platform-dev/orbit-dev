@@ -268,10 +268,13 @@ requests or pain points produce a plan.
 
 **Execution is a separate, human act**: each section's push button calls
 `POST /projects/{id}/sync-jobs/{job}/run` (Send email requires a recipient;
-sending learns it back onto the Customer). Executors in `services/sync.py` are
-the seam where real destination APIs slot in — currently stubbed links, but
-flowing through the audited job pipeline (status / result / error / retry).
-When the last job finishes, the graph's Synchronization node completes.
+sending learns it back onto the Customer). Executors in `services/sync.py`
+never fabricate results: `create-tasks` creates **real Linear issues** via the
+GraphQL API (`services/linear.py`, personal API key validated on connect);
+`crm-update`, `publish-prd` and email delivery are honestly recorded as
+on-the-roadmap notes instead of fake deep links. Everything flows through the
+audited job pipeline (status / result / error / retry). When the last job
+finishes, the graph's Synchronization node completes.
 
 ---
 
@@ -284,15 +287,28 @@ When the last job finishes, the graph's Synchronization node completes.
 - **Chat** (`routers/chat.py`): conversations **persist**
   (`chat_conversations`) like Claude/GPT chats — each carries its transcript
   and customer binding. Customer detection is fuzzy ("nortwind" → Northwind
-  Labs; ambiguity asks instead of guessing). Every answer is grounded in a
-  *wide* ContextPackage; with AI off, a deterministic context-derived answer is
-  returned. History endpoints: `GET/DELETE /chat/conversations[/{id}]`.
+  Labs). No customer named → the answer is grounded in **company-wide context**
+  (`build_company_context`: recent signals across customers, open commitments,
+  approved proposals, open insights) instead of nagging "which customer?".
+  Customer-scoped answers use a *wide* ContextPackage; with AI off, a
+  deterministic context-derived answer is returned. History endpoints:
+  `GET/DELETE /chat/conversations[/{id}]`.
+- **Intelligence** (`routers/insights.py` + `services/insights.py`): the AI-OS
+  output layer. `POST /insights/scan` runs deterministic, **evidence-backed**
+  detectors — aging open commitments, themes raised across signals, stalled
+  proposals, and commitment-vs-Linear gaps (open Linear issues are fetched
+  live as a sensor when connected). `POST /insights/brief` renders
+  company-wide context through the `intelligence-brief` agent and stores the
+  result as an `Insight(kind="brief")` with risks / highlights /
+  recommendations in `evidence`. Insights are idempotent by open title and
+  acknowledged/resolved via PATCH. Nothing here is generated without evidence
+  rows behind it.
 
 ---
 
 ## 9. The data model
 
-Sixteen tables (JSON-rich), all business rows carrying `workspace_id`:
+Eighteen tables (JSON-rich), all business rows carrying `workspace_id`:
 
 ```
 Workspace ─── Customer ──┬─► Meeting (embedding) ──► ExecutionPlan (projects)

@@ -23,7 +23,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   const tree = (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
+      <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
         <TooltipProvider delayDuration={200}>
           {children}
           <Toaster />
@@ -37,7 +37,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { ClerkProvider } = require("@clerk/nextjs");
     return (
-      <ClerkProvider appearance={{ variables: { colorPrimary: "#3358f4" } }}>{tree}</ClerkProvider>
+      <ClerkProvider appearance={{ variables: { colorPrimary: "#6d5ef9" } }}>{tree}</ClerkProvider>
     );
   }
 

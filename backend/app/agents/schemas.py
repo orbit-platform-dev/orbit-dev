@@ -150,20 +150,16 @@ class CRMUpdateDraft(_Camel):
     field_updates: list[CRMFieldUpdate] = Field(default_factory=list)
 
 
-class ChatSource(_Camel):
-    type: str = Field(description="meeting | plan | commitment | knowledge")
-    id: str
-    title: str
+class IntelligenceBrief(_Camel):
+    """The periodic company brief — what leadership should know right now."""
+
+    headline: str = Field(description="one sharp sentence on the company's current state")
+    summary: str = Field(description="2-4 sentences: what happened, what it means")
+    risks: list[str] = Field(default_factory=list, description="what threatens commitments or goals")
+    highlights: list[str] = Field(default_factory=list, description="what went well or moved forward")
+    recommendations: list[str] = Field(default_factory=list, description="what deserves attention next")
 
 
-class ChatAnswer(_Camel):
-    """Answer to a workspace question, grounded in the retrieved context."""
-
-    answer: str
-    sources: list[ChatSource] = Field(default_factory=list)
-
-
-# --- Execution Router -------------------------------------------------------
 class TeamDecision(_Camel):
     team: str = Field(description="engineering | design | qa | sales | customer-success | crm")
     relevant: bool

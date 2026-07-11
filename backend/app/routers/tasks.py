@@ -7,14 +7,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from ..deps import Depends, get_current_user, get_db
-from ..models import ExecutionPlan, Integration, Task
+from ..models import ExecutionPlan, Task
+from ..services import linear
 from ..schemas import TaskOut
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
-
-_CONNECTED = {"connected", "syncing"}
-_EXTERNAL_PREFIX = {"jira": "JIRA", "linear": "LIN"}
-
 
 async def _plan_approved(db, task: Task) -> bool:
     if not task.project_id:
@@ -54,7 +51,7 @@ async def patch_task(task_id: str, body: PatchTaskIn, db=Depends(get_db), _=Depe
     if await _plan_approved(db, t) and any(
         getattr(body, f) is not None for f in ("priority", "title", "description", "assignee", "decision")
     ):
-        raise HTTPException(409, "Execution plan is approved and locked")
+        raise HTTPException(409, "Proposal is approved and locked")
     for field in ("column", "priority", "title", "description", "assignee"):
         value = getattr(body, field)
         if value is not None:
@@ -69,18 +66,22 @@ async def patch_task(task_id: str, body: PatchTaskIn, db=Depends(get_db), _=Depe
 
 @router.post("/{task_id}/push", response_model=TaskOut)
 async def push_task(task_id: str, body: PushTaskIn, db=Depends(get_db), _=Depends(get_current_user)):
-    """Push one work item to a connected tool (Jira/Linear). MVP: faked but persisted."""
-    if body.target not in _EXTERNAL_PREFIX:
-        raise HTTPException(409, f"{body.target} is not a supported push target")
+    """Create this work item as a REAL issue in the tracker. Linear only today —
+    no fabricated keys; anything unimplemented refuses honestly."""
+    if body.target != "linear":
+        raise HTTPException(409, f"Pushing to {body.target} is on the roadmap — connect Linear to create real issues")
     t = await db.get(Task, task_id)
     if not t:
         raise HTTPException(404, "Task not found")
-    integ = await db.get(Integration, body.target)
-    if not integ or integ.status not in _CONNECTED:
-        raise HTTPException(409, f"{body.target} is not connected")
-    prefix = _EXTERNAL_PREFIX.get(body.target, body.target.upper())
-    external_key = f"{prefix}-{abs(hash(t.id)) % 900 + 100}"
-    t.links = {**(t.links or {}), "pushed": True, "pushedTo": body.target, "externalKey": external_key}
+    api_key = await linear.get_api_key(db)
+    if not api_key:
+        raise HTTPException(409, "Linear is not connected")
+    created = await linear.create_issue(
+        api_key, t.title,
+        f"{t.description}\n\n—\nCreated by Orbit from an approved proposal. "
+        f"Reason: {(t.links or {}).get('reason', '')}")
+    t.links = {**(t.links or {}), "pushed": True, "pushedTo": "linear",
+               "externalKey": created["identifier"], "externalUrl": created["url"]}
     t.column = "todo" if t.column == "backlog" else t.column
     t.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -94,6 +95,6 @@ async def delete_task(task_id: str, db=Depends(get_db), _=Depends(get_current_us
     t = await db.get(Task, task_id)
     if t:
         if await _plan_approved(db, t):
-            raise HTTPException(409, "Execution plan is approved and locked")
+            raise HTTPException(409, "Proposal is approved and locked")
         await db.delete(t)
         await db.commit()

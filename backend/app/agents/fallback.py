@@ -234,32 +234,34 @@ def fallback_crm_update(signals: dict, account: str) -> dict:
     }
 
 
-def fallback_chat(question: str, context_text: str) -> dict:
-    """AI-off chat: answer directly from the rendered context package."""
-    if not context_text.strip():
-        return {"answer": "I don't have any history for that customer yet — approved meetings and "
-                          "execution plans will appear here as knowledge builds up.", "sources": []}
-    q = question.lower()
-    sections = {
-        "commitment": "Open commitments to this customer:",
-        "plan": "Approved execution plans:",
-        "prd": "Approved execution plans:",
-        "approve": "Approved execution plans:",
-        "meeting": "Previous meetings:",
-        "request": "Previous meetings:",
-    }
-    wanted = next((v for k, v in sections.items() if k in q), None)
+def fallback_brief(context_text: str) -> dict:
+    """AI-off brief: honest structure straight from the rendered company context."""
     lines = context_text.splitlines()
-    if wanted and wanted in lines:
-        start = lines.index(wanted)
-        block = [wanted]
-        for line in lines[start + 1:]:
+
+    def section(header: str, limit: int = 5) -> list[str]:
+        if header not in lines:
+            return []
+        out = []
+        for line in lines[lines.index(header) + 1:]:
             if not line.startswith("- "):
                 break
-            block.append(line)
-        return {"answer": "\n".join(block), "sources": []}
-    return {"answer": "Here's what Orbit knows:\n" + "\n".join(lines[:14]), "sources": []}
+            out.append(line[2:])
+        return out[:limit]
 
+    risks = section("Open risks and gaps:")
+    commitments = section("Open commitments:")
+    signals = section("Recent signals:")
+    return {
+        "headline": (f"{len(risks)} open risk(s) and {len(commitments)} open commitment(s) need attention."
+                     if risks or commitments else "Quiet week: no open risks detected."),
+        "summary": (f"The company logged {len(signals)} recent signal(s). "
+                    + (f"{len(commitments)} commitment(s) remain open. " if commitments else "")
+                    + (f"{len(risks)} risk(s)/gap(s) are unresolved." if risks else "No unresolved risks.")),
+        "risks": risks,
+        "highlights": section("Approved proposals:"),
+        "recommendations": ([f"Resolve: {r}" for r in risks[:3]]
+                            or ["Ingest more signals to sharpen company understanding."]),
+    }
 
 def fallback_customer_update(signals: dict, account: str) -> dict:
     items = signals.get("featureRequests", [])

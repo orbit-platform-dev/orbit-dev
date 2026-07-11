@@ -51,7 +51,7 @@ export function CommandMenu() {
           <div className="flex items-center gap-2 border-b border-border px-3">
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             <Command.Input
-              placeholder="Search meetings, projects, or jump to…"
+              placeholder="Search signals, proposals, or jump to…"
               className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             />
             <kbd className="hidden rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">ESC</kbd>
@@ -60,8 +60,8 @@ export function CommandMenu() {
             <Command.Empty className="py-8 text-center text-sm text-muted-foreground">No results found.</Command.Empty>
 
             <Command.Group heading="Actions">
-              <Item onSelect={() => go("/meetings?upload=1")} icon={<Upload className="h-4 w-4" />}>
-                Upload a meeting
+              <Item onSelect={() => go("/dashboard?upload=1")} icon={<Upload className="h-4 w-4" />}>
+                Add a signal
               </Item>
             </Command.Group>
 
@@ -74,9 +74,9 @@ export function CommandMenu() {
             </Command.Group>
 
             {meetings && meetings.length > 0 && (
-              <Command.Group heading="Meetings">
+              <Command.Group heading="Signals">
                 {meetings.slice(0, 5).map((m) => (
-                  <Item key={m.id} onSelect={() => go(`/meetings/${m.id}`)} icon={<Video className="h-4 w-4" />}>
+                  <Item key={m.id} onSelect={() => go(`/signals/${m.id}`)} icon={<Video className="h-4 w-4" />}>
                     {m.title}
                   </Item>
                 ))}

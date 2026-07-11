@@ -13,6 +13,7 @@ from sqlalchemy import delete
 from ..agents.orchestrator import run_pipeline, signals_to_analysis
 from ..agents.persistence import delete_execution, persist_execution
 from ..context.engine import build_context_package, render_context
+from ..services.learning import capture_feedback, render_corrections
 from ..database import SessionLocal
 from ..deps import Depends, get_current_user, get_db
 from ..models import ActivityEvent, Approval, ExecutionPlan, Meeting, TimelineEvent
@@ -60,6 +61,10 @@ async def _analyze_in_background(meeting_id: str) -> None:
                     db, m.customer_id, exclude_meeting_id=m.id,
                     query_text=transcript_text[:2000], wide=True)
                 context = render_context(pkg)
+            # Learning loop: recent human corrections shape every new draft.
+            corrections = await render_corrections(db, m.workspace_id or "ws_default")
+            if corrections:
+                context = f"{context}\n\n{corrections}" if context else corrections
             state = await run_pipeline(m.id, transcript_text, m.account, on_progress=on_progress,
                                        context=context)
             analysis = signals_to_analysis(state.get("signals", {}))
@@ -78,7 +83,7 @@ async def _analyze_in_background(meeting_id: str) -> None:
             db.add(TimelineEvent(
                 id=f"ev_{uuid.uuid4().hex[:8]}", kind="ai-analysis", title="AI analysis complete",
                 description=analysis.get("summary", "")[:160], at=datetime.now(timezone.utc),
-                actor="Meeting Intelligence", agent="meeting-intelligence", meeting_id=m.id,
+                actor="Signal Intelligence", agent="meeting-intelligence", meeting_id=m.id,
             ))
             db.add(ActivityEvent(
                 id=f"ac_{uuid.uuid4().hex[:8]}", actor={"name": "Meeting Intelligence", "isAgent": True},
@@ -156,10 +161,11 @@ async def run_transcript(body: RunTranscriptIn, background: BackgroundTasks, db=
         raise HTTPException(422, "Transcript is too short to analyze — paste a real meeting transcript.")
 
     customer = await resolve_customer(db, ws, body.account)
+    source = body.source if body.source in ("transcript", "document") else "transcript"
     m = Meeting(
         id=f"m_{uuid.uuid4().hex[:8]}",
         title=body.title,
-        source="transcript",
+        source=source,
         status="analyzing",
         account=customer.name if customer else body.account,
         customer_id=customer.id if customer else None,
@@ -225,7 +231,7 @@ async def patch_meeting(meeting_id: str, body: PatchMeetingIn, db=Depends(get_db
     if m.linked_project_id:
         p = await db.get(ExecutionPlan, m.linked_project_id)
         if p and p.approval_status == "approved":
-            raise HTTPException(409, "Execution plan is approved and locked")
+            raise HTTPException(409, "Proposal is approved and locked")
     if body.analysis is not None:
         m.analysis = body.analysis
     await db.commit()
@@ -235,7 +241,7 @@ async def patch_meeting(meeting_id: str, body: PatchMeetingIn, db=Depends(get_db
 
 @router.post("/{meeting_id}/approve")
 async def approve_execution(meeting_id: str, db=Depends(get_db), user=Depends(get_current_user)):
-    """Approve the execution plan: lock every artifact, record the audit trail,
+    """Approve the proposal: lock every artifact, record the audit trail,
     fold the approved sections into customer Knowledge, and PREPARE SyncJobs.
     Approval never executes anything — each prepared update runs only when a
     human explicitly triggers it (POST /projects/{id}/sync-jobs/{job}/run)."""
@@ -243,18 +249,19 @@ async def approve_execution(meeting_id: str, db=Depends(get_db), user=Depends(ge
     if not m:
         raise HTTPException(404, "Meeting not found")
     if not m.linked_project_id:
-        raise HTTPException(409, "This meeting has no execution plan to approve")
+        raise HTTPException(409, "This signal has no proposal to approve")
     p = await db.get(ExecutionPlan, m.linked_project_id)
     if not p:
-        raise HTTPException(404, "Execution plan not found")
+        raise HTTPException(404, "Proposal not found")
     if p.approval_status == "approved":
-        raise HTTPException(409, "Execution plan is already approved")
+        raise HTTPException(409, "Proposal is already approved")
 
     now = datetime.now(timezone.utc)
     p.approval_status = "approved"
     p.approved_at = now
     p.status = "in-progress"
 
+    corrections = await capture_feedback(db, p)      # human edits → learning signal
     sections = await record_approved_plan(db, m, p)  # approved output → customer knowledge
     jobs = await create_sync_jobs(db, m, p)          # prepared, not yet executed
     db.add(Approval(
@@ -264,15 +271,15 @@ async def approve_execution(meeting_id: str, db=Depends(get_db), user=Depends(ge
         at=now, sections=sections,
     ))
     db.add(ActivityEvent(
-        id=f"ac_{uuid.uuid4().hex[:8]}", actor={"name": "You"}, action="approved the execution plan for",
+        id=f"ac_{uuid.uuid4().hex[:8]}", actor={"name": "You"}, action="approved the proposal for",
         target=p.name, target_type="project", at=now, project_id=p.id, meeting_id=m.id,
     ))
     db.add(TimelineEvent(
-        id=f"ev_{uuid.uuid4().hex[:8]}", kind="review-approved", title="Execution plan approved",
+        id=f"ev_{uuid.uuid4().hex[:8]}", kind="review-approved", title="Proposal approved",
         description=f"{p.name} approved and locked — {len(jobs)} update(s) prepared for sync.",
         at=now, actor="You", project_id=p.id, meeting_id=m.id,
     ))
     await db.commit()
     await publish_event("orbit:pipeline", {"type": "execution.approved", "meetingId": m.id, "projectId": p.id})
-    return {"meetingId": m.id, "projectId": p.id, "approvalStatus": "approved",
+    return {"meetingId": m.id, "projectId": p.id, "approvalStatus": "approved", "correctionsLearned": corrections,
             "approvedAt": now.isoformat(), "syncJobs": len(jobs)}

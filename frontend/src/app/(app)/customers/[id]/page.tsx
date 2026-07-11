@@ -1,8 +1,7 @@
 "use client";
 
 // One customer, structured like the product model: the customer contains their
-// meetings, and inside that lives the approved Knowledge Base. Chat about this
-// customer is one click away and carries their context.
+// signals, and inside that lives the approved Knowledge Base.
 
 import * as React from "react";
 import Link from "next/link";
@@ -10,7 +9,7 @@ import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ArrowUpRight, Building2, CalendarClock, CheckCircle2, Circle, Contact, FileText,
-  Handshake, Mail, MessageCircle, Plus, Sparkles, Video,
+  Handshake, Mail, Plus, Sparkles, Video,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -23,9 +22,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MeetingUploadDialog } from "@/components/meetings/upload-dialog";
 
 const KIND_META: Record<KnowledgeKind, { label: string; icon: React.ElementType; color: string }> = {
-  "meeting-summary": { label: "Meeting summary", icon: Video, color: "#6366f1" },
+  "meeting-summary": { label: "Conversation summary", icon: Video, color: "#6366f1" },
   "crm-update": { label: "CRM update", icon: Contact, color: "#f97316" },
   prd: { label: "PRD", icon: FileText, color: "#8b5cf6" },
   timeline: { label: "Timeline", icon: CalendarClock, color: "#22d3ee" },
@@ -40,6 +40,7 @@ export default function CustomerDetailPage() {
   const { data: allMeetings } = useMeetings();
   const meetings = React.useMemo(
     () => (allMeetings ?? []).filter((m) => m.customerId === id), [allMeetings, id]);
+  const [uploadOpen, setUploadOpen] = React.useState(false);
 
   if (isLoading) return <div className="space-y-4"><Skeleton className="h-10 w-64" /><Skeleton className="h-96 w-full" /></div>;
   if (!c) return <EmptyState icon={Building2} title="Customer not found" description="This customer may have been removed." />;
@@ -65,22 +66,15 @@ export default function CustomerDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button asChild variant="outline" className="gap-2">
-            <Link href={`/chat?customer=${c.id}`}><MessageCircle className="h-4 w-4" /> Ask about {c.name.split(" ")[0]}</Link>
-          </Button>
-          <Button asChild className="gap-2">
-            <Link href={`/meetings?upload=1&customer=${encodeURIComponent(c.name)}`}>
-              <Plus className="h-4 w-4" /> New meeting
-            </Link>
-          </Button>
+         
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Meetings" value={c.meetingCount} />
-        <Stat label="Plans approved" value={`${c.approvedPlanCount}/${c.planCount}`} />
+        <Stat label="Signals" value={c.meetingCount} />
+        <Stat label="Proposals approved" value={`${c.approvedPlanCount}/${c.planCount}`} />
         <Stat label="Open commitments" value={openCommitments.length} warn={openCommitments.length > 0} />
-        <Stat label="Last meeting" value={c.lastMeetingAt ? timeAgo(c.lastMeetingAt) : "—"} />
+        <Stat label="Last signal" value={c.lastMeetingAt ? timeAgo(c.lastMeetingAt) : "—"} />
       </div>
 
       {/* ── Open commitments — what we owe them ── */}
@@ -93,22 +87,22 @@ export default function CustomerDetailPage() {
         </Card>
       )}
 
-      {/* ── Meetings ── */}
+      {/* ── Signals ── */}
       <Card className="p-5">
-        <SectionTitle icon={Video} title="Meetings" hint="Every conversation with this customer — each one became (or becomes) an execution plan." />
+        <SectionTitle icon={Video} title="Signals" hint="Every conversation and document from this customer — each may become a proposal." />
         {meetings.length === 0 ? (
-          <p className="mt-3 text-sm text-muted-foreground">No meetings yet — upload one and it will land here automatically.</p>
+          <p className="mt-3 text-sm text-muted-foreground">No signals yet — add one and it will land here automatically.</p>
         ) : (
           <div className="mt-3 space-y-2">
             {meetings.map((m, i) => (
               <motion.div key={m.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}>
-                <Link href={`/meetings/${m.id}`}
+                <Link href={`/signals/${m.id}`}
                   className="flex items-center gap-3 rounded-lg border border-border bg-background/40 px-3 py-2.5 transition-colors hover:border-primary/40">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{m.title}</div>
                     <div className="text-xs text-muted-foreground">{formatDate(m.date)} · {m.status}</div>
                   </div>
-                  {m.linkedProjectId && <Badge variant="muted" className="gap-1"><Sparkles className="h-3 w-3" /> plan</Badge>}
+                  {m.linkedProjectId && <Badge variant="muted" className="gap-1"><Sparkles className="h-3 w-3" /> proposal</Badge>}
                   <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground" />
                 </Link>
               </motion.div>
@@ -120,10 +114,10 @@ export default function CustomerDetailPage() {
       {/* ── Knowledge Base — approved truth only ── */}
       <Card className="p-5">
         <SectionTitle icon={Sparkles} title="Knowledge Base"
-          hint="Approved outcomes only — this is what the Context Engine feeds into every new proposal and chat answer." />
+          hint="Approved outcomes only — this is what the Context Engine feeds into every new proposal." />
         {artifacts.length === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground">
-            Empty until a plan is approved — raw AI output never becomes knowledge.
+            Empty until a proposal is approved — raw AI output never becomes knowledge.
           </p>
         ) : (
           <div className="mt-3 space-y-2">
@@ -146,7 +140,7 @@ export default function CustomerDetailPage() {
                     )}
                     <div className="mt-0.5 text-[11px] text-muted-foreground/70">
                       approved {k.approvedAt ? timeAgo(k.approvedAt) : ""}
-                      {k.sourceMeetingId && <> · <Link className="hover:text-primary" href={`/meetings/${k.sourceMeetingId}`}>source meeting</Link></>}
+                      {k.sourceMeetingId && <> · <Link className="hover:text-primary" href={`/signals/${k.sourceMeetingId}`}>source signal</Link></>}
                     </div>
                   </div>
                 </div>
@@ -155,6 +149,7 @@ export default function CustomerDetailPage() {
           </div>
         )}
       </Card>
+      <MeetingUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} initialAccount={c.name} />
     </div>
   );
 }

@@ -4,10 +4,10 @@ from . import (
     activity,
     agents,
     calendar,
-    chat,
     customers,
     dashboard,
-    graph,
+    goals,
+    insights,
     integrations,
     meet,
     meetings,
@@ -18,6 +18,6 @@ from . import (
 )
 
 api_router = APIRouter()
-for module in (meetings, customers, chat, calendar, zoom, meet, agents, projects, tasks,
-               graph, timeline, integrations, activity, dashboard):
+for module in (meetings, customers, calendar, zoom, meet, agents, projects, tasks,
+               timeline, integrations, insights, goals, activity, dashboard):
     api_router.include_router(module.router)

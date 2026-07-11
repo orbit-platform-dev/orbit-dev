@@ -7,4 +7,5 @@ export const sourceMeta: Record<MeetingSource, { label: string; icon: LucideIcon
   upload: { label: "Upload", icon: Upload, color: "#8b95a5" },
   transcript: { label: "Transcript", icon: FileText, color: "#a78bfa" },
   "orbit-call": { label: "Orbit Call", icon: Orbit, color: "#8b5cf6" },
+  document: { label: "Document", icon: FileText, color: "#0ea5e9" },
 };

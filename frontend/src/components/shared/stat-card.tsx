@@ -27,7 +27,7 @@ export function StatCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-xs font-medium text-muted-foreground">{label}</div>
-          <div className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{value}</div>
+          <div className="text-gradient mt-1 text-2xl font-semibold tracking-tight tabular-nums">{value}</div>
         </div>
         {typeof delta === "number" && (
           <div className={cn("flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-medium", good ? "bg-success/15 text-success" : "bg-destructive/15 text-destructive")}>

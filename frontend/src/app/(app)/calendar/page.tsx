@@ -61,7 +61,7 @@ export default function CalendarPage() {
     const params = new URLSearchParams(window.location.search);
     const result = params.get("calendar");
     if (!result) return;
-    if (result === "connected") toast.success("Google Calendar connected", { description: "Your upcoming meetings now sync into Orbit." });
+    if (result === "connected") toast.success("Google Calendar connected", { description: "Your upcoming events now sync into Orbit." });
     else toast.error("Google Calendar connection failed", { description: params.get("reason") ?? undefined });
     window.history.replaceState(null, "", "/calendar");
     qc.invalidateQueries({ queryKey: qk.calendarStatus });
@@ -78,7 +78,7 @@ export default function CalendarPage() {
     <div>
       <PageHeader
         title="Calendar"
-        description="Your upcoming conversations — each one ready to become execution."
+        description="Your upcoming conversations — each can become a signal Orbit reasons over."
       >
         <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
           {isFetching ? <RefreshCw className="h-3 w-3 animate-spin" /> : <CalendarDays className="h-3 w-3" />}
@@ -366,14 +366,14 @@ function ConnectScreen({ configured }: { configured: boolean }) {
     <div>
       <PageHeader
         title="Calendar"
-        description="Connect a calendar to see your upcoming customer conversations — each one ready to become execution."
+        description="Connect a calendar to see your upcoming customer conversations — each can become a signal Orbit reasons over."
       />
       <div className="mx-auto mt-6 grid max-w-3xl gap-4 sm:grid-cols-2">
         <div className="flex flex-col items-center rounded-2xl border border-border bg-card p-8 text-center shadow-card">
           <IntegrationLogo k="calendar" className="h-12 w-12 text-base" />
           <h2 className="mt-4 text-base font-semibold">Google Calendar</h2>
           <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-            Syncs your upcoming meetings into Orbit — read-only, your calendar stays the source of truth.
+            Syncs your upcoming events into Orbit — read-only, your calendar stays the source of truth.
           </p>
           <Button className="mt-5 w-full gap-2" onClick={() => connect("google")} disabled={connecting !== null}>
             {connecting === "google" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
@@ -389,7 +389,7 @@ function ConnectScreen({ configured }: { configured: boolean }) {
           <IntegrationLogo k="zoom" className="h-12 w-12 text-base" />
           <h2 className="mt-4 text-base font-semibold">Zoom</h2>
           <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-            Import cloud-recording transcripts as meetings — analyzed like every other conversation.
+            Import cloud-recording transcripts as signals — analyzed like every other conversation.
           </p>
           <Button variant="outline" className="mt-5 w-full gap-2" onClick={() => connect("zoom")} disabled={connecting !== null}>
             {connecting === "zoom" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}

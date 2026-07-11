@@ -12,7 +12,6 @@ export const qk = {
   projects: ["projects"] as const,
   project: (id: string) => ["project", id] as const,
   tasks: ["tasks"] as const,
-  graph: ["graph"] as const,
   timeline: ["timeline"] as const,
   integrations: ["integrations"] as const,
   activity: ["activity"] as const,
@@ -25,7 +24,9 @@ export const qk = {
   customers: ["customers"] as const,
   customerKnowledge: (id: string) => ["customers", id, "knowledge"] as const,
   syncJobs: (planId: string) => ["sync-jobs", planId] as const,
-  chatConversations: ["chat", "conversations"] as const,
+  insights: ["insights"] as const,
+  goals: ["goals"] as const,
+  heartbeat: ["heartbeat"] as const,
 };
 
 export const useDashboard = () => useQuery({ queryKey: qk.dashboard, queryFn: api.getDashboard, refetchInterval: 8000 });
@@ -45,12 +46,6 @@ export const useAgents = () => useQuery({ queryKey: qk.agents, queryFn: api.getA
 export const useProjects = () => useQuery({ queryKey: qk.projects, queryFn: api.getProjects });
 export const useProject = (id: string) => useQuery({ queryKey: qk.project(id), queryFn: () => api.getProject(id), enabled: !!id });
 export const useTasks = () => useQuery({ queryKey: qk.tasks, queryFn: api.getTasks });
-export const useExecutionGraph = (meetingId?: string) =>
-  useQuery({
-    queryKey: meetingId ? [...qk.graph, meetingId] : qk.graph,
-    queryFn: () => api.getExecutionGraph(meetingId),
-    refetchInterval: 6000,
-  });
 export const useTimeline = () => useQuery({ queryKey: qk.timeline, queryFn: api.getTimeline });
 export const useIntegrations = () => useQuery({ queryKey: qk.integrations, queryFn: api.getIntegrations });
 export const useActivity = () => useQuery({ queryKey: qk.activity, queryFn: api.getActivity, refetchInterval: 10000 });
@@ -77,8 +72,12 @@ export const useCustomer = (id: string) =>
   useQuery({ queryKey: [...qk.customers, id], queryFn: () => api.getCustomer(id), enabled: !!id });
 export const useCustomerKnowledge = (id: string) =>
   useQuery({ queryKey: qk.customerKnowledge(id), queryFn: () => api.getCustomerKnowledge(id), enabled: !!id });
-export const useChatConversations = () =>
-  useQuery({ queryKey: qk.chatConversations, queryFn: api.listChatConversations });
+export const useInsights = () =>
+  useQuery({ queryKey: qk.insights, queryFn: () => api.getInsights() });
+export const useGoals = () =>
+  useQuery({ queryKey: qk.goals, queryFn: api.getGoals });
+export const useHeartbeat = () =>
+  useQuery({ queryKey: qk.heartbeat, queryFn: api.getHeartbeat, refetchInterval: 60_000 });
 /** Sync jobs for a plan. Jobs run only on explicit user action, so polling is
  *  needed just while one is actually executing. */
 export const useSyncJobs = (planId?: string, enabled = true) =>
@@ -99,11 +98,10 @@ export const useMeetStatus = () =>
 export const useMeetRecordings = (enabled: boolean) =>
   useQuery({ queryKey: qk.meetRecordings, queryFn: api.getMeetRecordings, enabled });
 
-/** The connected push target (Jira preferred, then Linear), or null if none. */
+/** The connected issue-tracker push target. Linear is the only real one today. */
 export function useConnectedProvider(): "jira" | "linear" | null {
   const { data } = useIntegrations();
   const isUp = (k: string) => data?.some((i) => i.key === k && (i.status === "connected" || i.status === "syncing"));
-  if (isUp("jira")) return "jira";
   if (isUp("linear")) return "linear";
   return null;
 }

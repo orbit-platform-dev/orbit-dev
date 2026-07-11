@@ -34,7 +34,7 @@ export function MeetImportDialog({ open, onOpenChange }: { open: boolean; onOpen
         <DialogHeader>
           <DialogTitle>Import from Google Meet</DialogTitle>
           <DialogDescription>
-            Recent meetings with transcripts. Importing turns the transcript into a meeting and analyzes it.
+            Recent conversations with transcripts. Importing turns the transcript into a signal and analyzes it.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5">
@@ -78,12 +78,12 @@ function RecordRow({ recording: r, account, onDone }: { recording: ZoomRecording
     setImporting(true);
     try {
       const res = await api.importMeetRecording(r.uuid, account.trim() || undefined);
-      toast.success("Meeting imported — analyzing now");
+      toast.success("Signal imported — analyzing now");
       qc.invalidateQueries({ queryKey: qk.meetings });
       qc.invalidateQueries({ queryKey: qk.meetRecordings });
       qc.invalidateQueries({ queryKey: qk.customers });
       onDone();
-      router.push(`/meetings/${res.meetingId}`);
+      router.push(`/signals/${res.meetingId}`);
     } catch (err) {
       toast.error("Import failed", { description: (err as Error).message });
       setImporting(false);
@@ -108,7 +108,7 @@ function RecordRow({ recording: r, account, onDone }: { recording: ZoomRecording
       </div>
       {r.meetingId ? (
         <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs"
-          onClick={() => { onDone(); router.push(`/meetings/${r.meetingId}`); }}>
+          onClick={() => { onDone(); router.push(`/signals/${r.meetingId}`); }}>
           Imported <ArrowUpRight className="h-3 w-3" />
         </Button>
       ) : (

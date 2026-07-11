@@ -148,14 +148,11 @@ export function OverviewTab({ project: p }: { project: Project }) {
 
         {p.sourceMeetingId && (
           <Button asChild variant="outline" className="w-full justify-start gap-2">
-            <Link href={`/meetings/${p.sourceMeetingId}`}>
-              <ArrowUpRight className="h-4 w-4" /> View source meeting
+            <Link href={`/signals/${p.sourceMeetingId}`}>
+              <ArrowUpRight className="h-4 w-4" /> View source signal
             </Link>
           </Button>
         )}
-        <Button asChild variant="outline" className="w-full justify-start gap-2">
-          <Link href="/graph"><Workflow className="h-4 w-4" /> Open in Execution Graph</Link>
-        </Button>
       </div>
     </div>
   );

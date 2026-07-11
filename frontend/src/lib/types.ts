@@ -33,7 +33,7 @@ export type Urgency = "critical" | "high" | "medium" | "low";
 // Meetings
 // ---------------------------------------------------------------------------
 
-export type MeetingSource = "google-meet" | "zoom" | "upload" | "transcript" | "orbit-call";
+export type MeetingSource = "google-meet" | "zoom" | "upload" | "transcript" | "document" | "orbit-call";
 export type MeetingStatus = "uploading" | "transcribing" | "analyzing" | "analyzed" | "failed";
 
 export interface TranscriptSegment {
@@ -342,92 +342,33 @@ export interface SyncJob {
   completedAt?: string | null;
 }
 
-export interface ChatResponse {
-  answer: string;
-  sources: { type: string; id: string; title: string }[];
+export interface Insight {
+  id: ID;
   customerId?: string | null;
-  customerName?: string | null;
-  conversationId?: string | null;
+  kind: "risk" | "gap" | "trend" | "win" | "brief";
+  title: string;
+  detail: string;
+  evidence: Record<string, unknown>;
+  status: "open" | "acknowledged" | "resolved";
+  createdAt: string;
 }
 
-export interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-  sources?: ChatResponse["sources"];
-  at?: string;
-}
-
-export interface ChatConversationSummary {
+export interface Goal {
   id: ID;
   title: string;
-  customerId?: string | null;
-  customerName?: string | null;
-  updatedAt: string;
-  messageCount: number;
+  detail: string;
+  targetDate?: string | null;
+  status: "open" | "achieved" | "dropped";
+  createdAt: string;
 }
 
-export interface ChatConversationDetail {
-  id: ID;
-  title: string;
-  customerId?: string | null;
-  customerName?: string | null;
-  messages: ChatMessage[];
-}
-
-// ---------------------------------------------------------------------------
-// Execution graph
-// ---------------------------------------------------------------------------
-
-export type GraphNodeKind =
-  | "meeting"
-  | "business-goal"
-  | "feature-request"
-  | "customer-intent"
-  | "crm-update"
-  | "prd"
-  | "execution-plan"
-  | "engineering"
-  | "design"
-  | "qa"
-  | "sales"
-  | "timeline"
-  | "deployment"
-  | "customer-followup"
-  | "synchronization";
-
-export type GraphNodeStatus = "completed" | "active" | "pending" | "blocked" | "skipped";
-
-export interface GraphNodeHistory {
-  at: string;
-  event: string;
-  actor: string;
-}
-
-export interface ExecutionNode {
-  id: ID;
-  kind: GraphNodeKind;
-  title: string;
-  subtitle: string;
-  status: GraphNodeStatus;
-  agent?: AgentKey;
-  progress: number;
-  owner?: string;
-  projectId?: ID;
-  meta: Record<string, string | number>;
-  history: GraphNodeHistory[];
-}
-
-export interface ExecutionEdge {
-  id: ID;
-  source: ID;
-  target: ID;
-  animated: boolean;
-  label?: string;
-}
-
-export interface ExecutionGraph {
-  nodes: ExecutionNode[];
-  edges: ExecutionEdge[];
+export interface HeartbeatStatus {
+  enabled: boolean;
+  intervalMinutes: number;
+  lastRunAt?: string | null;
+  lastFound: number;
+  lastBriefAt?: string | null;
+  ticks: number;
 }
 
 // ---------------------------------------------------------------------------

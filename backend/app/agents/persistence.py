@@ -1,8 +1,7 @@
 """Persist a completed pipeline run as the domain rows the UI reads.
 
-Turns agent output (signals/PRD/plans) into a Project, an execution graph
-(GraphNodes + GraphEdges: Meeting -> Need -> PRD -> Eng/Design/Sales -> QA ->
-Follow-up), and engineering Tasks. Re-running for the same meeting replaces its
+Turns agent output (signals/PRD/plans) into a Project (the Proposal) and its
+Tasks, each carrying its "why". Re-running for the same meeting replaces its
 prior rows so it stays idempotent.
 """
 from __future__ import annotations
@@ -12,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
 
-from ..models import ActivityEvent, Customer, GraphEdge, GraphNode, Meeting, Project, Task
+from ..models import ActivityEvent, Customer, Meeting, Project, Task
 
 
 def _key(name: str) -> str:
@@ -87,28 +86,10 @@ def _map_sales(sales: dict) -> dict:
     }
 
 
-def _node(nid: str, kind: str, title: str, subtitle: str, agent: str, project_id: str, now: datetime,
-          *, skipped: bool = False, reason: str = "") -> GraphNode:
-    # `reason` is the per-meeting "why" Orbit shows on every node; skipped teams keep it too.
-    meta: dict = {}
-    if reason:
-        meta["reason"] = reason
-    if skipped:
-        meta["skipped"] = True
-    return GraphNode(
-        id=nid, kind=kind, title=title[:80], subtitle=subtitle[:80],
-        status="skipped" if skipped else "completed",
-        agent=agent, progress=0 if skipped else 100, owner=None, project_id=project_id, meta=meta,
-        history=[{"at": now.isoformat(), "event": "Skipped — not needed here" if skipped else "Generated", "actor": agent}],
-    )
-
-
 async def delete_execution(meeting_id: str, db) -> None:
-    """Remove the graph, tasks, project and their activity derived from a meeting
+    """Remove the tasks, project and their activity derived from a meeting
     (idempotent — also runs before re-analysis, so a replaced project takes its
     activity trail with it)."""
-    await db.execute(delete(GraphEdge).where(GraphEdge.id.like(f"e_{meeting_id}_%")))
-    await db.execute(delete(GraphNode).where(GraphNode.id.like(f"g_{meeting_id}_%")))
     await db.execute(delete(Task).where(Task.id.like(f"tk_{meeting_id}_%")))
     for p in (await db.execute(select(Project).where(Project.source_meeting_id == meeting_id))).scalars().all():
         await db.execute(delete(ActivityEvent).where(ActivityEvent.project_id == p.id))
@@ -159,59 +140,11 @@ async def persist_execution(m: Meeting, state: dict, db) -> str:
         engineering=_map_engineering(eng), design=_map_design(design),
         qa=_map_qa(qa), sales=_map_sales(sales),
         customer_update=cu or None, timeline=timeline or None, approval_status="draft",
+        # The learning loop's baseline: what the AI wrote before any human edit.
+        draft_snapshot={k: v for k, v in
+                        {"crm-update": crm or None, "email": cu or None,
+                         "timeline": timeline or None}.items() if v},
     ))
-
-    # The execution router decided which teams this conversation actually needs.
-    teams = state.get("teams") or {}
-
-    def _team(name: str) -> tuple[bool, str]:
-        d = teams.get(name) or {}
-        return bool(d.get("relevant", True)), d.get("reason", "")
-
-    eng_ok, eng_why = _team("engineering")
-    design_ok, design_why = _team("design")
-    qa_ok, qa_why = _team("qa")
-    sales_ok, sales_why = _team("sales")
-    cs_ok, cs_why = _team("customer-success")
-    crm_ok, crm_why = _team("crm")
-
-    def _team_node(nid: str, kind: str, title: str, subtitle: str, agent: str, ok: bool, why: str) -> GraphNode:
-        return _node(nid, kind, title, subtitle if ok else (why or "Not needed for this conversation"),
-                     agent, pid, now, skipped=not ok, reason=why)
-
-    g = lambda s: f"g_{m.id}_{s}"
-    nodes = [
-        _node(g("meeting"), "meeting", m.title, m.account, "meeting-intelligence", pid, now,
-              reason="The customer conversation that triggered this work."),
-        _node(g("intent"), "customer-intent", "Customer Intent",
-              f"{len(frs)} requests · {len(signals.get('bugs', []))} bugs · {len(signals.get('painPoints', []))} pains",
-              "meeting-intelligence", pid, now, reason="What the customer actually needs, extracted from the call."),
-        _team_node(g("crm"), "crm-update", "CRM Update",
-                   (crm.get("accountSummary") or "Account record update")[:80] if crm_ok else "",
-                   "crm-analyst", crm_ok, crm_why or "Keeps the account record true to what the customer said."),
-        GraphNode(
-            id=g("prd"), kind="prd", title="PRD", subtitle="Not generated yet",
-            status="pending", agent="product-manager", progress=0, owner=None, project_id=pid,
-            meta={"reason": "Defines what to build, why it matters, and how success is measured — generated on demand in review."},
-            history=[{"at": now.isoformat(), "event": "Awaiting Generate PRD", "actor": "product-manager"}],
-        ),
-        _node(g("plan"), "execution-plan", "Execution Plan", f"{len(work_items)} work items",
-              "execution-planner", pid, now, reason="The cross-functional work needed to deliver the PRD."),
-        _team_node(g("eng"), "engineering", "Engineering", f"{weeks} wks · {len(eng.get('components', []))} components", "engineering-planner", eng_ok, eng_why),
-        _team_node(g("design"), "design", "Design", f"{len(design.get('flows', []))} flows · {len(design.get('screens', []))} screens", "design-planner", design_ok, design_why),
-        _team_node(g("qa"), "qa", "QA", f"Coverage {qa.get('coverageEstimate', 0)}%", "qa-planner", qa_ok, qa_why),
-        _team_node(g("sales"), "sales", "Sales", f"{len(sales.get('talkingPoints', []))} talk tracks", "sales-planner", sales_ok, sales_why),
-        _node(g("timeline"), "timeline", "Timeline", timeline.get("deliveryEstimate") or "n/a",
-              "execution-planner", pid, now, reason="Estimated delivery, milestones and critical path from the work items."),
-        _team_node(g("cs"), "customer-followup", "Customer Email", cu.get("subject", "") or "Follow-up drafted", "customer-success", cs_ok, cs_why),
-        GraphNode(
-            id=g("sync"), kind="synchronization", title="Synchronization",
-            subtitle="Awaiting approval", status="pending", agent=None, progress=0,
-            owner=None, project_id=pid,
-            meta={"reason": "Approved updates sync to the tools your team already uses — they stay the system of record."},
-            history=[{"at": now.isoformat(), "event": "Prepared — runs after approval", "actor": "orbit-sync"}],
-        ),
-    ]
 
     # Work items become tasks across every relevant discipline (not just engineering),
     # each carrying its "why" + confidence so the review screen can explain itself.
@@ -225,19 +158,9 @@ async def persist_execution(m: Meeting, state: dict, db) -> str:
             discipline=disc, estimate=w.get("estimatePoints"), project_id=pid,
             assignee={"name": owner, "title": owner, "isSuggested": True} if owner else None,
             labels=[disc], created_at=now, updated_at=now,
-            links={"meetingId": m.id, "graphNodeId": g("plan"),
+            links={"meetingId": m.id,
                    "reason": w.get("reason", ""), "confidence": w.get("confidence")},
         ))
-    db.add_all(nodes)
     db.add_all(tasks)
-    await db.flush()  # nodes before edges (FK)
-
-    e = lambda a, b, anim=False: GraphEdge(id=f"e_{m.id}_{a}_{b}", source=g(a), target=g(b), animated=anim)
-    db.add_all([
-        e("meeting", "intent"), e("intent", "crm"), e("intent", "prd"), e("prd", "plan", True),
-        e("plan", "eng", True), e("plan", "design", True), e("plan", "sales", True),
-        e("eng", "qa", True), e("design", "qa"),
-        e("plan", "timeline", True), e("timeline", "cs", True),
-        e("crm", "sync"), e("cs", "sync", True),
-    ])
+    await db.flush()
     return pid
