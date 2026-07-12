@@ -1,25 +1,18 @@
-import { NextResponse } from "next/server";
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-// When Clerk is configured, protect the authenticated app. Otherwise this is a
-// no-op so the product runs in demo mode without any auth setup.
-const clerkEnabled =
-  !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
+// Public routes: the sign-in screen and the OAuth callback. Everything else in
+// the app requires a signed-in Clerk session (invite-only; no self-serve sign-up,
+// so /sign-up is public only to serve its redirect to /sign-in).
+const isPublic = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/sso-callback(.*)"]);
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let handler: (...args: any[]) => any = () => NextResponse.next();
-
-if (clerkEnabled) {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { clerkMiddleware, createRouteMatcher } = require("@clerk/nextjs/server");
-  const isPublic = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  handler = clerkMiddleware(async (auth: any, req: any) => {
-    if (!isPublic(req)) await auth.protect();
-  });
-}
-
-export default handler;
+export default clerkMiddleware(async (auth, req) => {
+  if (!isPublic(req)) await auth.protect();
+});
 
 export const config = {
-  matcher: ["/((?!_next|.*\\..*).*)"],
+  matcher: [
+    // Skip Next internals and static files; run on everything else + API.
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/(api|trpc)(.*)",
+  ],
 };

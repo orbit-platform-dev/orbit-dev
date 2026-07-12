@@ -2,18 +2,17 @@
 
 import * as React from "react";
 import { motion } from "framer-motion";
-import { Building2, Users, Plug, type LucideIcon } from "lucide-react";
+import { Building2, Plug, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Tab registry — single source of truth for nav + routing.
 // Kept intentionally minimal for the MVP.
 // ---------------------------------------------------------------------------
-export type SettingsTab = "workspace" | "members" | "integrations";
+export type SettingsTab = "workspace" | "integrations";
 
 export const SETTINGS_TABS: { id: SettingsTab; label: string; icon: LucideIcon; description: string }[] = [
   { id: "workspace", label: "Workspace", icon: Building2, description: "Name and workspace defaults." },
-  { id: "members", label: "Members", icon: Users, description: "Invite teammates and manage roles." },
   { id: "integrations", label: "Integrations", icon: Plug, description: "Connected apps and data sources." },
 ];
 

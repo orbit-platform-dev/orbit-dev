@@ -3,24 +3,15 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
-import {
-  ArrowRight,
-  CornerDownLeft,
-  FileText,
-  Search,
-  Upload,
-  Video,
-} from "lucide-react";
+import { ArrowRight, CornerDownLeft, Search } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { allNavItems } from "@/lib/nav";
-import { useMeetings } from "@/lib/hooks";
 
 export const OPEN_COMMAND_EVENT = "orbit:command-open";
 
 export function CommandMenu() {
   const [open, setOpen] = React.useState(false);
   const router = useRouter();
-  const { data: meetings } = useMeetings();
 
   React.useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -51,20 +42,13 @@ export function CommandMenu() {
           <div className="flex items-center gap-2 border-b border-border px-3">
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             <Command.Input
-              placeholder="Search signals, proposals, or jump to…"
+              placeholder="Jump to…"
               className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             />
             <kbd className="hidden rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">ESC</kbd>
           </div>
           <Command.List className="max-h-[60vh] overflow-y-auto p-2">
             <Command.Empty className="py-8 text-center text-sm text-muted-foreground">No results found.</Command.Empty>
-
-            <Command.Group heading="Actions">
-              <Item onSelect={() => go("/dashboard?upload=1")} icon={<Upload className="h-4 w-4" />}>
-                Add a signal
-              </Item>
-            </Command.Group>
-
             <Command.Group heading="Navigate">
               {allNavItems.map((item) => (
                 <Item key={item.href} onSelect={() => go(item.href)} icon={<item.icon className="h-4 w-4" />}>
@@ -72,17 +56,6 @@ export function CommandMenu() {
                 </Item>
               ))}
             </Command.Group>
-
-            {meetings && meetings.length > 0 && (
-              <Command.Group heading="Signals">
-                {meetings.slice(0, 5).map((m) => (
-                  <Item key={m.id} onSelect={() => go(`/signals/${m.id}`)} icon={<Video className="h-4 w-4" />}>
-                    {m.title}
-                  </Item>
-                ))}
-              </Command.Group>
-            )}
-
           </Command.List>
           <div className="flex items-center justify-between border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1">

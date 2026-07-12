@@ -1,12 +1,34 @@
 """Async SQLAlchemy engine + session factory."""
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from .config import settings
 
-engine = create_async_engine(settings.database_url, echo=False, future=True)
+_is_sqlite = settings.database_url.startswith("sqlite")
+
+engine = create_async_engine(
+    settings.database_url,
+    echo=False,
+    future=True,
+    # SQLite serializes writers; a generous busy timeout makes a blocked writer
+    # wait for the lock instead of failing instantly.
+    connect_args={"timeout": 30} if _is_sqlite else {},
+)
+
+if _is_sqlite:
+    @event.listens_for(engine.sync_engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record):  # noqa: ANN001
+        # WAL + busy_timeout let the heartbeat and an immediate sync write
+        # concurrently on dev SQLite instead of hitting "database is locked".
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=30000")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.close()
+
 SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -70,7 +92,7 @@ def _migrate(conn) -> None:
 
     insp = inspect(conn)
     cfg = _alembic_config(conn)
-    if not insp.has_table("meetings"):
+    if not insp.has_table("workspaces"):
         Base.metadata.create_all(conn)
         command.stamp(cfg, "head")
     elif not insp.has_table("alembic_version"):
@@ -82,68 +104,15 @@ def _migrate(conn) -> None:
         _repair_pre_alembic_drift(conn)
 
 
-async def _backfill_customers(session) -> None:
-    """Idempotently attach legacy rows (account string only) to Customer entities."""
-    from sqlalchemy import select
-
-    from .models import ExecutionPlan, Meeting
-    from .services.customers import resolve_customer
-    from .services.workspace import DEFAULT_WORKSPACE_ID, ensure_default_workspace
-
-    await ensure_default_workspace(session)
-    meetings = (await session.execute(
-        select(Meeting).where(Meeting.customer_id.is_(None)))).scalars().all()
-    for m in meetings:
-        c = await resolve_customer(session, m.workspace_id or DEFAULT_WORKSPACE_ID, m.account)
-        if c:
-            m.customer_id = c.id
-    plans = (await session.execute(
-        select(ExecutionPlan).where(ExecutionPlan.customer_id.is_(None),
-                                    ExecutionPlan.source_meeting_id.is_not(None)))).scalars().all()
-    for p in plans:
-        m = await session.get(Meeting, p.source_meeting_id)
-        if m and m.customer_id:
-            p.customer_id = m.customer_id
-    await session.commit()
-
-
-async def _backfill_embeddings(session, limit: int = 100) -> None:
-    """Embed pre-existing rows so semantic retrieval covers old history.
-    Capped per boot; skipped entirely when embeddings are unavailable."""
-    from sqlalchemy import select
-
-    from .models import KnowledgeItem, Meeting
-    from .services import embeddings
-
-    if not embeddings.available():
-        return
-    meetings = (await session.execute(
-        select(Meeting).where(Meeting.embedding.is_(None), Meeting.analysis.is_not(None))
-        .limit(limit))).scalars().all()
-    for m in meetings:
-        a = m.analysis or {}
-        m.embedding = await embeddings.embed_text(
-            f"{m.title}\n{a.get('summary', '')}\n" + " ".join(a.get("keyTakeaways", [])))
-    items = (await session.execute(
-        select(KnowledgeItem).where(KnowledgeItem.embedding.is_(None)).limit(limit))).scalars().all()
-    for item in items:
-        text = f"[{item.kind}] {item.title}\n" + "\n".join(
-            str(v) for v in (item.content or {}).values() if isinstance(v, str) and v)
-        item.embedding = await embeddings.embed_text(text[:2000])
-    await session.commit()
-
-
 async def init_db() -> None:
-    """Migrate to head (Alembic), seed, and backfill customer links + embeddings."""
+    """Migrate to head (Alembic), then ensure the workspace + connector catalog."""
     from . import models  # noqa: F401  (register models)
-    from .seed import ensure_integrations, seed_if_empty
+    from .seed import ensure_integrations
+    from .services.workspace import ensure_default_workspace
 
     async with engine.begin() as conn:
         await conn.run_sync(_migrate)
     async with SessionLocal() as session:
-        if settings.seed_demo:
-            await seed_if_empty(session)
-        # Always ensure the integration catalog exists (even on a non-empty DB).
+        await ensure_default_workspace(session)
         await ensure_integrations(session)
-        await _backfill_customers(session)
-        await _backfill_embeddings(session)
+        await session.commit()

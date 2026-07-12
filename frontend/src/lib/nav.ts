@@ -1,9 +1,8 @@
 import {
-  Building2,
-  CalendarDays,
-  LayoutDashboard,
+  Database,
   Plug,
   Settings,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 
@@ -18,12 +17,15 @@ export interface NavSection {
   items: NavItem[];
 }
 
+// The MVP surfaces (per the system design doc): Feed, Memory, Settings — plus
+// Integrations (where you connect the tools Orbit reads). The legacy Dashboard,
+// Customers and Calendar pages are intentionally out of the nav; they belong to
+// the retired pipeline and only add confusion next to the loop.
 export const navSections: NavSection[] = [
   {
     items: [
-      { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-      { label: "Customers", href: "/customers", icon: Building2 },
-      { label: "Calendar", href: "/calendar", icon: CalendarDays },
+      { label: "Feed", href: "/feed", icon: Sparkles },
+      { label: "Memory", href: "/memory", icon: Database },
     ],
   },
   {

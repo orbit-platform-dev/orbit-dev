@@ -1,8 +1,10 @@
-"""SQLAlchemy ORM models.
+"""SQLAlchemy ORM models — the MVP data model.
 
-Rich nested structures (transcripts, analyses, plans) are stored as JSON columns
-so the schema stays portable across SQLite (dev) and PostgreSQL (prod) while the
-relational columns carry the queryable fields (status, account, dates, impact).
+The AI Operating System loop stores: observed memory (Artifact), the company
+model (Entity + Link), intent (Goal), findings/recommendations (Insight), the
+learning signal (Feedback), connectors (Integration), and a light audit trail
+(ActivityEvent). Rich nested data lives in JSON columns so the schema stays
+portable across SQLite (dev) and PostgreSQL (prod).
 """
 from __future__ import annotations
 
@@ -10,25 +12,24 @@ from datetime import datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text  # noqa: F401
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
 
-# Embedding dimension (Gemini text-embedding-004). Changing providers to a
-# different dimension requires a migration that rebuilds the vector columns.
+# Embedding dimension (Gemini gemini-embedding-001). Changing to a different
+# dimension requires a migration that rebuilds the vector columns.
 EMBEDDING_DIM = 768
 
-# Semantic embedding for Context Engine retrieval: a real pgvector column on
-# Postgres (indexable similarity search), plain JSON on dev SQLite (ranked in
-# Python — same behavior, no index).
+
 def _embedding_column():
+    """A real pgvector column on Postgres (indexable), plain JSON on SQLite."""
     return mapped_column(JSON().with_variant(Vector(EMBEDDING_DIM), "postgresql"), nullable=True)
 
 
 class Workspace(Base):
-    """Tenant boundary. Every business row carries a workspace_id; the dev/demo
-    instance runs on the seeded default workspace until Clerk orgs are wired."""
+    """Tenant boundary. Every business row carries a workspace_id; dev/demo runs
+    on the seeded default workspace until Clerk orgs are wired."""
 
     __tablename__ = "workspaces"
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -36,188 +37,97 @@ class Workspace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-class Customer(Base):
-    """A real customer entity — meetings, execution plans and knowledge hang off
-    it. `normalized_name` + `aliases` + `domains` are the identity-resolution
-    keys (see services/customers.py); `name` is the display form."""
+class Artifact(Base):
+    """Unified observed memory (Observe + Remember). Every ingested item from any
+    source — a customer call or a Linear issue — with provenance (source,
+    external_ref, url), time, the Extractor's structured output, source-specific
+    meta (e.g. Linear issue state), and an embedding for semantic retrieval."""
 
-    __tablename__ = "customers"
+    __tablename__ = "artifacts"
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
-    name: Mapped[str] = mapped_column(String)
-    normalized_name: Mapped[str] = mapped_column(String, index=True)
-    domains: Mapped[list[str]] = mapped_column(JSON, default=list)
-    aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default", index=True)
+    source: Mapped[str] = mapped_column(String, index=True)  # call | linear-issue | document
+    kind: Mapped[str] = mapped_column(String, default="")  # call | issue | doc
+    external_ref: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    url: Mapped[str | None] = mapped_column(String, nullable=True)
+    title: Mapped[str] = mapped_column(String)
+    content: Mapped[str] = mapped_column(Text, default="")
+    extracted: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String, default="observed")  # observed | extracted | failed
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-
-
-class Member(Base):
-    __tablename__ = "members"
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[str] = mapped_column(String)
-    email: Mapped[str] = mapped_column(String)
-    role: Mapped[str] = mapped_column(String)
-    title: Mapped[str] = mapped_column(String)
-    status: Mapped[str] = mapped_column(String, default="active")
-    avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
-
-
-class Meeting(Base):
-    __tablename__ = "meetings"
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    title: Mapped[str] = mapped_column(String)
-    source: Mapped[str] = mapped_column(String)
-    status: Mapped[str] = mapped_column(String)
-    # `account` stays as the display string (mirrors Customer.name) for UI
-    # backcompat; `customer_id` is the real relationship.
-    account: Mapped[str] = mapped_column(String)
-    customer_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
-    date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    duration_sec: Mapped[int] = mapped_column(Integer, default=0)
-    analysis_progress: Mapped[int] = mapped_column(Integer, default=0)
-    linked_project_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    participants: Mapped[list[Any]] = mapped_column(JSON, default=list)
-    transcript: Mapped[list[Any]] = mapped_column(JSON, default=list)
-    analysis: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
     embedding: Mapped[list[float] | None] = _embedding_column()
 
 
-class Agent(Base):
-    __tablename__ = "agents"
-    key: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[str] = mapped_column(String)
-    role: Mapped[str] = mapped_column(String)
-    description: Mapped[str] = mapped_column(Text)
-    model: Mapped[str] = mapped_column(String)
-    status: Mapped[str] = mapped_column(String, default="idle")
-    current_thought: Mapped[str | None] = mapped_column(Text, nullable=True)
-    confidence: Mapped[int] = mapped_column(Integer, default=0)
-    execution_time_sec: Mapped[int] = mapped_column(Integer, default=0)
-    completed_tasks: Mapped[int] = mapped_column(Integer, default=0)
-    color: Mapped[str] = mapped_column(String, default="#6366f1")
-    documents: Mapped[list[Any]] = mapped_column(JSON, default=list)
-    recent_runs: Mapped[list[Any]] = mapped_column(JSON, default=list)
+class Entity(Base):
+    """A node in the company model (Understand) — customer, commitment, feature
+    request, person or goal — resolved from artifacts. `state` tracks lifecycle
+    (a commitment goes open → tracked → delivered); `meta` holds kind-specific
+    fields (to, due, the fulfilling Linear ref)."""
 
-
-class ExecutionPlan(Base):
-    """Orbit's central business object: the complete, reviewable execution
-    package prepared from one meeting (+ customer context). Table stays
-    `projects` for backward compatibility with existing data and the
-    `/projects` API surface."""
-
-    __tablename__ = "projects"
+    __tablename__ = "entities"
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default", index=True)
+    kind: Mapped[str] = mapped_column(String, index=True)  # customer | commitment | feature | person | goal
     name: Mapped[str] = mapped_column(String)
-    key: Mapped[str] = mapped_column(String)
-    description: Mapped[str] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String)
-    health: Mapped[str] = mapped_column(String)
-    progress: Mapped[int] = mapped_column(Integer, default=0)
-    start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    target_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    delivery_estimate: Mapped[str] = mapped_column(String)
-    source_meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    customer_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
-    revenue_impact: Mapped[float] = mapped_column(Float, default=0)
-    owner: Mapped[dict[str, Any]] = mapped_column(JSON)
-    team: Mapped[list[Any]] = mapped_column(JSON, default=list)
-    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
-    documents: Mapped[list[Any]] = mapped_column(JSON, default=list)
-    prd: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    crm_update: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    engineering: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    design: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    qa: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    sales: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    customer_update: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    timeline: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    internal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    approval_status: Mapped[str] = mapped_column(String, default="draft")
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # The AI's original output, frozen at generation time. Diffed against the
-    # human-edited sections at approval → Feedback rows (the learning signal).
-    draft_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-
-
-# Backward-compatible alias — existing code imports Project.
-Project = ExecutionPlan
-
-
-class Task(Base):
-    __tablename__ = "tasks"
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    key: Mapped[str] = mapped_column(String)
-    title: Mapped[str] = mapped_column(String)
-    description: Mapped[str] = mapped_column(Text)
-    column: Mapped[str] = mapped_column(String)
-    priority: Mapped[str] = mapped_column(String)
-    discipline: Mapped[str] = mapped_column(String)
-    estimate: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    project_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    assignee: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    labels: Mapped[list[str]] = mapped_column(JSON, default=list)
-    links: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    normalized_name: Mapped[str] = mapped_column(String, index=True)
+    aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
+    identifiers: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    state: Mapped[str] = mapped_column(String, default="open")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-class TimelineEvent(Base):
-    __tablename__ = "timeline_events"
+class Link(Base):
+    """A typed, provenance-backed relationship in the company model. Endpoints
+    are entities OR artifacts (from_type/to_type), so a commitment can point to
+    the call that made it (source_of) and the Linear issue that fulfills it
+    (fulfills). types: source_of | made_to | requested_by | fulfills | mentions."""
+
+    __tablename__ = "links"
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    kind: Mapped[str] = mapped_column(String)
-    title: Mapped[str] = mapped_column(String)
-    description: Mapped[str] = mapped_column(Text)
-    at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    actor: Mapped[str] = mapped_column(String)
-    agent: Mapped[str | None] = mapped_column(String, nullable=True)
-    project_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    meta: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-
-
-class Integration(Base):
-    __tablename__ = "integrations"
-    key: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[str] = mapped_column(String)
-    category: Mapped[str] = mapped_column(String)
-    description: Mapped[str] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String)
-    last_sync: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    account: Mapped[str | None] = mapped_column(String, nullable=True)
-    stats: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
-    # API credentials for key-based integrations (e.g. Linear). OAuth providers
-    # keep using calendar_connections; never expose this through the API.
-    credentials: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default", index=True)
+    from_type: Mapped[str] = mapped_column(String)  # entity | artifact
+    from_id: Mapped[str] = mapped_column(String, index=True)
+    to_type: Mapped[str] = mapped_column(String)  # entity | artifact
+    to_id: Mapped[str] = mapped_column(String, index=True)
+    type: Mapped[str] = mapped_column(String)
+    source_artifact_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class Insight(Base):
-    """One detected piece of company intelligence: a risk, a gap between
-    intention and reality, a repeating trend, a delivered win, or a brief.
-    kind: risk | gap | trend | win | brief. status: open | acknowledged | resolved."""
+    """A finding or recommendation over the company model (Reason + Recommend).
+    kind: gap | drift | trend | win | brief. status: open | approved | dismissed
+    | resolved. Evidence is entity/artifact ids; `action` carries a prepared,
+    approvable Linear write; `dedupe_key` dedups by entity/condition."""
 
     __tablename__ = "insights"
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
-    customer_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default", index=True)
     kind: Mapped[str] = mapped_column(String, index=True)
     title: Mapped[str] = mapped_column(String)
     detail: Mapped[str] = mapped_column(Text, default="")
     evidence: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String, default="open")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    origin: Mapped[str] = mapped_column(String, default="model", server_default="model")
+    entity_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    artifact_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    action: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
 
 class Goal(Base):
-    """A declared company intention — what the comparator measures reality
-    against. Without goals, Orbit can only compare against meeting promises."""
+    """A declared company intention — the reference signal reasoning compares
+    reality against. Minimal by design: a sentence, optionally a date."""
 
     __tablename__ = "goals"
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default", index=True)
     title: Mapped[str] = mapped_column(String)
     detail: Mapped[str] = mapped_column(Text, default="")
     target_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -226,90 +136,43 @@ class Goal(Base):
 
 
 class Feedback(Base):
-    """One human correction of an AI draft, captured as a before/after diff at
-    approval time. Recent corrections are rendered back into generation context
-    so the system writes differently because it was edited."""
+    """One human correction (an edit or dismissal) — the learning signal.
+    Recent corrections are rendered into every generation's context so Orbit
+    reads and drafts the way this team does."""
 
     __tablename__ = "feedback"
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default", index=True)
     customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
     plan_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    section: Mapped[str] = mapped_column(String, index=True)  # prd | crm-update | email | timeline
+    section: Mapped[str] = mapped_column(String, index=True)  # finding | ...
     field: Mapped[str] = mapped_column(String)
     before: Mapped[str] = mapped_column(Text, default="")
     after: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-class CalendarConnection(Base):
-    """An OAuth'd calendar account (one per provider for the MVP workspace)."""
+class Integration(Base):
+    """A connector row, scoped to ONE workspace (tenant). `credentials` holds the
+    API key / OAuth token and is NEVER exposed through the API. The composite key
+    (workspace_id, key) is what isolates one company's connections from another's."""
 
-    __tablename__ = "calendar_connections"
-    id: Mapped[str] = mapped_column(String, primary_key=True)  # provider key, e.g. "google"
-    email: Mapped[str] = mapped_column(String, default="")
-    access_token: Mapped[str] = mapped_column(Text)
-    refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
-    token_expiry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    scopes: Mapped[str] = mapped_column(Text, default="")
-    connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-
-
-class Approval(Base):
-    """Audit record of one approval: who approved which plan, when, and a
-    snapshot of the section keys that were approved."""
-
-    __tablename__ = "approvals"
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
-    plan_id: Mapped[str] = mapped_column(String, index=True)
-    meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    approved_by: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    sections: Mapped[list[str]] = mapped_column(JSON, default=list)
-
-
-class KnowledgeItem(Base):
-    """Long-term customer knowledge. Written ONLY from approved artifacts —
-    never raw AI output. `kind`: meeting-summary | crm-update | prd | timeline |
-    follow-up-email | commitment. Commitments carry status open|completed."""
-
-    __tablename__ = "knowledge_items"
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
-    customer_id: Mapped[str] = mapped_column(String, index=True)
-    kind: Mapped[str] = mapped_column(String, index=True)
-    title: Mapped[str] = mapped_column(String)
-    content: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    status: Mapped[str] = mapped_column(String, default="active")  # active | open | completed
-    source_meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    source_plan_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    embedding: Mapped[list[float] | None] = _embedding_column()
-
-
-class SyncJob(Base):
-    """One outbound synchronization prepared at approval time and executed
-    after it — never before. status: pending | running | done | failed | skipped."""
-
-    __tablename__ = "sync_jobs"
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default")
-    plan_id: Mapped[str] = mapped_column(String, index=True)
-    customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    kind: Mapped[str] = mapped_column(String)  # crm-update | publish-prd | create-tasks | send-email
-    destination: Mapped[str] = mapped_column(String)  # salesforce | notion | jira | email | ...
-    status: Mapped[str] = mapped_column(String, default="pending")
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __tablename__ = "integrations"
+    workspace_id: Mapped[str] = mapped_column(String, primary_key=True, default="ws_default", server_default="ws_default")
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    category: Mapped[str] = mapped_column(String)
+    description: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String)
+    last_sync: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    account: Mapped[str | None] = mapped_column(String, nullable=True)
+    stats: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    credentials: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
 class ActivityEvent(Base):
+    """A light audit trail of what Orbit and humans did (scans, approvals)."""
+
     __tablename__ = "activity_events"
     id: Mapped[str] = mapped_column(String, primary_key=True)
     actor: Mapped[dict[str, Any]] = mapped_column(JSON)
@@ -318,5 +181,4 @@ class ActivityEvent(Base):
     target_type: Mapped[str] = mapped_column(String)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     project_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    # Ties the row to its meeting so deleting the meeting removes its activity.
     meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)

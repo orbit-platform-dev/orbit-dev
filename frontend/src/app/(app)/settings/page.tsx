@@ -20,15 +20,12 @@ import {
   type SettingsTab,
 } from "@/components/settings/shared";
 import { WorkspaceSection } from "@/components/settings/workspace-section";
-import { MembersSection } from "@/components/settings/members-section";
 import { IntegrationsSection } from "@/components/settings/integrations-section";
 
 function renderSection(tab: SettingsTab) {
   switch (tab) {
     case "workspace":
       return <WorkspaceSection />;
-    case "members":
-      return <MembersSection />;
     case "integrations":
       return <IntegrationsSection />;
   }

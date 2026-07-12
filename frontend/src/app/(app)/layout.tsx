@@ -2,6 +2,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { CommandMenu } from "@/components/layout/command-menu";
 import { AppAmbient } from "@/components/layout/ambient";
+import { SyncEffects } from "@/components/shared/sync-effects";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -13,7 +14,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="relative z-10 flex min-w-0 flex-1 flex-col">
         <Topbar />
         <main className="no-scrollbar flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">{children}</div>
+          <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
+            <SyncEffects />
+            {children}
+          </div>
         </main>
       </div>
       <CommandMenu />

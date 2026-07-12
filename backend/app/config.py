@@ -43,6 +43,24 @@ class Settings(BaseSettings):
     zoom_client_secret: str | None = None
     zoom_redirect_uri: str = "http://localhost:8000/zoom/oauth/callback"
 
+    # --- Linear OAuth (optional; the personal API key remains a supported path) -
+    # Create an OAuth app at https://linear.app/settings/api/applications/new.
+    # The redirect URL there must exactly match LINEAR_REDIRECT_URI. Linear
+    # access tokens are long-lived and it issues no refresh token, so none is
+    # stored. When these are unset, "Connect with Linear" is hidden and only the
+    # API-key path is offered (the app degrades honestly).
+    linear_client_id: str | None = None
+    linear_client_secret: str | None = None
+    linear_redirect_uri: str = "http://localhost:8000/integrations/linear/oauth/callback"
+
+    # --- Slack OAuth ("Connect Slack"). Create an app at https://api.slack.com/apps,
+    #     add the callback below under OAuth & Permissions, and the bot scopes
+    #     channels:history, channels:read, groups:history, users:read. When unset,
+    #     Slack shows as coming-soon (degrades honestly). ---
+    slack_client_id: str | None = None
+    slack_client_secret: str | None = None
+    slack_redirect_uri: str = "http://localhost:8000/integrations/slack/oauth/callback"
+
     # --- AI / LLM provider (provider-agnostic via PydanticAI) ----------------
     # The agent pipeline only calls a live model when ENABLE_AI=true; otherwise
     # it uses deterministic, transcript-derived fallbacks so the whole product

@@ -3,20 +3,22 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
+import { useOrganization } from "@clerk/nextjs";
 import { navSections } from "@/lib/nav";
 import { cn } from "@/lib/utils";
-import { workspace } from "@/lib/auth";
 import { OrbitMark } from "@/components/shared/logo";
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const { organization } = useOrganization();
+  const workspaceName = organization?.name ?? "Personal workspace";
 
   return (
     <div className="flex h-full w-64 flex-col border-r border-border/60 bg-card/55 backdrop-blur-xl">
       <div className="px-3 pt-4">
         <div className="flex items-center gap-2.5 px-2 py-2">
           <OrbitMark className="h-8 w-8" />
-          <div className="truncate text-sm font-semibold leading-tight">{workspace.name}</div>
+          <div className="truncate text-sm font-semibold leading-tight">{workspaceName}</div>
         </div>
       </div>
 

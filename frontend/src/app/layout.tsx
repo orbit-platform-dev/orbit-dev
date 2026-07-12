@@ -1,10 +1,11 @@
+import {ClerkProvider} from "@clerk/nextjs";
 import type { Metadata, Viewport } from "next";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Orbit — the AI Operating System for companies",
+    default: "Orbit · the AI Operating System for companies",
     template: "%s · Orbit",
   },
   description:
@@ -22,7 +23,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
-        <Providers>{children}</Providers>
+        <ClerkProvider appearance={{ variables: { colorPrimary: "#6d5ef9" } }}>
+          <Providers>{children}</Providers>
+        </ClerkProvider>
       </body>
     </html>
   );

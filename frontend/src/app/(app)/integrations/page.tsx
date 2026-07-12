@@ -1,272 +1,209 @@
 "use client";
 
-// Honesty rule: only integrations with a real backend implementation are
-// connectable (OAuth: Calendar / Zoom / Meet; API key: Linear). Everything
-// else renders under "On the roadmap" — no flag-toggle fake connects.
-
 import { useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
-import { KeyRound, Loader2, Plug, Search } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useQueryClient } from "@tanstack/react-query";
-import type { Integration } from "@/lib/types";
-import { qk, useIntegrations } from "@/lib/hooks";
-import * as api from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { Plug, Search } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
-import { EmptyState } from "@/components/shared/empty-state";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
-import { IntegrationCard } from "@/components/integrations/integration-card";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { IntegrationLogo } from "@/components/shared/integration-logo";
+import { useIntegrations, qk } from "@/lib/hooks";
+import * as api from "@/lib/api";
+import { cn } from "@/lib/utils";
+import type { Integration } from "@/lib/types";
 
-const LIVE = new Set(["calendar", "zoom", "google-meet", "linear"]);
-const normalizeStatus = (i: Integration): Integration =>
-  LIVE.has(i.key)
-    ? { ...i, status: i.status === "connected" || i.status === "syncing" ? "connected" : "disconnected" }
-    : { ...i, status: "coming-soon" };
+// Plainer, no-jargon category labels for the filter chips.
+const CATEGORY_LABEL: Record<string, string> = {
+  Engineering: "Engineering",
+  Communication: "Communication",
+  CRM: "CRM",
+  Conferencing: "Calls",
+  Product: "Docs",
+};
+const catLabel = (c: string) => CATEGORY_LABEL[c] ?? c;
 
-export default function IntegrationsPage() {
-  const { data, isLoading } = useIntegrations();
+function LinearDialog({ open, onOpenChange, oauthAvailable, onOAuth }: { open: boolean; onOpenChange: (o: boolean) => void; oauthAvailable: boolean; onOAuth: () => void }) {
   const qc = useQueryClient();
-
-  const [items, setItems] = useState<Integration[]>([]);
-  const [query, setQuery] = useState("");
-  const [linearOpen, setLinearOpen] = useState(false);
-
-  useEffect(() => {
-    if (data) setItems(data.map(normalizeStatus));
-  }, [data]);
-
-  // Landing back from an OAuth consent screen (?calendar=… / ?zoom=… / ?meet=…).
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const results: [string, string][] = [["calendar", "Google Calendar"], ["zoom", "Zoom"], ["meet", "Google Meet"]];
-    let handled = false;
-    for (const [key, label] of results) {
-      const result = params.get(key);
-      if (!result) continue;
-      handled = true;
-      if (result === "connected") toast.success(`${label} connected`);
-      else toast.error(`${label} connection failed`, { description: params.get("reason") ?? undefined });
-    }
-    if (!handled) return;
-    window.history.replaceState(null, "", "/integrations");
-    qc.invalidateQueries({ queryKey: qk.integrations });
-    qc.invalidateQueries({ queryKey: qk.calendarStatus });
-    qc.invalidateQueries({ queryKey: qk.zoomStatus });
-    qc.invalidateQueries({ queryKey: qk.meetStatus });
-  }, [qc]);
-
-  const refresh = () => {
-    qc.invalidateQueries({ queryKey: qk.integrations });
-    qc.invalidateQueries({ queryKey: qk.calendarStatus });
-    qc.invalidateQueries({ queryKey: qk.zoomStatus });
-    qc.invalidateQueries({ queryKey: qk.meetStatus });
-  };
-
-  const OAUTH_AUTH_URL: Partial<Record<Integration["key"], () => Promise<{ url: string }>>> = {
-    calendar: api.getCalendarAuthUrl,
-    zoom: api.getZoomAuthUrl,
-    "google-meet": api.getMeetAuthUrl,
-  };
-  const OAUTH_DISCONNECT: Partial<Record<Integration["key"], () => Promise<unknown>>> = {
-    calendar: api.disconnectCalendar,
-    zoom: api.disconnectZoom,
-    "google-meet": api.disconnectMeet,
-    linear: api.disconnectLinear,
-  };
-
-  const connect = async (i: Integration) => {
-    if (i.key === "linear") {
-      setLinearOpen(true);
-      return;
-    }
-    const authUrl = OAUTH_AUTH_URL[i.key];
-    if (!authUrl) return;
-    try {
-      const { url } = await authUrl();
-      window.location.href = url;
-    } catch (err) {
-      toast.error(`${i.name} isn't configured`, { description: (err as Error).message });
-    }
-  };
-
-  const disconnect = async (i: Integration) => {
-    setItems((prev) => prev.map((x) => (x.key === i.key ? { ...x, status: "disconnected" } : x)));
-    try {
-      await OAUTH_DISCONNECT[i.key]?.();
-      toast(`${i.name} disconnected`);
-    } catch {
-      toast.error(`Couldn't disconnect ${i.name}`);
-    }
-    refresh();
-  };
-
-  const q = query.trim().toLowerCase();
-  const matches = (i: Integration) =>
-    !q || i.name.toLowerCase().includes(q) || i.description.toLowerCase().includes(q) || i.category.toLowerCase().includes(q);
-
-  const live = useMemo(() => items.filter((i) => LIVE.has(i.key)).filter(matches), [items, q]); // eslint-disable-line react-hooks/exhaustive-deps
-  const roadmap = useMemo(() => items.filter((i) => !LIVE.has(i.key)).filter(matches), [items, q]); // eslint-disable-line react-hooks/exhaustive-deps
-  const connectedCount = items.filter((i) => i.status === "connected" || i.status === "syncing").length;
-
-  return (
-    <div>
-      <PageHeader
-        title="Integrations"
-        description="Orbit reads signals from your tools and writes back only what you approve. Your tools stay the system of record."
-      >
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-          <SummaryChip className="border-success/30 bg-success/10 text-success" value={connectedCount} label="connected" />
-          <SummaryChip className="border-border bg-muted/40 text-muted-foreground" value={live.length} label="live" />
-          <SummaryChip className="border-border bg-muted/40 text-muted-foreground" value={roadmap.length} label="on the roadmap" />
-        </div>
-      </PageHeader>
-
-      <div className="mb-5 flex justify-end">
-        <div className="relative w-full lg:max-w-xs">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search integrations…"
-            className="pl-9"
-            aria-label="Search integrations"
-          />
-        </div>
-      </div>
-
-      {isLoading ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-[208px]" />
-          ))}
-        </div>
-      ) : live.length === 0 && roadmap.length === 0 ? (
-        <EmptyState icon={Plug} title="No integrations found" description="Clear your search to see everything." />
-      ) : (
-        <div className="space-y-8">
-          {live.length > 0 && (
-            <IntegrationSection
-              title="Works today"
-              hint="Real connections — data actually flows."
-              items={live}
-              onConnect={connect}
-              onDisconnect={disconnect}
-            />
-          )}
-          {roadmap.length > 0 && (
-            <IntegrationSection
-              title="On the roadmap"
-              hint="Not built yet. Shown so you know where Orbit is heading — nothing here pretends to work."
-              items={roadmap}
-              onConnect={connect}
-              onDisconnect={disconnect}
-            />
-          )}
-        </div>
-      )}
-
-      <LinearConnectDialog open={linearOpen} onOpenChange={setLinearOpen} onConnected={refresh} />
-    </div>
-  );
-}
-
-function IntegrationSection({ title, hint, items, onConnect, onDisconnect }: {
-  title: string; hint: string; items: Integration[];
-  onConnect: (i: Integration) => void; onDisconnect: (i: Integration) => void;
-}) {
-  return (
-    <section>
-      <div className="mb-3">
-        <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
-        <p className="text-xs text-muted-foreground">{hint}</p>
-      </div>
-      <motion.div
-        initial="hidden"
-        animate="show"
-        variants={{ hidden: {}, show: { transition: { staggerChildren: 0.04 } } }}
-        className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
-      >
-        {items.map((i) => (
-          <IntegrationCard
-            key={i.key}
-            integration={i}
-            onConnect={() => onConnect(i)}
-            onDisconnect={() => onDisconnect(i)}
-            onReconnect={() => onConnect(i)}
-            onConfigure={() => toast(`${i.name}`, { description: "Connection is managed here; there's nothing else to configure yet." })}
-          />
-        ))}
-      </motion.div>
-    </section>
-  );
-}
-
-function LinearConnectDialog({ open, onOpenChange, onConnected }: {
-  open: boolean; onOpenChange: (v: boolean) => void; onConnected: () => void;
-}) {
-  const [apiKey, setApiKey] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    if (!apiKey.trim()) return;
-    setBusy(true);
-    try {
-      const res = await api.connectLinear(apiKey.trim());
-      toast.success(`Linear connected${res.account ? ` — ${res.account}` : ""}`);
-      onConnected();
+  const [key, setKey] = useState("");
+  const connect = useMutation({
+    mutationFn: () => api.connectLinear(key.trim()),
+    onSuccess: (i) => {
+      qc.invalidateQueries({ queryKey: qk.integrations });
+      toast.success(`Linear connected${i.account ? ` · ${i.account}` : ""}`);
       onOpenChange(false);
-      setApiKey("");
-    } catch (err) {
-      toast.error("Linear rejected the key", { description: (err as Error).message });
-    } finally {
-      setBusy(false);
-    }
-  };
-
+      setKey("");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not connect Linear"),
+  });
   return (
-    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setApiKey(""); }}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Connect Linear</DialogTitle>
-          <DialogDescription>
-            Orbit validates the key against Linear and uses it only to create the issues you approve.
-          </DialogDescription>
-        </DialogHeader>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Connect Linear</DialogTitle></DialogHeader>
+        {oauthAvailable && (
+          // Preferred path: one click, no secret to copy. Full browser redirect.
+          <div className="space-y-3">
+            <Button className="w-full" onClick={onOAuth}>
+              <Plug className="h-4 w-4" /> Connect with Linear
+            </Button>
+            <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-muted-foreground">
+              <span className="h-px flex-1 bg-border" /> or use an API key <span className="h-px flex-1 bg-border" />
+            </div>
+          </div>
+        )}
         <div className="space-y-1.5">
           <Label htmlFor="linear-key">Personal API key</Label>
-          <Input
-            id="linear-key"
-            type="password"
-            placeholder="lin_api_…"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
-          />
-          <p className="text-[11px] text-muted-foreground">
-            Linear → Settings → API → Personal API keys. Stored on the backend, never shown again.
+          <Input id="linear-key" placeholder="lin_api_…" value={key} onChange={(e) => setKey(e.target.value)} />
+          <p className="text-xs text-muted-foreground">
+            Linear → Settings → Security &amp; access → Personal API keys. Validated live; stored server-side, never exposed.
           </p>
         </div>
-        <Button className="w-full gap-2" disabled={!apiKey.trim() || busy} onClick={submit}>
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-          {busy ? "Validating…" : "Connect"}
-        </Button>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={() => connect.mutate()} disabled={connect.isPending || !key.trim()}>
+            {connect.isPending ? "Connecting…" : "Connect"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-function SummaryChip({ value, label, className }: { value: number; label: string; className?: string }) {
+function IntegrationRow({ integration, onConnect }: { integration: Integration; onConnect: (key: string) => void }) {
+  const qc = useQueryClient();
+  const connected = integration.status === "connected" || integration.status === "syncing";
+  const isLinear = integration.key === "linear";
+  // Connectable now = we have a connector AND a working path today (Linear has
+  // the key fallback; OAuth-only providers need their OAuth configured).
+  const canConnectNow = !!integration.connectable && (isLinear || !!integration.oauthAvailable);
+  const disconnect = useMutation({
+    mutationFn: () => api.disconnectIntegration(integration.key),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.integrations });
+      toast.success(`${integration.name} disconnected`);
+    },
+  });
   return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-medium", className)}>
-      <span className="tabular-nums">{value}</span>
-      <span className="font-normal opacity-80">{label}</span>
-    </span>
+    <Card className={cn("flex items-center gap-4 p-4", !canConnectNow && !connected && "opacity-80")}>
+      <IntegrationLogo k={integration.key} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate font-medium">{integration.name}</span>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            {catLabel(integration.category)}
+          </span>
+        </div>
+        <p className="mt-0.5 truncate text-sm text-muted-foreground">{integration.description}</p>
+      </div>
+      {connected ? (
+        <Button variant="outline" size="sm" onClick={() => disconnect.mutate()} disabled={disconnect.isPending}>Disconnect</Button>
+      ) : canConnectNow ? (
+        <Button size="sm" onClick={() => onConnect(integration.key)}><Plug className="h-4 w-4" /> Connect</Button>
+      ) : (
+        <span className="shrink-0 rounded-full border border-border px-2.5 py-0.5 text-[11px] text-muted-foreground">Coming soon</span>
+      )}
+    </Card>
+  );
+}
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const OAUTH_ERROR_MSG: Record<string, string> = {
+  state: "Sign-in expired, please try again",
+  exchange: "The provider rejected the sign-in, please try again",
+};
+
+export default function IntegrationsPage() {
+  const qc = useQueryClient();
+  const { data, isLoading } = useIntegrations();
+  const [category, setCategory] = useState("All");
+  const [query, setQuery] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  // Handle the return from any provider's OAuth redirect (?connected=<key> / ?error).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("connected");
+    const error = params.get("error");
+    if (!connected && !error) return;
+    if (connected) {
+      qc.invalidateQueries({ queryKey: qk.integrations });
+      toast.success(`${cap(connected)} connected`);
+    } else if (error) {
+      toast.error(OAUTH_ERROR_MSG[error] ?? `${cap(error)} sign-in was cancelled or failed`);
+    }
+    window.history.replaceState({}, "", window.location.pathname);
+  }, [qc]);
+
+  const linearOAuthAvailable = !!(data ?? []).find((i) => i.key === "linear")?.oauthAvailable;
+  // Mint an authenticated, workspace-bound authorize URL, then redirect the browser.
+  const startOAuth = async (key: string) => {
+    try {
+      const { url } = await api.getOAuthUrl(key);
+      window.location.href = url;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : `Could not start ${cap(key)} sign-in`);
+    }
+  };
+  // Linear opens the dialog (OAuth + key); OAuth-only providers go straight out.
+  const onConnect = (key: string) => {
+    if (key === "linear") setDialogOpen(true);
+    else startOAuth(key);
+  };
+
+  const categories = useMemo(() => {
+    const set = Array.from(new Set((data ?? []).map((i) => i.category)));
+    return ["All", ...set];
+  }, [data]);
+
+  const filtered = (data ?? [])
+    .filter((i) => category === "All" || i.category === category)
+    .filter((i) => !query || i.name.toLowerCase().includes(query.toLowerCase()))
+    // Connectable first, then alphabetical.
+    .sort((a, b) => Number(!!b.connectable) - Number(!!a.connectable) || a.name.localeCompare(b.name));
+
+  return (
+    <div>
+      <PageHeader
+        title="Integrations"
+        description="The tools Orbit reads. Connect one and Orbit keeps memory up to date on its own. Your tools stay the system of record."
+      />
+
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 sm:max-w-xs">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input className="pl-9" placeholder="Search integrations…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {categories.map((c) => (
+            <button
+              key={c}
+              onClick={() => setCategory(c)}
+              className={cn(
+                "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                category === c ? "border-primary/30 bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {c === "All" ? "All" : catLabel(c)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="grid gap-3 sm:grid-cols-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}</div>
+      ) : filtered.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">No integrations in this category.</p>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {filtered.map((i) => <IntegrationRow key={i.key} integration={i} onConnect={onConnect} />)}
+        </div>
+      )}
+
+      <LinearDialog open={dialogOpen} onOpenChange={setDialogOpen} oauthAvailable={linearOAuthAvailable} onOAuth={() => startOAuth("linear")} />
+    </div>
   );
 }

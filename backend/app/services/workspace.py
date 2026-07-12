@@ -18,8 +18,22 @@ DEFAULT_WORKSPACE_ID = "ws_default"
 
 
 def workspace_id_for(user: dict[str, Any]) -> str:
-    # Clerk org claim when auth is enabled; the demo principal has none.
-    return user.get("org_id") or DEFAULT_WORKSPACE_ID
+    """Resolve the caller's workspace (tenant). Isolation by default:
+
+    - A Clerk **organization** is a customer's shared workspace → its `org_id`.
+      This is the founders' model: an invited customer gets their own org, and
+      everyone they invite into it shares that one Orbit workspace.
+    - An authenticated user with **no active org** gets their own personal
+      workspace (`user_<id>`), never a shared bucket.
+    - Only the demo principal (auth disabled in dev) lands on the default.
+    """
+    org = user.get("org_id")
+    if org:
+        return org
+    sub = user.get("sub")
+    if sub and sub != "demo_user":
+        return f"user_{sub}"
+    return DEFAULT_WORKSPACE_ID
 
 
 async def get_workspace_id(user: dict[str, Any] = Depends(get_current_user)) -> str:

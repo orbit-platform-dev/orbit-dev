@@ -1,7 +1,8 @@
-import { AuthScreen } from "@/components/auth/auth-screen";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Sign up" };
-
+// Orbit is invite-only: there is no self-serve sign-up. Anyone landing here
+// (old links, Clerk defaults) is sent to sign-in. Access is granted by a
+// workspace admin inviting the user in Clerk.
 export default function SignUpPage() {
-  return <AuthScreen mode="sign-up" />;
+  redirect("/sign-in");
 }

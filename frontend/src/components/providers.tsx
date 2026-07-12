@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
-import { clerkEnabled } from "@/lib/auth";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = React.useState(
@@ -32,14 +31,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
     </QueryClientProvider>
   );
 
-  // Wrap with Clerk only when configured, so the app runs with zero setup.
-  if (clerkEnabled) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { ClerkProvider } = require("@clerk/nextjs");
-    return (
-      <ClerkProvider appearance={{ variables: { colorPrimary: "#6d5ef9" } }}>{tree}</ClerkProvider>
-    );
-  }
-
+  // ClerkProvider is applied once in app/layout.tsx (inside <body>).
   return tree;
 }
