@@ -34,11 +34,9 @@ export function Topbar() {
   const crumb = useBreadcrumb();
   const { user } = useUser();
   const { signOut } = useClerk();
-  const { organization } = useOrganization();
   const name = user?.fullName || user?.primaryEmailAddress?.emailAddress || "Account";
   const email = user?.primaryEmailAddress?.emailAddress ?? "";
-  // The customer's workspace = their Clerk organization; solo users see a personal one.
-  const workspaceName = organization?.name ?? "Personal workspace";
+  const workspaceName = "Orbit"
 
   const openCommand = () => window.dispatchEvent(new Event(OPEN_COMMAND_EVENT));
 

@@ -293,14 +293,7 @@ export default function FeedPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Feed"
-        description="The short list of what needs you. Orbit compares what you promised and decided with what's actually being built, and flags the gaps, risks and wins, each with evidence. You approve, edit, or dismiss."
-      />
-
-      <div className="mb-5 flex items-center justify-end gap-3">
-        <TimeFilter value={range} onChange={setRange} />
-      </div>
+      <PageHeader title="Feed" actions={<TimeFilter value={range} onChange={setRange} />} />
 
       {isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

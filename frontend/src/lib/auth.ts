@@ -22,12 +22,3 @@ export const demoUser: CurrentUser = {
   email: "yash@batton.co.jp",
   title: "Founder & CEO",
 };
-
-export const workspace = {
-  id: "ws_1",
-  name: "Orbit",
-  slug: "orbit",
-  plan: "Scale",
-  seats: 24,
-  seatsUsed: 8,
-};

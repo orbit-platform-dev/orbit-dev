@@ -223,21 +223,16 @@ export default function MemoryPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Memory"
-        description="What Orbit knows about your company, read automatically from your connected tools and calls. Browse the customers, commitments and requests it resolved, each traceable to where it came from. You never type any of it in."
-        actions={<AddCallDialog />}
-      />
-      <div className="mb-5 flex items-center justify-end gap-3">
-        <TimeFilter value={range} onChange={setRange} />
-      </div>
+      <PageHeader title="Memory" actions={<AddCallDialog />} />
       <Tabs defaultValue="knowledge">
-        <TabsList className="mb-2">
-          <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
-          <TabsTrigger value="sources">Sources</TabsTrigger>
-        </TabsList>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <TabsList>
+            <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
+            <TabsTrigger value="sources">Sources</TabsTrigger>
+          </TabsList>
+          <TimeFilter value={range} onChange={setRange} />
+        </div>
         <TabsContent value="knowledge">
-          <p className="mb-5 text-sm text-muted-foreground">Customers, commitments and requests Orbit resolved from your tools.</p>
           <EntitiesView range={range} />
         </TabsContent>
         <TabsContent value="sources">
