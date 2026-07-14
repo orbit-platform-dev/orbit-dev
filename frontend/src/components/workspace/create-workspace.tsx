@@ -4,41 +4,46 @@ import * as React from "react";
 import { toast } from "sonner";
 import { Loader2, Plus } from "lucide-react";
 import { useOrganizationList } from "@clerk/nextjs";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-function errText(e: unknown, fallback: string): string {
-  const err = e as { errors?: { longMessage?: string; message?: string }[]; message?: string };
-  return err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message || err?.message || fallback;
-}
-
-/** First run: a signed-in user with no organization creates one and becomes its
- *  admin. A workspace IS a Clerk organization; its data is fully isolated from
- *  every other company. Shown both on the onboarding gate (see RequireWorkspace)
- *  and in Settings → Members when there's no active org. */
+/** First run for a superadmin with no workspace: create one and become its admin.
+ *  A workspace IS a Clerk organization; its data is fully isolated. Creation goes
+ *  through the superadmin-gated server route, not the client SDK. (Customers never
+ *  see this; they are provisioned directly into their workspace.) */
 export function CreateWorkspace({
   heading = "Create your workspace",
-  subheading = "A workspace holds your company's memory, connections and members. Its data is fully isolated from every other workspace — nothing is shared across companies.",
+  subheading = "A workspace holds a company's memory, connections and members. Its data is fully isolated from every other workspace.",
 }: {
   heading?: string;
   subheading?: string;
 }) {
-  const { createOrganization, setActive, isLoaded } = useOrganizationList();
+  const { setActive, userMemberships, isLoaded } = useOrganizationList({ userMemberships: true });
+  const qc = useQueryClient();
   const [name, setName] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isLoaded || !name.trim() || busy) return;
+    if (!name.trim() || busy) return;
     setBusy(true);
     try {
-      const org = await createOrganization({ name: name.trim() });
-      await setActive({ organization: org.id });
-      toast.success(`Created ${org.name}`);
+      const res = await fetch("/api/workspaces", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { id?: string; name?: string; error?: string };
+      if (!res.ok || !data.id) throw new Error(data.error || "Couldn't create the workspace.");
+      await userMemberships?.revalidate?.();
+      await setActive?.({ organization: data.id });
+      qc.clear();
+      toast.success(`Created ${data.name}`);
     } catch (err) {
-      toast.error(errText(err, "Couldn't create the workspace. Ensure Organizations are enabled in Clerk."));
+      toast.error((err as Error).message || "Couldn't create the workspace.");
     } finally {
       setBusy(false);
     }

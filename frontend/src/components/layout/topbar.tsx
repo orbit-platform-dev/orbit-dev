@@ -9,6 +9,7 @@ import { useUser, useClerk, useOrganization } from "@clerk/nextjs";
 import { allNavItems } from "@/lib/nav";
 import { Button } from "@/components/ui/button";
 import { UserAvatar } from "@/components/ui/avatar";
+import { OrbitWordmark } from "@/components/shared/logo";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,9 +35,13 @@ export function Topbar() {
   const crumb = useBreadcrumb();
   const { user } = useUser();
   const { signOut } = useClerk();
+  const { organization } = useOrganization();
+
   const name = user?.fullName || user?.primaryEmailAddress?.emailAddress || "Account";
   const email = user?.primaryEmailAddress?.emailAddress ?? "";
-  const workspaceName = "Orbit"
+  // Everyone belongs to exactly one workspace (Orbit for the team, their own for
+  // a customer). There is no switching, so we just show its name.
+  const workspaceName = organization?.name ?? "Workspace";
 
   const openCommand = () => window.dispatchEvent(new Event(OPEN_COMMAND_EVENT));
 
@@ -46,8 +51,14 @@ export function Topbar() {
         <Menu className="h-5 w-5" />
       </Button>
 
+      {/* Brand on mobile (the sidebar carries it on desktop). */}
+      <div className="lg:hidden">
+        <OrbitWordmark />
+      </div>
+
+      {/* Desktop: the workspace is small context; the Orbit brand lives in the sidebar. */}
       <div className="hidden items-center gap-2 text-sm lg:flex">
-        <span className="text-muted-foreground">{workspaceName}</span>
+        <span className="max-w-[180px] truncate text-muted-foreground">{workspaceName}</span>
         <span className="text-muted-foreground/40">/</span>
         <span className="font-medium">{crumb}</span>
       </div>
@@ -70,14 +81,14 @@ export function Topbar() {
           <Moon className="block h-4 w-4 dark:hidden" />
         </Button>
 
-        {/* User menu — Orbit's own control, backed by the Clerk session */}
+        {/* User menu — Orbit's own control, backed by the Clerk session. */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="ml-1 rounded-full outline-none ring-ring focus-visible:ring-2">
               <UserAvatar name={name} className="h-8 w-8" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-60">
+          <DropdownMenuContent align="end" className="w-64">
             <div className="flex items-center gap-2.5 px-2 py-2">
               <UserAvatar name={name} className="h-9 w-9" />
               <div className="min-w-0">
@@ -85,6 +96,7 @@ export function Topbar() {
                 {email ? <div className="truncate text-xs text-muted-foreground">{email}</div> : null}
               </div>
             </div>
+
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
               <Link href="/settings"><User className="h-4 w-4" />Profile</Link>

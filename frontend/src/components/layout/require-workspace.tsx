@@ -7,15 +7,6 @@ import { clerkEnabled } from "@/lib/auth";
 import { OrbitWordmark } from "@/components/shared/logo";
 import { CreateWorkspace } from "@/components/workspace/create-workspace";
 
-/**
- * A workspace IS a Clerk organization, so the app can't render tenant data
- * without an active one. This gate resolves that on entry:
- *   • Invited member → already has a membership; we activate the first one.
- *   • Brand-new user (e.g. the first admin of a company, invited to the app
- *     itself) → has no org; we sit them on Create-workspace before they enter.
- *   • Clerk not configured (local/demo) → no-op, so the app still runs on mocks.
- * Users who already have an active org never wait on the membership fetch.
- */
 export function RequireWorkspace({ children }: { children: React.ReactNode }) {
   const { isLoaded: authLoaded, isSignedIn } = useAuth();
   const { isLoaded: orgLoaded, organization } = useOrganization();
@@ -39,6 +30,7 @@ export function RequireWorkspace({ children }: { children: React.ReactNode }) {
   // No active org: decide from the membership list (avoid waiting on it above).
   if (!listLoaded) return <GateSpinner />;
   if (firstOrgId) return <GateSpinner />; // membership exists; effect is activating it
+
 
   return (
     <div className="mx-auto flex min-h-[75vh] w-full max-w-lg flex-col justify-center gap-8 py-10">

@@ -28,8 +28,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CreateWorkspace } from "@/components/workspace/create-workspace";
 import { SectionHeader } from "./shared";
 
-// Clerk's default organization roles. Admins manage members; members use the
-// workspace. (Custom roles can be added in the Clerk dashboard later.)
 const ROLES = [
   { value: "org:admin", label: "Admin" },
   { value: "org:member", label: "Member" },
@@ -41,19 +39,17 @@ function errText(e: unknown, fallback: string): string {
   return err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message || err?.message || fallback;
 }
 
-// ── Invite dialog ─────────────────────────────────────────────────────────
-function InviteDialog({ onInvited }: { onInvited: () => void }) {
-  const { organization } = useOrganization();
+function InviteMemberDialog({ workspaceName, onInvited }: { workspaceName: string; onInvited: () => void }) {
   const [open, setOpen] = React.useState(false);
   const [email, setEmail] = React.useState("");
   const [role, setRole] = React.useState("org:member");
   const [busy, setBusy] = React.useState(false);
 
   const invite = async () => {
-    if (!organization || !email.trim() || busy) return;
+    if (!email.trim() || busy) return;
     setBusy(true);
     try {
-      const res = await fetch("/api/org/invite", {
+      const res = await fetch("/api/org/members", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ emailAddress: email.trim(), role, origin: window.location.origin }),
@@ -80,9 +76,13 @@ function InviteDialog({ onInvited }: { onInvited: () => void }) {
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Invite a member</DialogTitle>
+          <DialogTitle>Invite someone to {workspaceName}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            They&apos;ll get an email with a link to join. When they accept, they sign in with their
+            email, no password to set up.
+          </p>
           <div className="space-y-1.5">
             <Label htmlFor="inv-email">Work email</Label>
             <Input
@@ -91,6 +91,7 @@ function InviteDialog({ onInvited }: { onInvited: () => void }) {
               placeholder="teammate@company.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && invite()}
             />
           </div>
           <div className="space-y-1.5">
@@ -110,7 +111,8 @@ function InviteDialog({ onInvited }: { onInvited: () => void }) {
           </div>
         </div>
         <DialogFooter>
-          <Button onClick={invite} disabled={!email.trim() || busy}>
+          <Button onClick={invite} disabled={!email.trim() || busy} className="gap-2">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             {busy ? "Sending…" : "Send invitation"}
           </Button>
         </DialogFooter>
@@ -119,7 +121,6 @@ function InviteDialog({ onInvited }: { onInvited: () => void }) {
   );
 }
 
-// ── Members + pending invitations ─────────────────────────────────────────
 function ManageMembers() {
   const { user } = useUser();
   const { organization, membership, memberships, invitations } = useOrganization({
@@ -129,6 +130,7 @@ function ManageMembers() {
   const [pendingId, setPendingId] = React.useState<string | null>(null);
 
   const isAdmin = membership?.role === "org:admin";
+  const workspaceName = organization?.name ?? "this workspace";
 
   const refresh = () => {
     memberships?.revalidate?.();
@@ -169,8 +171,8 @@ function ManageMembers() {
     <>
       <SectionHeader
         title="Members"
-        description={`People with access to ${organization?.name ?? "this workspace"}. Data is isolated to this workspace.`}
-        action={isAdmin ? <InviteDialog onInvited={refresh} /> : undefined}
+        description={`People with access to ${workspaceName}. Its memory, connections and data are isolated to this workspace.`}
+        action={isAdmin ? <InviteMemberDialog workspaceName={workspaceName} onInvited={refresh} /> : undefined}
       />
 
       <Card>
@@ -190,10 +192,7 @@ function ManageMembers() {
               const displayName = [pd?.firstName, pd?.lastName].filter(Boolean).join(" ") || pd?.identifier || "Member";
               const isSelf = pd?.userId === user?.id;
               return (
-                <div
-                  key={m.id}
-                  className="flex items-center gap-3 rounded-lg px-2 py-2.5 hover:bg-accent/40"
-                >
+                <div key={m.id} className="flex items-center gap-3 rounded-lg px-2 py-2.5 hover:bg-accent/40">
                   <UserAvatar name={displayName} className="h-9 w-9" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-sm font-medium">
@@ -260,7 +259,6 @@ function ManageMembers() {
   );
 }
 
-// ── Entry point ────────────────────────────────────────────────────────────
 export function MembersSection() {
   const { isLoaded, organization } = useOrganization();
 

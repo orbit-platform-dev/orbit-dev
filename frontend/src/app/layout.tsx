@@ -23,7 +23,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
-        <ClerkProvider appearance={{ variables: { colorPrimary: "#6d5ef9" } }}>
+        <ClerkProvider
+          appearance={{
+            variables: { colorPrimary: "#6d5ef9" },
+            layout: { unsafe_disableDevelopmentModeWarnings: true },
+            elements: { footer: "hidden", logoBox: "hidden", badge: "hidden" },
+          }}
+        >
           <Providers>{children}</Providers>
         </ClerkProvider>
       </body>

@@ -17,17 +17,33 @@ from ..models import Workspace
 DEFAULT_WORKSPACE_ID = "ws_default"
 
 
+def active_org_id(user: dict[str, Any]) -> str | None:
+    """The active Clerk organization id from a verified token, or None.
+
+    Clerk v2 session tokens carry the org in a compact `o` claim
+    (`{"o": {"id": "org_...", "rol": "admin"}}`); older/templated tokens use a
+    flat `org_id`. We must read both — reading only `org_id` silently collapses
+    every org onto the personal bucket (a cross-tenant data leak)."""
+    org = user.get("org_id")
+    if org:
+        return org
+    o = user.get("o")
+    if isinstance(o, dict) and o.get("id"):
+        return o["id"]
+    return None
+
+
 def workspace_id_for(user: dict[str, Any]) -> str:
     """Resolve the caller's workspace (tenant). Isolation by default:
 
-    - A Clerk **organization** is a customer's shared workspace → its `org_id`.
+    - A Clerk **organization** is a customer's shared workspace → its id.
       This is the founders' model: an invited customer gets their own org, and
       everyone they invite into it shares that one Orbit workspace.
     - An authenticated user with **no active org** gets their own personal
       workspace (`user_<id>`), never a shared bucket.
     - Only the demo principal (auth disabled in dev) lands on the default.
     """
-    org = user.get("org_id")
+    org = active_org_id(user)
     if org:
         return org
     sub = user.get("sub")

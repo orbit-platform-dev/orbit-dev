@@ -24,52 +24,29 @@ class Settings(BaseSettings):
     clerk_jwks_url: str | None = None
     clerk_issuer: str | None = None
 
-    # --- Google Calendar + Zoom OAuth -----------------------------------------
-    # Where the Next.js app lives — the post-OAuth redirect target.
+
     frontend_url: str = "http://localhost:3000"
-    # Google OAuth client (create one at https://console.cloud.google.com →
-    # APIs & Services → Credentials → OAuth client ID, type "Web application").
-    # Authorized redirect URI must exactly match GOOGLE_REDIRECT_URI below.
+
     google_client_id: str | None = None
     google_client_secret: str | None = None
     google_redirect_uri: str = "http://localhost:8000/calendar/oauth/callback"
-    # Google Meet reuses the same OAuth client with its own callback + scopes;
-    # this URI must also be authorized on the client, and the 'Google Meet REST
-    # API' must be enabled in the Cloud project.
+
     meet_redirect_uri: str = "http://localhost:8000/meet/oauth/callback"
-    # Zoom OAuth app (create one at https://marketplace.zoom.us → Develop →
-    # Build App → General App). Redirect URL must match ZOOM_REDIRECT_URI.
+
     zoom_client_id: str | None = None
     zoom_client_secret: str | None = None
     zoom_redirect_uri: str = "http://localhost:8000/zoom/oauth/callback"
 
-    # --- Linear OAuth (optional; the personal API key remains a supported path) -
-    # Create an OAuth app at https://linear.app/settings/api/applications/new.
-    # The redirect URL there must exactly match LINEAR_REDIRECT_URI. Linear
-    # access tokens are long-lived and it issues no refresh token, so none is
-    # stored. When these are unset, "Connect with Linear" is hidden and only the
-    # API-key path is offered (the app degrades honestly).
+
     linear_client_id: str | None = None
     linear_client_secret: str | None = None
     linear_redirect_uri: str = "http://localhost:8000/integrations/linear/oauth/callback"
 
-    # --- Slack OAuth ("Connect Slack"). Create an app at https://api.slack.com/apps,
-    #     add the callback below under OAuth & Permissions, and the bot scopes
-    #     channels:history, channels:read, groups:history, users:read. When unset,
-    #     Slack shows as coming-soon (degrades honestly). ---
+
     slack_client_id: str | None = None
     slack_client_secret: str | None = None
     slack_redirect_uri: str = "http://localhost:8000/integrations/slack/oauth/callback"
 
-    # --- AI / LLM provider (provider-agnostic via PydanticAI) ----------------
-    # The agent pipeline only calls a live model when ENABLE_AI=true; otherwise
-    # it uses deterministic, transcript-derived fallbacks so the whole product
-    # runs offline. The provider is chosen entirely by DEFAULT_MODEL's
-    # "provider:name" prefix, so switching providers is an env change, not code.
-    #
-    #   Free dev (Gemini):   DEFAULT_MODEL=google-gla:gemini-2.0-flash  LLM_API_KEY=...
-    #   Free dev (Ollama):   DEFAULT_MODEL=ollama:llama3.2              (no key; local)
-    #   Production (Claude): DEFAULT_MODEL=anthropic:claude-opus-4-8    LLM_API_KEY=sk-ant-...
     enable_ai: bool = False
     default_model: str = "google-gla:gemini-2.0-flash"
     llm_api_key: str | None = None

@@ -19,9 +19,9 @@ _jwks_cache: dict[str, Any] | None = None
 DEMO_PRINCIPAL = {"sub": "demo_user", "email": "yash@batton.co.jp", "name": "Yash Pandey"}
 
 
-async def _get_jwks() -> dict[str, Any]:
+async def _get_jwks(force: bool = False) -> dict[str, Any]:
     global _jwks_cache
-    if _jwks_cache is None:
+    if _jwks_cache is None or force:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(settings.clerk_jwks_url)  # type: ignore[arg-type]
             resp.raise_for_status()
@@ -44,6 +44,9 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
         jwks = await _get_jwks()
         header = jwt.get_unverified_header(token)
         key = next((k for k in jwks["keys"] if k["kid"] == header["kid"]), None)
+        if key is None:
+            jwks = await _get_jwks(force=True)
+            key = next((k for k in jwks["keys"] if k["kid"] == header["kid"]), None)
         if key is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown signing key")
         claims = jwt.decode(
