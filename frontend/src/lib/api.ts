@@ -4,6 +4,9 @@
 // ============================================================================
 import type {
   Artifact,
+  ChatAnswer,
+  ChatConversationDetail,
+  ChatConversationSummary,
   Correction,
   Entity,
   EntityDetail,
@@ -66,6 +69,13 @@ export const pullArtifacts = () =>
 export const getEntities = (kind?: string) =>
   live<Entity[]>(`/entities${kind ? `?kind=${kind}` : ""}`);
 export const getEntity = (id: string) => live<EntityDetail>(`/entities/${id}`);
+
+// --- Ask Orbit (reasoning layer over company memory; private per-user chats) --
+export const sendChat = (body: { message: string; conversationId?: string | null }) =>
+  send<ChatAnswer>("/chat", "POST", body);
+export const listChatConversations = () => live<ChatConversationSummary[]>("/chat/conversations");
+export const getChatConversation = (id: string) => live<ChatConversationDetail>(`/chat/conversations/${id}`);
+export const deleteChatConversation = (id: string) => send<void>(`/chat/conversations/${id}`, "DELETE");
 
 // --- Feed (Reason, Recommend, Approve, Learn) ------------------------------
 export const getFeed = () => live<Feed>("/feed");

@@ -128,7 +128,7 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <div className="flex items-center gap-2"><KindChip kind={finding.kind} /></div>
           <DialogTitle className="pt-1 text-[17px] leading-snug">{finding.title}</DialogTitle>
@@ -137,21 +137,43 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
         <p className="text-sm leading-relaxed text-muted-foreground">{finding.detail}</p>
 
         {(finding.entities.length > 0 || finding.artifacts.length > 0) && (
-          <div className="rounded-lg border border-border bg-card/50 p-3">
+          <div className="min-w-0 rounded-lg border border-border bg-card/50 p-3">
             <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Evidence</div>
-            <div className="mt-2 space-y-1.5 text-sm">
+            <div className="mt-2 max-h-72 space-y-0.5 overflow-y-auto text-sm">
               {finding.entities.map((e) => (
-                <Link key={e.id} href={`/memory/${e.id}`} className="flex items-center gap-2 hover:underline">
-                  <span className="text-muted-foreground">{e.kind}</span>{e.name}
+                <Link
+                  key={e.id}
+                  href={`/memory/${e.id}`}
+                  className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-accent/60"
+                >
+                  <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{e.kind}</span>
+                  <span className="min-w-0 flex-1 truncate">{e.name}</span>
                 </Link>
               ))}
-              {finding.artifacts.map((a) => (
-                <div key={a.id} className="flex items-center gap-2">
-                  <span className="text-muted-foreground">{a.source}</span>
-                  <span className="truncate">{a.title}</span>
-                  {a.url ? <a href={a.url} target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-foreground"><ArrowUpRight className="h-3 w-3" /></a> : null}
-                </div>
-              ))}
+              {finding.artifacts.map((a) => {
+                const inner = (
+                  <>
+                    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{a.source}</span>
+                    <span className="min-w-0 flex-1 truncate" title={a.title}>{a.title}</span>
+                    {a.url ? <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                  </>
+                );
+                return a.url ? (
+                  <a
+                    key={a.id}
+                    href={a.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-accent/60"
+                  >
+                    {inner}
+                  </a>
+                ) : (
+                  <div key={a.id} className="flex items-center gap-2.5 rounded-md px-2 py-1.5">
+                    {inner}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

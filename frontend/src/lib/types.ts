@@ -144,3 +144,36 @@ export interface HeartbeatStatus {
   ticks: number;
   sync?: SyncProgress | null;
 }
+
+export interface ChatCitation {
+  id: ID;
+  source: string;
+  title: string;
+  url?: string | null;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  citations?: ChatCitation[];
+  grounded?: boolean;
+}
+
+export interface ChatAnswer {
+  conversationId: ID;
+  answer: string;
+  citations: ChatCitation[];
+  grounded: boolean;
+}
+
+export interface ChatConversationSummary {
+  id: ID;
+  title: string;
+  updatedAt: string;
+}
+
+export interface ChatConversationDetail {
+  id: ID;
+  title: string;
+  messages: ChatMessage[];
+}

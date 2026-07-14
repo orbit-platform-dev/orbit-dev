@@ -53,3 +53,16 @@ class IntelligenceBrief(_Camel):
     risks: list[str] = Field(default_factory=list)
     highlights: list[str] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
+
+
+class ChatAnswer(_Camel):
+    """Orbit's grounded answer to a question about the company."""
+
+    answer: str = Field(description="concise, specific answer in plain business English")
+    citation_ids: list[str] = Field(
+        default_factory=list,
+        description="ids of the EVIDENCE items actually used — only ids present in EVIDENCE, never invented",
+    )
+    grounded: bool = Field(
+        default=True, description="true if answered from the company's data; false if from general knowledge"
+    )

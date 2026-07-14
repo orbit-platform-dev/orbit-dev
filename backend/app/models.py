@@ -182,3 +182,18 @@ class ActivityEvent(Base):
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     project_id: Mapped[str | None] = mapped_column(String, nullable=True)
     meeting_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class ChatConversation(Base):
+    """An Ask-Orbit conversation, PRIVATE to one user. Scoped to (workspace_id,
+    user_id) so it is never shared with others in the same workspace. Messages
+    are a JSON list of {role, content, citations, grounded}."""
+
+    __tablename__ = "chat_conversations"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", index=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    title: Mapped[str] = mapped_column(String, default="New chat")
+    messages: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

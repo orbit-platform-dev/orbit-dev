@@ -1,6 +1,6 @@
 import {
-  siAsana, siConfluence, siGithub, siGooglecalendar, siGoogledocs, siGooglemeet, siHubspot,
-  siIntercom, siJira, siLinear, siNotion, siZoom,
+  siAsana, siConfluence, siGithub, siGitlab, siGooglecalendar, siGoogledocs, siGooglemeet, siHubspot,
+  siIntercom, siJira, siLinear, siNotion, siZendesk, siZoom,
 } from "simple-icons";
 import type { IntegrationKey } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -12,8 +12,10 @@ const ICONS: Partial<Record<IntegrationKey, Brand>> = {
   jira: siJira,
   linear: siLinear,
   github: siGithub,
+  gitlab: siGitlab,
   notion: siNotion,
   hubspot: siHubspot,
+  zendesk: siZendesk,
   calendar: siGooglecalendar,
   "google-meet": siGooglemeet,
   zoom: siZoom,
@@ -77,7 +79,8 @@ export function IntegrationLogo({ k, className }: { k: IntegrationKey; className
       </div>
     );
   }
-  const b = integrationBrand[k];
+  // Any unknown connector still renders — a monogram tile — so new sources never crash.
+  const b = integrationBrand[k] ?? { short: (k || "?").slice(0, 2).toUpperCase(), color: "#64748b" };
   return (
     <div
       className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border text-sm font-semibold", className)}

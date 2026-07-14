@@ -1,5 +1,6 @@
 import {
   Database,
+  MessagesSquare,
   Plug,
   Settings,
   Sparkles,
@@ -25,6 +26,7 @@ export const navSections: NavSection[] = [
   {
     items: [
       { label: "Feed", href: "/feed", icon: Sparkles },
+      { label: "Ask Orbit", href: "/chat", icon: MessagesSquare },
       { label: "Memory", href: "/memory", icon: Database },
     ],
   },
