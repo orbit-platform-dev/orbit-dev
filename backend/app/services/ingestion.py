@@ -17,12 +17,18 @@ from sqlalchemy import select, update
 
 from ..agents.extractor import extract
 from ..models import Artifact
-from . import linear, slack
+from . import embeddings, linear, slack
 
 logger = logging.getLogger("orbit.ingestion")
 
-# Which artifact source(s) each connector produces. Used to mark a connector's
-# memory stale on disconnect (memory is kept as history, never silently deleted).
+
+def _embed_input(title: str, content: str) -> str:
+    """The exact text embedded for an artifact — title plus a bounded slice of
+    content. Defined once so ingest and backfill embed identically (and match
+    what the query side expects)."""
+    return f"{title}\n{(content or '')[:2000]}"
+
+
 SOURCE_BY_INTEGRATION: dict[str, list[str]] = {
     "linear": ["linear-issue"],
     "slack": ["slack-message"],
@@ -118,8 +124,12 @@ async def ingest_artifact(
     extraction = await extract(kind, art.title, art.content, corrections)
     art.extracted = extraction.model_dump(by_alias=True)
     art.status = "extracted"
-    # No embedding on ingest. Vectors are computed lazily during matching (only
-    # when something actually reads them), keeping syncs fast and cheap.
+    # Embed eagerly, HERE on the write path, so retrieval and commitment matching
+    # stay strictly read-only (no writes-during-reads / write contention) and the
+    # pgvector HNSW index is populated the moment memory lands. None when
+    # embeddings are unavailable (AI off / no key) — callers degrade to
+    # keyword+recency, and backfill_embeddings fills the gap once AI is on.
+    art.embedding = await embeddings.embed_text(_embed_input(art.title, art.content))
 
     await db.commit()
     await db.refresh(art)
@@ -130,8 +140,60 @@ async def ingest_artifact(
     return art
 
 
+def _cycle_time_days(created: str | None, completed: str | None) -> float | None:
+    """How long the ticket took to close (created → completed), in days."""
+    c1, c2 = _parse_ts(created), _parse_ts(completed)
+    if c1 and c2 and c2 >= c1:
+        return round((c2 - c1).total_seconds() / 86400, 1)
+    return None
+
+
+def _linear_content_meta(s: dict) -> tuple[str, dict]:
+    """Turn a shaped Linear issue into the full memory text (what the LLM and the
+    embedding see) + structured meta (what reasoning/UI read). This is the whole
+    ticket — owner, project, team, labels, priority, dates, cycle time — not just
+    name + description."""
+    cycle = _cycle_time_days(s.get("createdAt"), s.get("completedAt"))
+    blocks = [f"{s['identifier']} · {s['title']}"]
+    if s.get("description"):
+        blocks.append(s["description"])
+    facts = [
+        f"Status: {s.get('state', '')} ({s.get('stateType', '')})",
+        f"Assignee: {s.get('assignee') or 'unassigned'}",
+        f"Team: {s.get('team') or '—'}",
+        f"Project: {s.get('project') or '—'}",
+    ]
+    if s.get("priorityLabel"):
+        facts.append(f"Priority: {s['priorityLabel']}")
+    if s.get("estimate") is not None:
+        facts.append(f"Estimate: {s['estimate']}")
+    if s.get("labels"):
+        facts.append("Labels: " + ", ".join(s["labels"]))
+    if s.get("creator"):
+        facts.append(f"Created by: {s['creator']}")
+    if s.get("createdAt"):
+        facts.append(f"Created: {s['createdAt']}")
+    if s.get("completedAt"):
+        facts.append(f"Completed: {s['completedAt']}")
+    if cycle is not None:
+        facts.append(f"Time to close: {cycle} days")
+    blocks.append(" · ".join(facts))
+    content = "\n\n".join(blocks)
+
+    meta = {k: s.get(k) for k in (
+        "identifier", "state", "stateType", "createdAt", "updatedAt", "startedAt",
+        "completedAt", "dueDate", "assignee", "assigneeEmail", "creator", "team",
+        "teamKey", "project", "projectState", "labels", "priority", "priorityLabel",
+        "estimate",
+    )}
+    meta["cycleTimeDays"] = cycle
+    return content, meta
+
+
 async def pull_linear(db, workspace_id: str) -> int:
-    """Ingest Linear issues as artifacts. Returns the count of NEW artifacts.
+    """Ingest Linear issues as full-context artifacts. Returns the count of NEW
+    artifacts (existing ones are REFRESHED in place, so a re-pull enriches the
+    whole backlog with new fields — owner, project, labels, cycle time).
 
     Honest when Linear isn't connected (returns 0) and on API failure (logs,
     returns what it managed) — never fabricates.
@@ -147,22 +209,23 @@ async def pull_linear(db, workspace_id: str) -> int:
 
     ingested = 0
     for issue in issues:
-        before = (await db.execute(
-            select(Artifact.id).where(
+        content, meta = _linear_content_meta(issue)
+        existing = (await db.execute(
+            select(Artifact).where(
                 Artifact.workspace_id == workspace_id,
                 Artifact.source == "linear-issue",
                 Artifact.external_ref == issue["identifier"],
             )
-        )).first()
-        if before:
+        )).scalars().first()
+        if existing:
+            # Keep memory current AND enrich it: refresh the full ticket context
+            # (state, assignee, project, labels, cycle time). Embedding is left
+            # as-is to avoid a re-embed storm; content/meta are what answer "who
+            # owns it / how long did it take / which project".
+            existing.content = content
+            existing.meta = meta
+            existing.occurred_at = _parse_ts(issue.get("updatedAt")) or existing.occurred_at
             continue
-        # Read the whole ticket, not just the title: description is the substance
-        # the comparator and drift detection reason over.
-        desc = (issue.get("description") or "").strip()
-        content = issue["title"]
-        if desc:
-            content += f"\n\n{desc}"
-        content += f"\n\n(Linear {issue['identifier']} · state: {issue.get('state', '')})"
         await ingest_artifact(
             db, workspace_id,
             source="linear-issue", kind="issue",
@@ -170,14 +233,11 @@ async def pull_linear(db, workspace_id: str) -> int:
             content=content,
             external_ref=issue["identifier"], url=issue.get("url"),
             occurred_at=_parse_ts(issue.get("updatedAt")),
-            meta={
-                "identifier": issue["identifier"],
-                "state": issue.get("state", ""),
-                "stateType": issue.get("stateType", ""),
-                "updatedAt": issue.get("updatedAt", ""),
-            },
+            meta=meta,
         )
         ingested += 1
+
+    await db.commit()  # persist the in-place refreshes of existing tickets
 
     # A new issue may fulfill an earlier untracked commitment — re-match once.
     from .model import match_open_commitments
@@ -231,6 +291,32 @@ async def pull_slack(db, workspace_id: str) -> int:
     from .model import match_open_commitments
     await match_open_commitments(db, workspace_id)
     return ingested
+
+
+async def backfill_embeddings(db, workspace_id: str, limit: int = 100) -> int:
+    """Embed artifacts that have no vector yet — rows ingested before eager
+    embedding, or while AI was off. Runs on the BACKGROUND/heartbeat path (a
+    write context), never on a read, so retrieval stays read-only. Bounded per
+    call so a big backlog is filled over several ticks. Returns rows embedded.
+    """
+    if not embeddings.available():
+        return 0
+    rows = (await db.execute(
+        select(Artifact).where(
+            Artifact.workspace_id == workspace_id, Artifact.embedding.is_(None)
+        ).limit(limit)
+    )).scalars().all()
+    if not rows:
+        return 0
+    vectors = await embeddings.embed_many([_embed_input(a.title, a.content) for a in rows])
+    filled = 0
+    for a, v in zip(rows, vectors):
+        if v:
+            a.embedding = v
+            filled += 1
+    if filled:
+        await db.commit()
+    return filled
 
 
 async def pull_all(db, workspace_id: str) -> dict[str, int]:

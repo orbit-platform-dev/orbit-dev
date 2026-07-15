@@ -103,15 +103,39 @@ _MAX_COMPLETED = 500   # recent completions are enough to close commitments
 _OPEN_FILTER: dict[str, Any] = {"state": {"type": {"nin": ["completed", "canceled"]}}}
 _COMPLETED_FILTER: dict[str, Any] = {"state": {"type": {"eq": "completed"}}}
 
-_ISSUE_FIELDS = "identifier title description url updatedAt state { name type }"
+# Pull the WHOLE ticket, not just name/description — an AI OS needs who owns it,
+# which project/team/labels it belongs to, its priority/estimate, and the
+# timestamps that give cycle time (how long it took to close).
+_ISSUE_FIELDS = (
+    "identifier title description url priority priorityLabel estimate "
+    "createdAt updatedAt startedAt completedAt canceledAt dueDate "
+    "state { name type } "
+    "assignee { name email } creator { name } "
+    "team { key name } project { name state } "
+    "labels(first: 20) { nodes { name } }"
+)
 
 
 def _shape(n: dict[str, Any]) -> dict[str, Any]:
+    assignee = n.get("assignee") or {}
+    project = n.get("project") or {}
+    team = n.get("team") or {}
+    labels = [lbl["name"] for lbl in (n.get("labels") or {}).get("nodes", []) if lbl.get("name")]
     return {
         "identifier": n["identifier"], "title": n["title"],
         "description": (n.get("description") or "").strip(),
-        "url": n["url"], "updatedAt": n["updatedAt"],
+        "url": n["url"],
+        "createdAt": n.get("createdAt"), "updatedAt": n.get("updatedAt"),
+        "startedAt": n.get("startedAt"), "completedAt": n.get("completedAt"),
+        "canceledAt": n.get("canceledAt"), "dueDate": n.get("dueDate"),
+        "priority": n.get("priority"), "priorityLabel": n.get("priorityLabel"),
+        "estimate": n.get("estimate"),
         "state": n["state"]["name"], "stateType": n["state"]["type"],
+        "assignee": assignee.get("name"), "assigneeEmail": assignee.get("email"),
+        "creator": (n.get("creator") or {}).get("name"),
+        "team": team.get("name"), "teamKey": team.get("key"),
+        "project": project.get("name"), "projectState": project.get("state"),
+        "labels": labels,
     }
 
 

@@ -45,6 +45,15 @@ class DraftedIssue(_Camel):
     description: str = Field(default="", description="short description grounded in the commitment")
 
 
+class DraftedProposal(_Camel):
+    """A concrete, human-reviewable proposal the Product Agent drafts from a
+    detected gap/drift — a PRD update, a Slack alert, or an action plan."""
+
+    kind: str = Field(default="action-plan", description="prd-update | slack-alert | action-plan")
+    title: str = Field(description="a short, specific title for the proposal")
+    body: str = Field(description="the proposal as markdown a human can review, edit and approve")
+
+
 class IntelligenceBrief(_Camel):
     """The periodic company brief — what leadership should know right now."""
 

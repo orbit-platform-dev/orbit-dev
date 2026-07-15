@@ -12,19 +12,27 @@ from datetime import datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text  # noqa: F401
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text  
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
 
-# Embedding dimension (Gemini gemini-embedding-001). Changing to a different
-# dimension requires a migration that rebuilds the vector columns.
+
 EMBEDDING_DIM = 768
 
 
 def _embedding_column():
-    """A real pgvector column on Postgres (indexable), plain JSON on SQLite."""
-    return mapped_column(JSON().with_variant(Vector(EMBEDDING_DIM), "postgresql"), nullable=True)
+    """A real pgvector column on Postgres (indexable), plain JSON on SQLite.
+
+    none_as_null=True is load-bearing: without it SQLAlchemy stores a Python
+    None in a JSON column as the JSON literal ``null`` (not SQL NULL), so
+    ``embedding IS NULL`` would MISS un-embedded rows on SQLite — breaking the
+    backfill query and the read-only retrieval filter. On Postgres the variant
+    is a real Vector, which stores None as SQL NULL anyway."""
+    return mapped_column(
+        JSON(none_as_null=True).with_variant(Vector(EMBEDDING_DIM), "postgresql"),
+        nullable=True,
+    )
 
 
 class Workspace(Base):
@@ -136,9 +144,10 @@ class Goal(Base):
 
 
 class Feedback(Base):
-    """One human correction (an edit or dismissal) — the learning signal.
-    Recent corrections are rendered into every generation's context so Orbit
-    reads and drafts the way this team does."""
+    """One human correction (an edit or dismissal) — the learning signal, and the
+    company's permanent repository of behavioral preferences & rules. `embedding`
+    vectorizes the correction so the most RELEVANT past rules (not just the most
+    recent) can be retrieved for the task at hand and injected into generation."""
 
     __tablename__ = "feedback"
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -150,6 +159,7 @@ class Feedback(Base):
     before: Mapped[str] = mapped_column(Text, default="")
     after: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    embedding: Mapped[list[float] | None] = _embedding_column()
 
 
 class Integration(Base):

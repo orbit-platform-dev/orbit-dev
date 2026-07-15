@@ -12,12 +12,28 @@ from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 from sqlalchemy import select
 
-from ..deps import Depends, get_current_user, get_db
+from ..deps import Depends, get_db
 from ..models import Goal
 from ..schemas import GoalOut
 from ..services.workspace import get_workspace_id
 
 router = APIRouter(prefix="/goals", tags=["goals"])
+
+
+async def _owned_goal(db, ws: str, goal_id: str) -> Goal:
+    """Fetch a goal scoped to the caller's workspace (tenant).
+
+    Filtering by (id, workspace_id) — not a bare db.get(id) — is the tenancy
+    boundary: a foreign or unknown id both return 404, so this can't be used to
+    probe whether another workspace's goal id exists (IDOR). get_workspace_id
+    already requires an authenticated principal, so this also enforces auth.
+    """
+    goal = (await db.execute(
+        select(Goal).where(Goal.id == goal_id, Goal.workspace_id == ws)
+    )).scalars().first()
+    if not goal:
+        raise HTTPException(404, "Goal not found")
+    return goal
 
 
 class GoalIn(BaseModel):
@@ -56,10 +72,8 @@ async def create_goal(body: GoalIn, db=Depends(get_db), ws: str = Depends(get_wo
 
 
 @router.patch("/{goal_id}", response_model=GoalOut)
-async def patch_goal(goal_id: str, body: PatchGoalIn, db=Depends(get_db), _=Depends(get_current_user)):
-    g = await db.get(Goal, goal_id)
-    if not g:
-        raise HTTPException(404, "Goal not found")
+async def patch_goal(goal_id: str, body: PatchGoalIn, db=Depends(get_db), ws: str = Depends(get_workspace_id)):
+    g = await _owned_goal(db, ws, goal_id)
     if body.status is not None and body.status not in ("open", "achieved", "dropped"):
         raise HTTPException(422, "status must be open, achieved or dropped")
     for field in ("title", "detail", "target_date", "status"):
@@ -72,8 +86,9 @@ async def patch_goal(goal_id: str, body: PatchGoalIn, db=Depends(get_db), _=Depe
 
 
 @router.delete("/{goal_id}", status_code=204)
-async def delete_goal(goal_id: str, db=Depends(get_db), _=Depends(get_current_user)):
-    g = await db.get(Goal, goal_id)
-    if g:
-        await db.delete(g)
-        await db.commit()
+async def delete_goal(goal_id: str, db=Depends(get_db), ws: str = Depends(get_workspace_id)):
+    # 404 (not 204) on a missing/foreign id so DELETE can't confirm a goal id
+    # exists in another workspace either.
+    g = await _owned_goal(db, ws, goal_id)
+    await db.delete(g)
+    await db.commit()

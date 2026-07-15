@@ -13,14 +13,16 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import or_, select
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import cast, or_, select
 
-from ..models import Artifact, Entity, Link
+from ..database import engine
+from ..models import EMBEDDING_DIM, Artifact, Entity, Link
 from . import embeddings
 
-# Cosine floor for accepting a semantic (vector) commitment↔issue match.
 _SEMANTIC_THRESHOLD = 0.75
-_EMBED_CHUNK = 16  # bound concurrency when lazily embedding a batch of issues
+
+_SEMANTIC_MAX_DISTANCE = 1.0 - _SEMANTIC_THRESHOLD
 
 # Corporate suffixes that shouldn't affect identity ("Acme Inc" == "Acme").
 _SUFFIXES = ("inc", "llc", "ltd", "gmbh", "corp", "corporation", "co", "kk", "sa", "srl", "plc")
@@ -57,6 +59,68 @@ def text_match(a: str, b: str) -> bool:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _is_postgres() -> bool:
+    """pgvector's native distance operators exist only on Postgres; SQLite (dev)
+    falls back to an in-Python scan. Decided by the live engine's dialect."""
+    return engine.dialect.name == "postgresql"
+
+
+async def search_artifacts(
+    db,
+    ws: str,
+    query_vector: list[float],
+    *,
+    k: int = 8,
+    sources: list[str] | None = None,
+    exclude_ids: list[str] | None = None,
+    max_distance: float = _SEMANTIC_MAX_DISTANCE,
+) -> list[tuple[Artifact, float]]:
+    """Nearest artifacts to a query vector — workspace-scoped and STRICTLY READ-ONLY.
+
+    Postgres: a native pgvector cosine-distance query (`<=>`) that the HNSW index
+    (``ix_artifacts_embedding``) accelerates — it scans all history, with no row
+    cap. SQLite (dev): a bounded in-Python cosine scan over the workspace's
+    embedded rows. Both drop anything beyond ``max_distance`` (default: cosine
+    similarity below 0.75). Returns ``(artifact, similarity)`` pairs, nearest
+    first.
+
+    This never generates or writes embeddings — vectors are produced eagerly at
+    ingest (``ingestion.ingest_artifact``) or by ``ingestion.backfill_embeddings``.
+
+    NOTE: the column is ``JSON().with_variant(Vector, "postgresql")``, so its ORM
+    comparator is JSON's — ``Artifact.embedding.cosine_distance`` does not exist.
+    We ``cast(...)`` to ``Vector`` to reach pgvector's operator.
+    """
+    if not query_vector:
+        return []
+
+    if _is_postgres():
+        distance = cast(Artifact.embedding, Vector(EMBEDDING_DIM)).cosine_distance(query_vector)
+        stmt = select(Artifact, distance.label("distance")).where(
+            Artifact.workspace_id == ws, Artifact.embedding.isnot(None)
+        )
+        if sources:
+            stmt = stmt.where(Artifact.source.in_(sources))
+        if exclude_ids:
+            stmt = stmt.where(Artifact.id.notin_(exclude_ids))
+        stmt = stmt.where(distance <= max_distance).order_by(distance).limit(k)
+        rows = (await db.execute(stmt)).all()
+        return [(art, 1.0 - float(dist)) for art, dist in rows]
+
+    # SQLite: no vector index — score in Python over the workspace's embedded rows.
+    stmt = select(Artifact).where(Artifact.workspace_id == ws, Artifact.embedding.isnot(None))
+    if sources:
+        stmt = stmt.where(Artifact.source.in_(sources))
+    if exclude_ids:
+        stmt = stmt.where(Artifact.id.notin_(exclude_ids))
+    rows = (await db.execute(stmt)).scalars().all()
+    floor = 1.0 - max_distance
+    scored = [(a, embeddings.cosine(query_vector, a.embedding)) for a in rows if a.embedding]
+    scored = [(a, s) for a, s in scored if s >= floor]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored[:k]
 
 
 async def resolve_entity(db, ws: str, kind: str, name: str, *, meta: dict | None = None) -> Entity | None:
@@ -116,24 +180,12 @@ async def _link_commitment_issue(db, ws: str, commitment: Entity, iss: Artifact,
     commitment.updated_at = _now()
 
 
-async def _ensure_embeddings(db, artifacts: list[Artifact]) -> None:
-    """Lazily compute + persist embeddings for artifacts missing one. Called only
-    when matching needs vectors, so ingest stays cheap. Concurrency is bounded."""
-    missing = [a for a in artifacts if a.embedding is None]
-    for i in range(0, len(missing), _EMBED_CHUNK):
-        chunk = missing[i:i + _EMBED_CHUNK]
-        vectors = await embeddings.embed_many([f"{a.title}\n{a.content[:2000]}" for a in chunk])
-        for a, v in zip(chunk, vectors):
-            if v:
-                a.embedding = v
-    if missing:
-        await db.flush()
-
-
 async def match_commitment_to_linear(db, ws: str, commitment: Entity) -> bool:
     """Link a commitment to the Linear issue that fulfills it, if one exists.
-    Deterministic text match first (fast); a vector pass then catches semantic
-    matches text misses. Sets state='tracked'; otherwise leaves it untracked."""
+    Deterministic text match first (fast); a native vector pass then catches
+    semantic matches text misses. Sets state='tracked'; otherwise leaves it
+    untracked. READ-ONLY w.r.t. embeddings — issues are embedded at ingest, so
+    the query vector is the only thing computed here and it is never persisted."""
     issues = (await db.execute(select(Artifact).where(
         Artifact.workspace_id == ws, Artifact.source == "linear-issue"))).scalars().all()
     if not issues:
@@ -146,21 +198,16 @@ async def match_commitment_to_linear(db, ws: str, commitment: Entity) -> bool:
             return True
 
     # 2) Vector assist — catches "SSO" ↔ "single sign-on" that tokens miss.
-    #    Embeddings are computed lazily here (open issues only), then cached.
+    #    search_artifacts already applies the similarity floor; take the nearest
+    #    non-canceled issue.
     if embeddings.available():
-        candidates = [i for i in issues
-                      if (i.meta or {}).get("stateType") not in ("completed", "canceled")] or issues
-        await _ensure_embeddings(db, candidates)
         query = await embeddings.embed_query(commitment.name)
         if query:
-            best, best_iss = 0.0, None
-            for iss in candidates:
-                if iss.embedding:
-                    score = embeddings.cosine(query, iss.embedding)
-                    if score > best:
-                        best, best_iss = score, iss
-            if best_iss and best >= _SEMANTIC_THRESHOLD:
-                await _link_commitment_issue(db, ws, commitment, best_iss, via="vector")
+            results = await search_artifacts(db, ws, query, k=5, sources=["linear-issue"])
+            for iss, _score in results:
+                if (iss.meta or {}).get("stateType") == "canceled":
+                    continue  # a canceled ticket doesn't fulfill anything
+                await _link_commitment_issue(db, ws, commitment, iss, via="vector")
                 return True
     return False
 

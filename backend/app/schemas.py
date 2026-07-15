@@ -66,6 +66,9 @@ class FindingOut(CamelModel):
     detail: str = ""
     status: str  # open | approved | dismissed | resolved
     action: dict[str, Any] | None = None
+    # An autonomously drafted, human-reviewable proposal (PRD update / Slack
+    # alert / action plan) attached by the ProductAgent to a high-priority finding.
+    proposal: dict[str, Any] | None = None
     entities: list[EntityOut] = []
     artifacts: list[ArtifactOut] = []
     created_at: datetime

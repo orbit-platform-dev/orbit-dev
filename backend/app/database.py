@@ -88,12 +88,26 @@ def _migrate(conn) -> None:
     - Managed DB: plain upgrade to head.
     """
     from alembic import command
-    from sqlalchemy import inspect
+    from sqlalchemy import inspect, text
+
+    is_pg = conn.dialect.name == "postgresql"
+    if is_pg:
+        # pgvector's `vector` type must exist BEFORE any CREATE TABLE with a
+        # Vector column — both the fresh create_all path below and migration 0009
+        # on managed DBs. Without this a brand-new Postgres fails to boot.
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
 
     insp = inspect(conn)
     cfg = _alembic_config(conn)
     if not insp.has_table("workspaces"):
         Base.metadata.create_all(conn)
+        if is_pg:
+            # create_all only builds model-declared indexes; the HNSW vector index
+            # is raw DDL (migration 0009), so the fresh path must add it too or
+            # native similarity search falls back to an unindexed scan.
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_artifacts_embedding ON artifacts "
+                "USING hnsw (embedding vector_cosine_ops)"))
         command.stamp(cfg, "head")
     elif not insp.has_table("alembic_version"):
         command.stamp(cfg, "0001_baseline")

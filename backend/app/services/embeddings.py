@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import httpx
 
@@ -23,9 +24,26 @@ _GEMINI_URL = ("https://generativelanguage.googleapis.com/v1beta/models/"
                "{model}:embedContent?key={key}")
 _MAX_CHARS = 6000  # embedding models truncate anyway; keep requests lean
 
+# Circuit breaker. After a 429 (quota / rate limit) we PAUSE embedding calls for
+# a cooldown instead of firing hundreds more doomed round-trips — that retry
+# storm is what makes a large sync crawl. available() reports False during the
+# pause, so every caller (ingest, backfill, search, chat) degrades to
+# keyword/recency instantly instead of hanging.
+_QUOTA_COOLDOWN_S = 60.0
+_paused_until = 0.0
+
+
+def _paused() -> bool:
+    return time.monotonic() < _paused_until
+
+
+def _trip_breaker() -> None:
+    global _paused_until
+    _paused_until = time.monotonic() + _QUOTA_COOLDOWN_S
+
 
 def available() -> bool:
-    return settings.ai_enabled and bool(settings.llm_api_key)
+    return settings.ai_enabled and bool(settings.llm_api_key) and not _paused()
 
 
 async def embed_text(text: str, *, task: str = "RETRIEVAL_DOCUMENT") -> list[float] | None:
@@ -39,6 +57,10 @@ async def embed_text(text: str, *, task: str = "RETRIEVAL_DOCUMENT") -> list[flo
                 json={"content": {"parts": [{"text": text[:_MAX_CHARS]}]}, "taskType": task,
                       "outputDimensionality": EMBEDDING_DIM},
             )
+        if res.status_code == 429:
+            _trip_breaker()  # quota/rate limited — stop hammering for a cooldown
+            logger.warning("embedding quota/rate limit (429); pausing embeddings for %.0fs", _QUOTA_COOLDOWN_S)
+            return None
         if res.status_code != 200:
             logger.warning("embedding request failed (%s): %s", res.status_code, res.text[:150])
             return None

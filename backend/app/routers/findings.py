@@ -16,9 +16,9 @@ from pydantic.alias_generators import to_camel
 from sqlalchemy import select
 
 from ..deps import Depends, get_current_user, get_db
-from ..models import ActivityEvent, Artifact, Entity, Feedback, Insight
+from ..models import ActivityEvent, Artifact, Entity, Insight
 from ..schemas import ArtifactOut, BriefOut, CorrectionOut, EntityOut, FeedOut, FindingOut
-from ..services import heartbeat, linear
+from ..services import heartbeat, learning, linear
 from ..services.workspace import get_workspace_id
 
 router = APIRouter(tags=["feed"])
@@ -58,6 +58,7 @@ async def _to_finding_out(db, insight: Insight) -> FindingOut:
     return FindingOut(
         id=insight.id, kind=insight.kind, title=insight.title, detail=insight.detail,
         status=insight.status, action=insight.action, entities=entities, artifacts=artifacts,
+        proposal=(insight.evidence or {}).get("proposal"),
         created_at=insight.created_at,
     )
 
@@ -168,11 +169,11 @@ async def edit_finding(finding_id: str, body: EditFindingIn, db=Depends(get_db),
     for field, key in (("title", "title"), ("description", "description")):
         value = getattr(body, field)
         if value is not None and value != action.get(key, ""):
-            db.add(Feedback(
-                id=f"fb_{uuid.uuid4().hex[:8]}", workspace_id=ws, section="finding",
-                field=key, before=str(action.get(key, ""))[:280], after=str(value)[:280],
-                created_at=datetime.now(timezone.utc),
-            ))
+            # Capture + vectorize the correction (a learned behavioral rule).
+            await learning.record_feedback(
+                db, ws, section="finding", field=key,
+                before=str(action.get(key, "")), after=str(value), context=f.title,
+            )
             action[key] = value
     f.action = action
     await db.commit()
@@ -185,10 +186,9 @@ async def dismiss_finding(finding_id: str, body: DismissFindingIn, db=Depends(ge
     """Dismiss a finding (a learning signal — this kind surfaces less)."""
     f = await _get_finding(db, ws, finding_id)
     f.status = "dismissed"
-    db.add(Feedback(
-        id=f"fb_{uuid.uuid4().hex[:8]}", workspace_id=ws, section="finding",
-        field="dismiss", before=f"[{f.kind}] {f.title}"[:280], after=(body.reason or "")[:280],
-        created_at=datetime.now(timezone.utc),
-    ))
+    await learning.record_feedback(
+        db, ws, section="finding", field="dismiss",
+        before=f"[{f.kind}] {f.title}", after=(body.reason or ""), context=f.title,
+    )
     await db.commit()
     return await _to_finding_out(db, f)

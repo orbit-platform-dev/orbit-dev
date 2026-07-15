@@ -20,15 +20,19 @@ from sqlalchemy import select
 from ..config import settings
 from ..deps import get_current_user, get_db
 from ..models import Artifact, ChatConversation, Goal, Insight
-from ..services import embeddings
+from ..services import embeddings, heartbeat, learning
+from ..services.analytics import memory_stats
+from ..services.model import search_artifacts
 from ..services.workspace import get_workspace_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 _TOP_K = 8
-_MAX_SCAN = 200
-_EMBED_CHUNK = 16
+_MAX_SCAN = 200          # keyword-fallback window ONLY (no-AI path); the vector
+                         # path is index-backed and uncapped.
+_HISTORY_TURNS = 8       # sliding window of recent messages given to the model
+_HISTORY_CLIP = 600      # per-message char cap, to bound the token budget
 
 
 class _Camel(BaseModel):
@@ -86,6 +90,19 @@ def _toks(s: str) -> set[str]:
 
 
 async def _retrieve(db, ws: str, question: str, k: int = _TOP_K) -> list[Artifact]:
+    """Top-k artifacts for a question. STRICTLY READ-ONLY: artifacts are embedded
+    at ingest, so this never generates or writes vectors.
+
+    Semantic path (AI on): native pgvector similarity via services.model
+    .search_artifacts — index-accelerated on Postgres, uncapped over all history,
+    with a similarity floor. Fallback (AI off / no key): keyword overlap + recency
+    over a bounded recent window."""
+    if embeddings.available():
+        qv = await embeddings.embed_query(question)
+        if qv is not None:
+            results = await search_artifacts(db, ws, qv, k=k)
+            return [art for art, _sim in results]
+
     rows = (
         await db.execute(
             select(Artifact).where(Artifact.workspace_id == ws).order_by(Artifact.occurred_at.desc()).limit(_MAX_SCAN)
@@ -93,35 +110,40 @@ async def _retrieve(db, ws: str, question: str, k: int = _TOP_K) -> list[Artifac
     ).scalars().all()
     if not rows:
         return []
-    if embeddings.available():
-        missing = [a for a in rows if not a.embedding]
-        for i in range(0, len(missing), _EMBED_CHUNK):
-            chunk = missing[i : i + _EMBED_CHUNK]
-            vals = await embeddings.embed_many([f"{a.title}\n{(a.content or '')[:2000]}" for a in chunk])
-            for a, v in zip(chunk, vals):
-                if v:
-                    a.embedding = v
-        if missing:
-            await db.flush()
-        qv = await embeddings.embed_query(question)
-        if qv:
-            scored = [(embeddings.cosine(qv, a.embedding), a) for a in rows if a.embedding]
-            scored.sort(key=lambda x: x[0], reverse=True)
-            return [a for _, a in scored[:k]]
     q = _toks(question)
     ranked = sorted(rows, key=lambda a: (len(q & _toks(f"{a.title} {a.content or ''}")), a.occurred_at), reverse=True)
     return ranked[:k]
 
 
-async def _answer(db, ws: str, question: str) -> tuple[str, list[Citation], bool]:
+def _format_history(messages: list[dict] | None) -> str:
+    """The last _HISTORY_TURNS messages as a compact block so the model has
+    conversational context (follow-ups, pronouns like 'it'/'they'). Each message
+    is clipped to bound tokens. '' when there's no prior history."""
+    if not messages:
+        return ""
+    lines: list[str] = []
+    for m in messages[-_HISTORY_TURNS:]:
+        role = "User" if m.get("role") == "user" else "Orbit"
+        content = " ".join((m.get("content") or "").split())[:_HISTORY_CLIP]
+        if content:
+            lines.append(f"{role}: {content}")
+    if not lines:
+        return ""
+    return "CONVERSATION SO FAR (oldest to newest):\n" + "\n".join(lines) + "\n\n"
+
+
+async def _answer(db, ws: str, question: str, history: list[dict] | None = None) -> tuple[str, list[Citation], bool]:
     hits = await _retrieve(db, ws, question)
     make_cites = lambda arts: [Citation(id=a.id, source=a.source, title=a.title, url=a.url) for a in arts]
+    # Structured counts — the analytical path RAG can't do ("how many / today / avg").
+    stats = await memory_stats(db, ws)
 
     if not settings.ai_enabled:
-        if not hits:
+        if not hits and not stats:
             return ("I don't have any company memory yet. Connect a tool or add a signal and I'll start learning.", [], False)
         lines = "\n".join(f"- {a.title}" for a in hits[:6])
-        return (f"Here's the most relevant company memory I found:\n\n{lines}", make_cites(hits[:6]), True)
+        body = ((stats + "\n\n") if stats else "") + (f"Most relevant memory:\n{lines}" if lines else "")
+        return (body.strip(), make_cites(hits[:6]), bool(hits or stats))
 
     insights = (
         await db.execute(
@@ -133,7 +155,7 @@ async def _answer(db, ws: str, question: str) -> tuple[str, list[Citation], bool
     ).scalars().all()
     goals = (await db.execute(select(Goal).where(Goal.workspace_id == ws, Goal.status == "open").limit(10))).scalars().all()
 
-    snapshot = ""
+    snapshot = (stats + "\n\n") if stats else ""
     if goals:
         snapshot += "GOALS:\n" + "\n".join(f"- {g.title}" for g in goals) + "\n\n"
     if insights:
@@ -143,16 +165,22 @@ async def _answer(db, ws: str, question: str) -> tuple[str, list[Citation], bool
         if hits
         else "EVIDENCE: (nothing relevant found in memory)"
     )
-    prompt = f"QUESTION: {question}\n\n{snapshot}{evidence}"
+    convo = _format_history(history)
+    prompt = f"{convo}QUESTION: {question}\n\n{snapshot}{evidence}"
 
-    answer = "Here's the most relevant memory:\n" + "\n".join(f"- {a.title}" for a in hits[:6])
-    grounded = bool(hits)
+    answer = (((stats + "\n\n") if stats else "") + "Most relevant memory:\n"
+              + "\n".join(f"- {a.title}" for a in hits[:6]))
+    grounded = bool(hits or stats)
     used = [a.id for a in hits[:3]]
+    # Apply phase: pull the past corrections most relevant to THIS question and
+    # inject them into the system prompt so the agent doesn't repeat a mistake
+    # the team already corrected.
+    directives = await learning.directives_block(db, ws, question)
     try:
         from ..agents.definitions import SYSTEM_PROMPTS, build_agent
         from ..agents.schemas import ChatAnswer
 
-        out = (await build_agent(SYSTEM_PROMPTS["orbit-chat"], ChatAnswer).run(prompt)).output
+        out = (await build_agent(SYSTEM_PROMPTS["orbit-chat"] + directives, ChatAnswer).run(prompt)).output
         answer, grounded = out.answer, out.grounded
         valid = {a.id for a in hits}
         used = [cid for cid in out.citation_ids if cid in valid]
@@ -212,9 +240,20 @@ async def ask(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_workspace_
         )
         db.add(conv)
 
-    answer, citations, grounded = await _answer(db, ws, question)
 
-    msgs = list(conv.messages or [])
+    history = list(conv.messages or [])
+
+    sync = heartbeat.status(ws).get("sync") or {}
+    if sync.get("active"):
+        phase = sync.get("phase", "reading")
+        answer = ("⏳ I'm still reading and understanding your company from the connected tools "
+                  f"(currently: {phase}). {sync.get('message', '')} "
+                  "Ask me again in a moment and I'll answer from the full picture.")
+        citations, grounded = [], False
+    else:
+        answer, citations, grounded = await _answer(db, ws, question, history=history)
+
+    msgs = history
     msgs.append({"role": "user", "content": question, "citations": [], "grounded": True})
     msgs.append({"role": "assistant", "content": answer, "citations": [c.model_dump() for c in citations], "grounded": grounded})
     conv.messages = msgs  # reassign so the JSON column change is tracked

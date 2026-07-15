@@ -18,7 +18,8 @@ from sqlalchemy import func, select
 from ..config import settings
 from ..database import SessionLocal
 from ..models import ActivityEvent, Artifact, Entity, Insight, Workspace
-from .ingestion import pull_all
+from .ingestion import backfill_embeddings, pull_all
+from .proposals import dispatch_for_workspace
 from .reasoning import detect_findings, generate_brief
 
 logger = logging.getLogger("orbit.heartbeat")
@@ -104,12 +105,15 @@ async def run_now(workspace_id: str, trigger: str = "manual") -> None:
                 phase="reasoning",
                 message="Building your company model and reasoning across it…",
                 counts={"issues": counts.get("linear", 0)})
+            await backfill_embeddings(db, workspace_id)  # embed anything not yet vectorized
             await detect_findings(db, workspace_id)
             signal_count = (await db.execute(select(func.count()).select_from(Artifact)
                             .where(Artifact.workspace_id == workspace_id))).scalar_one()
             if signal_count:
                 await generate_brief(db, workspace_id)
                 _state["last_brief_at"] = datetime.now(timezone.utc).isoformat()
+            # Act: autonomously draft proposals for new high-priority findings (human reviews).
+            await dispatch_for_workspace(db, workspace_id)
             await db.commit()
             summary = await _summarize(db, workspace_id)
         _sync[workspace_id].update(active=False, phase="done", counts=summary,
@@ -154,6 +158,10 @@ async def _tick() -> None:
                 await pull_all(db, ws)
             except Exception:
                 logger.warning("auto-pull failed; reasoning on existing memory", exc_info=True)
+            try:
+                await backfill_embeddings(db, ws)  # keep the vector index populated
+            except Exception:
+                logger.warning("embedding backfill failed; continuing", exc_info=True)
             open_findings = await detect_findings(db, ws)
             total_found += open_findings
 
@@ -163,6 +171,12 @@ async def _tick() -> None:
             if signal_count and await _brief_is_stale(db, ws):
                 await generate_brief(db, ws)
                 _state["last_brief_at"] = datetime.now(timezone.utc).isoformat()
+
+            # Act: draft proposals for new high-priority findings (bounded per tick).
+            try:
+                await dispatch_for_workspace(db, ws)
+            except Exception:
+                logger.warning("proposal dispatch failed; continuing", exc_info=True)
 
             if open_findings:
                 db.add(ActivityEvent(
