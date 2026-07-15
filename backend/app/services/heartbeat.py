@@ -19,6 +19,7 @@ from ..config import settings
 from ..database import SessionLocal
 from ..models import ActivityEvent, Artifact, Entity, Insight, Workspace
 from .ingestion import backfill_embeddings, pull_all
+from .memory import decay as decay_memories
 from .proposals import dispatch_for_workspace
 from .reasoning import detect_findings, generate_brief
 
@@ -106,6 +107,7 @@ async def run_now(workspace_id: str, trigger: str = "manual") -> None:
                 message="Building your company model and reasoning across it…",
                 counts={"issues": counts.get("linear", 0)})
             await backfill_embeddings(db, workspace_id)  # embed anything not yet vectorized
+            await decay_memories(db, workspace_id)       # age-out facts not seen this sync
             await detect_findings(db, workspace_id)
             signal_count = (await db.execute(select(func.count()).select_from(Artifact)
                             .where(Artifact.workspace_id == workspace_id))).scalar_one()
@@ -160,8 +162,9 @@ async def _tick() -> None:
                 logger.warning("auto-pull failed; reasoning on existing memory", exc_info=True)
             try:
                 await backfill_embeddings(db, ws)  # keep the vector index populated
+                await decay_memories(db, ws)        # age-out unverified facts
             except Exception:
-                logger.warning("embedding backfill failed; continuing", exc_info=True)
+                logger.warning("embedding backfill / decay failed; continuing", exc_info=True)
             open_findings = await detect_findings(db, ws)
             total_found += open_findings
 

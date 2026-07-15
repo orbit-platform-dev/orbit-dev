@@ -2,43 +2,81 @@
 
 import { use } from "react";
 import Link from "next/link";
-import { ArrowLeft, ArrowUpRight, Database, FileText, Phone, Ticket } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Brain, Database, FileText, History, Phone } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { IntegrationLogo } from "@/components/shared/integration-logo";
 import { useEntity } from "@/lib/hooks";
-import { timeAgo } from "@/lib/utils";
+import { cn, timeAgo } from "@/lib/utils";
 import { entityMeta, LINK_LABEL, CommitmentStatusChip } from "@/components/memory/entity-meta";
-import type { Artifact } from "@/lib/types";
+import type { Artifact, IntegrationKey, MemoryFact } from "@/lib/types";
 
-const SOURCE_ICON: Record<string, typeof Phone> = {
-  call: Phone,
-  document: FileText,
-  "linear-issue": Ticket,
-};
+// Work grouped per connector — the brain view, not an activity log.
+const SOURCE_GROUPS: { label: string; logo: IntegrationKey | null; match: (s: string) => boolean }[] = [
+  { label: "Linear issues", logo: "linear", match: (s) => s.startsWith("linear") },
+  { label: "GitHub activity", logo: "github", match: (s) => s.startsWith("github") },
+  { label: "Slack discussions", logo: "slack", match: (s) => s.startsWith("slack") },
+  { label: "Calls & documents", logo: null, match: () => true },
+];
 
-function ArtifactRow({ type, artifact }: { type: string; artifact: Artifact }) {
-  const Icon = SOURCE_ICON[artifact.source] ?? FileText;
-  const summary = artifact.extracted?.summary;
+function ConfidenceBar({ value }: { value: number }) {
+  const pct = Math.round(value * 100);
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3">
-      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+    <span className="inline-flex items-center gap-1.5" title={`Confidence ${pct}%`}>
+      <span className="h-1.5 w-12 overflow-hidden rounded-full bg-muted">
+        <span
+          className={cn("block h-full rounded-full", pct >= 80 ? "bg-emerald-500" : pct >= 55 ? "bg-amber-500" : "bg-red-400")}
+          style={{ width: `${pct}%` }}
+        />
+      </span>
+      <span className="text-[11px] tabular-nums text-muted-foreground">{pct}%</span>
+    </span>
+  );
+}
+
+function FactRow({ f }: { f: MemoryFact }) {
+  const superseded = f.status !== "active";
+  return (
+    <div className={cn("flex items-start gap-3 px-2 py-2", superseded && "opacity-60")}>
+      {superseded ? (
+        <History className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      ) : (
+        <Brain className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+      )}
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            {LINK_LABEL[type] ?? type}
-          </span>
-          <span className="text-xs text-muted-foreground">· {timeAgo(artifact.occurredAt)}</span>
+        <div className={cn("text-sm leading-snug", superseded && "line-through decoration-border")}>{f.fact}</div>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+          <span className="rounded bg-muted px-1.5 py-px font-medium uppercase tracking-wide">{f.kind}</span>
+          {f.sourceRef ? <span>{f.sourceRef}</span> : null}
+          {superseded ? <span className="italic">historical</span> : null}
         </div>
-        <div className="mt-0.5 text-sm font-medium">{artifact.title}</div>
-        {summary ? <p className="mt-0.5 text-sm text-muted-foreground line-clamp-2">{summary}</p> : null}
       </div>
-      {artifact.url ? (
-        <a href={artifact.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground">
-          Open <ArrowUpRight className="h-3 w-3" />
-        </a>
-      ) : null}
+      <ConfidenceBar value={f.confidence} />
     </div>
+  );
+}
+
+function WorkRow({ type, artifact }: { type: string; artifact: Artifact }) {
+  const state = (artifact as Artifact & { meta?: Record<string, unknown> }).extracted?.status || "";
+  const inner = (
+    <>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <span className="font-semibold uppercase tracking-wider">{LINK_LABEL[type] ?? type}</span>
+          <span>· {timeAgo(artifact.occurredAt)}</span>
+          {state ? <span className="truncate">· {state}</span> : null}
+        </div>
+        <div className="mt-0.5 truncate text-sm font-medium">{artifact.title}</div>
+      </div>
+      {artifact.url ? <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+    </>
+  );
+  const cls = "flex items-center gap-3 rounded-lg px-2.5 py-2 transition-colors hover:bg-accent/50";
+  return artifact.url ? (
+    <a href={artifact.url} target="_blank" rel="noreferrer" className={cls}>{inner}</a>
+  ) : (
+    <div className={cls}>{inner}</div>
   );
 }
 
@@ -58,8 +96,21 @@ export default function EntityDetailPage({ params }: { params: Promise<{ id: str
     return <EmptyState icon={Database} title="Entity not found" description="It may have been removed, or memory hasn't resolved it yet." />;
   }
 
-  const { entity, artifacts, relatedEntities } = data;
+  const { entity, artifacts, relatedEntities, facts } = data;
   const { label, icon: Icon } = entityMeta(entity.kind);
+
+  // Partition linked work into per-connector groups (each artifact lands once).
+  const remaining = [...artifacts];
+  const groups = SOURCE_GROUPS.map((g) => {
+    const mine: typeof artifacts = [];
+    for (let i = remaining.length - 1; i >= 0; i--) {
+      if (g.match(remaining[i].artifact.source)) mine.unshift(...remaining.splice(i, 1));
+    }
+    return { ...g, items: mine };
+  }).filter((g) => g.items.length > 0);
+
+  const activeFacts = (facts ?? []).filter((f) => f.status === "active");
+  const historicalFacts = (facts ?? []).filter((f) => f.status !== "active");
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -82,6 +133,18 @@ export default function EntityDetailPage({ params }: { params: Promise<{ id: str
         </div>
       </div>
 
+      {(activeFacts.length > 0 || historicalFacts.length > 0) && (
+        <Card className="mt-6 p-4">
+          <div className="px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            What Orbit knows
+          </div>
+          <div className="mt-2 divide-y divide-border/50">
+            {activeFacts.map((f) => <FactRow key={f.id} f={f} />)}
+            {historicalFacts.map((f) => <FactRow key={f.id} f={f} />)}
+          </div>
+        </Card>
+      )}
+
       {relatedEntities.length > 0 && (
         <Card className="mt-6 p-5">
           <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Connections</div>
@@ -101,14 +164,29 @@ export default function EntityDetailPage({ params }: { params: Promise<{ id: str
         </Card>
       )}
 
-      <div className="mt-6">
-        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Evidence</div>
-        {artifacts.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No source artifacts linked yet.</p>
+      <div className="mt-6 space-y-5">
+        {groups.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No linked work yet — it appears as connectors sync.</p>
         ) : (
-          <div className="flex flex-col gap-2">
-            {artifacts.map(({ type, artifact }, i) => <ArtifactRow key={`${artifact.id}-${i}`} type={type} artifact={artifact} />)}
-          </div>
+          groups.map((g) => (
+            <Card key={g.label} className="p-4">
+              <div className="flex items-center gap-2 px-2">
+                {g.logo ? (
+                  <IntegrationLogo k={g.logo} className="h-5 w-5 rounded" />
+                ) : (
+                  <span className="flex h-5 w-5 items-center justify-center"><Phone className="h-3.5 w-3.5 text-muted-foreground" /></span>
+                )}
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {g.label} · {g.items.length}
+                </span>
+              </div>
+              <div className="mt-1.5 flex flex-col">
+                {g.items.slice(0, 12).map(({ type, artifact }, i) => (
+                  <WorkRow key={`${artifact.id}-${i}`} type={type} artifact={artifact} />
+                ))}
+              </div>
+            </Card>
+          ))
         )}
       </div>
     </div>

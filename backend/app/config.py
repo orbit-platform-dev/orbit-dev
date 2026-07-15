@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     slack_client_secret: str | None = None
     slack_redirect_uri: str = "http://localhost:8000/integrations/slack/oauth/callback"
 
+    github_client_id: str | None = None
+    github_client_secret: str | None = None
+    github_redirect_uri: str = "http://localhost:8000/integrations/github/oauth/callback"
+
     enable_ai: bool = False
     default_model: str = "google-gla:gemini-2.0-flash"
     llm_api_key: str | None = None

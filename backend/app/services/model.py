@@ -226,10 +226,44 @@ async def match_open_commitments(db, ws: str) -> int:
     return matched
 
 
+WORK_SOURCES = ("linear-issue", "github-pr", "github-issue")
+
+
+async def link_work_entities(db, ws: str, artifact: Artifact) -> None:
+    """Build the ownership graph from a work item's structured meta (no LLM) —
+    identical for every connector because meta uses one key vocabulary:
+    Person -assigned_to-> Item, Person -created-> Item, Item -belongs_to->
+    Project, Person -works_on-> Project. Idempotent; caller commits."""
+    if artifact.source not in WORK_SOURCES:
+        return
+    m = artifact.meta or {}
+    assignee_ent = None
+    if m.get("assignee"):
+        assignee_ent = await resolve_entity(db, ws, "person", m["assignee"], meta={"email": m.get("assigneeEmail")})
+        if assignee_ent:
+            await ensure_link(db, ws, "entity", assignee_ent.id, "artifact", artifact.id,
+                              "assigned_to", source_artifact_id=artifact.id)
+    if m.get("creator") and m.get("creator") != m.get("assignee"):
+        ce = await resolve_entity(db, ws, "person", m["creator"])
+        if ce:
+            await ensure_link(db, ws, "entity", ce.id, "artifact", artifact.id,
+                              "created", source_artifact_id=artifact.id)
+    if m.get("project"):
+        pr = await resolve_entity(db, ws, "project", m["project"], meta={"state": m.get("projectState")})
+        if pr:
+            await ensure_link(db, ws, "artifact", artifact.id, "entity", pr.id, "belongs_to",
+                              source_artifact_id=artifact.id)
+            if assignee_ent:
+                await ensure_link(db, ws, "entity", assignee_ent.id, "entity", pr.id, "works_on")
+
+
 async def build_from_artifact(db, ws: str, artifact: Artifact) -> None:
     """Resolve the entities and links implied by one artifact's extraction, then
     try to match any new commitments to Linear. Commits once at the end."""
     ex = artifact.extracted or {}
+
+    # Deterministic ownership graph from the work item's structured fields.
+    await link_work_entities(db, ws, artifact)
 
     customer_ents: dict[str, Entity] = {}
     for ent in ex.get("entities", []) or []:

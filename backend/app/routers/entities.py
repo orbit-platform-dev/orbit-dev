@@ -10,8 +10,8 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from ..deps import Depends, get_db
-from ..models import Artifact, Entity
-from ..schemas import ArtifactOut, EntityDetailOut, EntityOut, LinkedArtifactOut, LinkedEntityOut
+from ..models import Artifact, Entity, Memory
+from ..schemas import ArtifactOut, EntityDetailOut, EntityOut, LinkedArtifactOut, LinkedEntityOut, MemoryFactOut
 from ..services.model import neighbors
 from ..services.workspace import get_workspace_id
 
@@ -46,6 +46,17 @@ async def get_entity(entity_id: str, db=Depends(get_db), ws: str = Depends(get_w
             if e:
                 related.append(LinkedEntityOut(type=link.type, entity=EntityOut.model_validate(e)))
 
+
+    names = [entity.name, *(entity.aliases or [])]
+    mems = (await db.execute(select(Memory).where(
+        Memory.workspace_id == ws, Memory.status.in_(("active", "superseded"))
+    ).order_by(Memory.updated_at.desc()).limit(500))).scalars().all()
+    facts = [m for m in mems if any(n and n.lower() in (m.fact or "").lower() for n in names)]
+    facts.sort(key=lambda m: (m.status == "active", m.confidence), reverse=True)
+
     return EntityDetailOut(
         entity=EntityOut.model_validate(entity), artifacts=artifacts, related_entities=related,
+        facts=[MemoryFactOut(id=m.id, fact=m.fact, kind=m.kind, confidence=m.confidence,
+                             status=m.status, source_ref=m.source_ref,
+                             source_artifact_id=m.source_artifact_id) for m in facts[:12]],
     )

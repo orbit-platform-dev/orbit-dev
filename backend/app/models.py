@@ -207,3 +207,31 @@ class ChatConversation(Base):
     messages: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Memory(Base):
+    """A distilled company FACT with confidence + lifecycle (Phase 3). Facts are
+    derived from artifacts (their extraction + structured meta), deduplicated by
+    embedding, and updated as reality changes: a contradicting fact SUPERSEDES the
+    old one (never deletes it), so history stays queryable. `subject` is the slot
+    a fact is 'about' (an issue/project) — one active fact per (subject, kind).
+    Retrieval (Phase 4) ranks by semantic similarity + confidence + recency."""
+
+    __tablename__ = "memories"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", index=True)
+    fact: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String, default="fact", index=True)  # assignment|ownership|decision|blocker|deadline|status|context
+    subject: Mapped[str] = mapped_column(String, default="", index=True)   # normalized slot key (issue/project) for contradiction detection
+    subject_entity_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    confidence: Mapped[float] = mapped_column(default=0.7)
+    importance: Mapped[float] = mapped_column(default=0.5)
+    status: Mapped[str] = mapped_column(String, default="active", index=True)  # active | stale | superseded
+    source_artifact_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_ref: Mapped[str] = mapped_column(String, default="")
+    superseded_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    history: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    last_verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    embedding: Mapped[list[float] | None] = _embedding_column()

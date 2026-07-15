@@ -52,6 +52,21 @@ async def account_name(auth: str) -> str:
     return data.get("team") or data.get("url") or "Slack workspace"
 
 
+async def team_url(auth: str) -> str | None:
+    """The workspace's base URL (https://acme.slack.com/) — permalink prefix."""
+    try:
+        return (await _call(auth, "auth.test")).get("url")
+    except Exception:
+        return None
+
+
+def permalink(team: str | None, channel_id: str | None, ts: str | None) -> str | None:
+    """Canonical Slack deep link: {team}/archives/{channel}/p{ts-sans-dot}."""
+    if not (team and channel_id and ts):
+        return None
+    return f"{team.rstrip('/')}/archives/{channel_id}/p{ts.replace('.', '')}"
+
+
 # --- OAuth (same interface as linear) --------------------------------------
 def oauth_configured() -> bool:
     return bool(settings.slack_client_id and settings.slack_client_secret)

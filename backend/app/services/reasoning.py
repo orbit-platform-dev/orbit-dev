@@ -25,6 +25,7 @@ from .model import text_match
 logger = logging.getLogger("orbit.reasoning")
 
 _UNREQUESTED_THRESHOLD = 3  # only flag unlinked work once it's a real cluster
+_STALE_PR_DAYS = 7          # open non-draft PR older than this = review bottleneck
 
 
 def _now() -> datetime:
@@ -152,6 +153,28 @@ async def detect_findings(db, ws: str) -> int:
             "title": f"{len(unlinked)} in-progress items aren't tied to a customer request",
             "detail": f"Open work with no matching commitment or request: {examples}.",
             "entity_ids": [], "artifact_ids": [a.id for a in unlinked[:8]], "action": None,
+        })
+
+    # 5) Stale open PRs -> risk signal (code sitting unmerged is delivery risk)
+    now = _now()
+    stale_prs = []
+    for a in arts:
+        m = a.meta or {}
+        if a.source != "github-pr" or m.get("stateType") in ("completed", "canceled") or m.get("draft"):
+            continue
+        occurred = a.occurred_at
+        if occurred and occurred.tzinfo is None:
+            occurred = occurred.replace(tzinfo=timezone.utc)
+        if occurred and (now - occurred).days >= _STALE_PR_DAYS:
+            stale_prs.append(a)
+    if stale_prs:
+        examples = ", ".join(f"{a.external_ref} ({(a.meta or {}).get('creator') or 'unknown'})"
+                             for a in stale_prs[:4])
+        desired.append({
+            "dedupe_key": "stale-prs", "kind": "drift",
+            "title": f"{len(stale_prs)} pull requests have sat open for {_STALE_PR_DAYS}+ days",
+            "detail": f"Unmerged code is undelivered work and a review bottleneck: {examples}.",
+            "entity_ids": [], "artifact_ids": [a.id for a in stale_prs[:8]], "action": None,
         })
 
     corrections = await render_corrections(db, ws)

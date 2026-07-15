@@ -52,10 +52,21 @@ class LinkedEntityOut(CamelModel):
     entity: EntityOut
 
 
+class MemoryFactOut(CamelModel):
+    id: str
+    fact: str
+    kind: str
+    confidence: float
+    status: str
+    source_ref: str = ""
+    source_artifact_id: str | None = None
+
+
 class EntityDetailOut(CamelModel):
     entity: EntityOut
     artifacts: list[LinkedArtifactOut] = []
     related_entities: list[LinkedEntityOut] = []
+    facts: list[MemoryFactOut] = []
 
 
 # --- Feed (findings + brief) ------------------------------------------------

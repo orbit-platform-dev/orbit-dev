@@ -52,10 +52,21 @@ export interface Entity {
   updatedAt: string;
 }
 
+export interface MemoryFact {
+  id: ID;
+  fact: string;
+  kind: string;
+  confidence: number;
+  status: string; // active | superseded | stale
+  sourceRef: string;
+  sourceArtifactId?: string | null;
+}
+
 export interface EntityDetail {
   entity: Entity;
   artifacts: { type: string; artifact: Artifact }[];
   relatedEntities: { type: string; entity: Entity }[];
+  facts: MemoryFact[];
 }
 
 // ---------------------------------------------------------------------------

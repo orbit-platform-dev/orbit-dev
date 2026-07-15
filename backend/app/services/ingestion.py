@@ -17,7 +17,7 @@ from sqlalchemy import select, update
 
 from ..agents.extractor import extract
 from ..models import Artifact
-from . import embeddings, linear, slack
+from . import embeddings, github, linear, slack
 
 logger = logging.getLogger("orbit.ingestion")
 
@@ -137,6 +137,10 @@ async def ingest_artifact(
     # Understand: fold this artifact into the company model (entities + links).
     from .model import build_from_artifact
     await build_from_artifact(db, workspace_id, art)
+    # Distil durable facts (confidence + lifecycle) from it.
+    from .memory import derive_from_artifact
+    await derive_from_artifact(db, workspace_id, art)
+    await db.commit()
     return art
 
 
@@ -178,6 +182,15 @@ def _linear_content_meta(s: dict) -> tuple[str, dict]:
     if cycle is not None:
         facts.append(f"Time to close: {cycle} days")
     blocks.append(" · ".join(facts))
+
+    # The discussion — decisions, blockers and technical context live in comments.
+    comments = s.get("comments") or []
+    if comments:
+        discussion = "\n".join(
+            f"- {c.get('author') or 'someone'}: {c.get('body')}" for c in comments if c.get("body")
+        )
+        if discussion:
+            blocks.append("Discussion:\n" + discussion)
     content = "\n\n".join(blocks)
 
     meta = {k: s.get(k) for k in (
@@ -187,6 +200,8 @@ def _linear_content_meta(s: dict) -> tuple[str, dict]:
         "estimate",
     )}
     meta["cycleTimeDays"] = cycle
+    meta["comments"] = comments
+    meta["commentCount"] = len(comments)
     return content, meta
 
 
@@ -225,6 +240,12 @@ async def pull_linear(db, workspace_id: str) -> int:
             existing.content = content
             existing.meta = meta
             existing.occurred_at = _parse_ts(issue.get("updatedAt")) or existing.occurred_at
+            # Enrich the ownership graph on every refresh (backfills existing issues).
+            from .model import link_work_entities
+            await link_work_entities(db, workspace_id, existing)
+            # Re-derive facts so reassignments supersede the prior owner.
+            from .memory import derive_from_artifact
+            await derive_from_artifact(db, workspace_id, existing)
             continue
         await ingest_artifact(
             db, workspace_id,
@@ -245,6 +266,127 @@ async def pull_linear(db, workspace_id: str) -> int:
     return ingested
 
 
+def _github_content_meta(s: dict) -> tuple[str, dict]:
+    """Shaped GitHub PR/issue → memory text + structured meta. Meta reuses the
+    Linear key vocabulary (assignee/creator/project/stateType) so the knowledge
+    graph, memory facts and analytics treat every connector identically."""
+    kind_label = "PR" if s.get("isPr") else "Issue"
+    blocks = [f"{s['identifier']} · {s['title']}"]
+    if s.get("description"):
+        blocks.append(s["description"][:3000])
+    facts = [
+        f"Type: GitHub {kind_label}",
+        f"Status: {s.get('state', '')}",
+        f"Author: {s.get('author') or '—'}",
+        f"Assignee: {s.get('assignee') or 'unassigned'}",
+        f"Repo: {s.get('repo') or '—'}",
+    ]
+    if s.get("labels"):
+        facts.append("Labels: " + ", ".join(s["labels"]))
+    if s.get("draft"):
+        facts.append("Draft PR")
+    if s.get("createdAt"):
+        facts.append(f"Created: {s['createdAt']}")
+    if s.get("mergedAt"):
+        facts.append(f"Merged: {s['mergedAt']}")
+    if s.get("additions") is not None:
+        facts.append(f"Code: +{s['additions']} / -{s.get('deletions', 0)} across "
+                     f"{s.get('changedFiles', '?')} files · {s.get('commits', '?')} commits")
+    blocks.append(" · ".join(facts))
+
+    # Reviews + discussion — where blockers and technical decisions live.
+    reviews = s.get("reviews") or []
+    if reviews:
+        blocks.append("Reviews:\n" + "\n".join(
+            f"- {r.get('reviewer') or 'someone'} ({r.get('state', '').lower().replace('_', ' ')})"
+            + (f": {r['body']}" if r.get("body") else "")
+            for r in reviews
+        ))
+    comments = s.get("comments") or []
+    if comments:
+        blocks.append("Discussion:\n" + "\n".join(
+            f"- {c.get('author') or 'someone'}: {c.get('body')}" for c in comments if c.get("body")
+        ))
+
+    meta = {
+        "identifier": s.get("identifier"), "state": s.get("state"), "stateType": s.get("stateType"),
+        "createdAt": s.get("createdAt"), "updatedAt": s.get("updatedAt"),
+        "completedAt": s.get("mergedAt") or s.get("closedAt"),
+        "assignee": s.get("assignee"), "creator": s.get("author"),
+        "project": s.get("repo"), "labels": s.get("labels") or [], "draft": s.get("draft"),
+        "isPr": s.get("isPr"),
+        "comments": comments, "commentCount": len(comments),
+        "reviews": reviews,
+        "additions": s.get("additions"), "deletions": s.get("deletions"),
+        "changedFiles": s.get("changedFiles"), "commits": s.get("commits"),
+    }
+    return "\n\n".join(blocks), meta
+
+
+async def pull_github(db, workspace_id: str) -> int:
+    """Ingest GitHub PRs + issues as artifacts — same idempotent refresh-in-place
+    contract as pull_linear. Honest when not connected (0) / on failure."""
+    auth = await github.get_auth(db, workspace_id)
+    if not auth:
+        return 0
+    try:
+        items, contributors = await github.fetch_work(auth)
+    except Exception:
+        logger.warning("GitHub pull failed", exc_info=True)
+        return 0
+
+    ingested = 0
+    for item in items:
+        source = "github-pr" if item.get("isPr") else "github-issue"
+        content, meta = _github_content_meta(item)
+        existing = (await db.execute(
+            select(Artifact).where(
+                Artifact.workspace_id == workspace_id,
+                Artifact.source == source,
+                Artifact.external_ref == item["identifier"],
+            )
+        )).scalars().first()
+        if existing:
+            existing.content = content
+            existing.meta = meta
+            existing.occurred_at = _parse_ts(item.get("updatedAt")) or existing.occurred_at
+            from .model import link_work_entities
+            await link_work_entities(db, workspace_id, existing)
+            from .memory import derive_from_artifact
+            await derive_from_artifact(db, workspace_id, existing)
+            continue
+        await ingest_artifact(
+            db, workspace_id,
+            source=source, kind="pr" if item.get("isPr") else "issue",
+            title=f"{item['identifier']} · {item['title']}"[:300],
+            content=content,
+            external_ref=item["identifier"], url=item.get("url"),
+            occurred_at=_parse_ts(item.get("updatedAt")),
+            meta=meta,
+        )
+        ingested += 1
+
+    # Contributors: every repo's people join the graph (Person -works_on-> repo)
+    # and memory learns who actually builds what.
+    from .memory import record
+    from .model import ensure_link, resolve_entity
+    for repo, people in (contributors or {}).items():
+        proj = await resolve_entity(db, workspace_id, "project", repo)
+        for p in people:
+            ent = await resolve_entity(db, workspace_id, "person", p["login"])
+            if ent and proj:
+                await ensure_link(db, workspace_id, "entity", ent.id, "entity", proj.id, "works_on")
+            await record(
+                db, workspace_id,
+                fact=f"{p['login']} is a contributor to {repo} ({p['contributions']} commits)",
+                kind="context", subject=f"contrib:{repo}:{p['login']}",
+                source_ref=f"GitHub {repo}", importance=0.4, base_confidence=0.85,
+            )
+
+    await db.commit()
+    return ingested
+
+
 async def pull_slack(db, workspace_id: str) -> int:
     """Ingest Slack threads (root + replies) from the channels the bot is in as
     artifacts. Threads are conversational, so they extract like calls. Honest when
@@ -257,6 +399,7 @@ async def pull_slack(db, workspace_id: str) -> int:
     except Exception:
         logger.warning("Slack channel list failed", exc_info=True)
         return 0
+    team = await slack.team_url(auth)  # permalink prefix; None degrades to no link
 
     ingested = 0
     for ch in channels:
@@ -267,12 +410,15 @@ async def pull_slack(db, workspace_id: str) -> int:
             continue
         for t in threads:
             ext = f"{t['channel']}:{t['ts']}"
-            exists = (await db.execute(select(Artifact.id).where(
+            url = slack.permalink(team, ch["id"], t["ts"])
+            existing = (await db.execute(select(Artifact).where(
                 Artifact.workspace_id == workspace_id,
                 Artifact.source == "slack-message",
                 Artifact.external_ref == ext,
-            ))).first()
-            if exists:
+            ))).scalars().first()
+            if existing:
+                if url and not existing.url:  # backfill deep links on re-sync
+                    existing.url = url
                 continue
             first_line = (t["text"].split("\n", 1)[0] or "thread").strip()
             await ingest_artifact(
@@ -280,12 +426,13 @@ async def pull_slack(db, workspace_id: str) -> int:
                 source="slack-message", kind="slack-thread",
                 title=f"#{ch['name']}: {first_line}"[:120],
                 content=t["text"],
-                external_ref=ext, url=None,
+                external_ref=ext, url=url,
                 occurred_at=_parse_slack_ts(t["ts"]),
                 meta={"channel": ch["name"], "channelId": ch["id"],
                       "ts": t["ts"], "replyCount": t["reply_count"]},
             )
             ingested += 1
+    await db.commit()  # persist url backfills on existing threads
 
     # A Slack thread can create a commitment; re-match against Linear.
     from .model import match_open_commitments
@@ -325,4 +472,5 @@ async def pull_all(db, workspace_id: str) -> dict[str, int]:
     return {
         "linear": await pull_linear(db, workspace_id),
         "slack": await pull_slack(db, workspace_id),
+        "github": await pull_github(db, workspace_id),
     }

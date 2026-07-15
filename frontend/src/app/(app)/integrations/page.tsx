@@ -27,28 +27,47 @@ const CATEGORY_LABEL: Record<string, string> = {
 };
 const catLabel = (c: string) => CATEGORY_LABEL[c] ?? c;
 
-function LinearDialog({ open, onOpenChange, oauthAvailable, onOAuth }: { open: boolean; onOpenChange: (o: boolean) => void; oauthAvailable: boolean; onOAuth: () => void }) {
+const KEY_CONNECT: Record<string, { name: string; placeholder: string; help: string }> = {
+  linear: {
+    name: "Linear",
+    placeholder: "lin_api_…",
+    help: "Linear → Settings → Security & access → Personal API keys. Validated live; stored server-side, never exposed.",
+  },
+  github: {
+    name: "GitHub",
+    placeholder: "ghp_… or github_pat_…",
+    help: "GitHub → Settings → Developer settings → Personal access tokens (repo read access). Validated live; stored server-side, never exposed.",
+  },
+};
+
+function KeyConnectDialog({ provider, onOpenChange, oauthAvailable, onOAuth }: {
+  provider: string | null;
+  onOpenChange: (o: boolean) => void;
+  oauthAvailable: boolean;
+  onOAuth: () => void;
+}) {
   const qc = useQueryClient();
   const [key, setKey] = useState("");
+  const info = provider ? KEY_CONNECT[provider] : null;
   const connect = useMutation({
-    mutationFn: () => api.connectLinear(key.trim()),
+    mutationFn: () => api.connectWithKey(provider!, key.trim()),
     onSuccess: (i) => {
       qc.invalidateQueries({ queryKey: qk.integrations });
-      toast.success(`Linear connected${i.account ? ` · ${i.account}` : ""}`);
+      toast.success(`${info?.name} connected${i.account ? ` · ${i.account}` : ""}`);
       onOpenChange(false);
       setKey("");
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not connect Linear"),
+    onError: (e) => toast.error(e instanceof Error ? e.message : `Could not connect ${info?.name}`),
   });
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={!!provider} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Connect Linear</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Connect {info?.name}</DialogTitle></DialogHeader>
         {oauthAvailable && (
           // Preferred path: one click, no secret to copy. Full browser redirect.
           <div className="space-y-3">
             <Button className="w-full" onClick={onOAuth}>
-              <Plug className="h-4 w-4" /> Connect with Linear
+              <Plug className="h-4 w-4" /> Connect with {info?.name}
             </Button>
             <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-muted-foreground">
               <span className="h-px flex-1 bg-border" /> or use an API key <span className="h-px flex-1 bg-border" />
@@ -56,11 +75,9 @@ function LinearDialog({ open, onOpenChange, oauthAvailable, onOAuth }: { open: b
           </div>
         )}
         <div className="space-y-1.5">
-          <Label htmlFor="linear-key">Personal API key</Label>
-          <Input id="linear-key" placeholder="lin_api_…" value={key} onChange={(e) => setKey(e.target.value)} />
-          <p className="text-xs text-muted-foreground">
-            Linear → Settings → Security &amp; access → Personal API keys. Validated live; stored server-side, never exposed.
-          </p>
+          <Label htmlFor="connect-key">Personal API key</Label>
+          <Input id="connect-key" placeholder={info?.placeholder} value={key} onChange={(e) => setKey(e.target.value)} />
+          <p className="text-xs text-muted-foreground">{info?.help}</p>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -76,10 +93,7 @@ function LinearDialog({ open, onOpenChange, oauthAvailable, onOAuth }: { open: b
 function IntegrationRow({ integration, onConnect }: { integration: Integration; onConnect: (key: string) => void }) {
   const qc = useQueryClient();
   const connected = integration.status === "connected" || integration.status === "syncing";
-  const isLinear = integration.key === "linear";
-  // Connectable now = we have a connector AND a working path today (Linear has
-  // the key fallback; OAuth-only providers need their OAuth configured).
-  const canConnectNow = !!integration.connectable && (isLinear || !!integration.oauthAvailable);
+  const canConnectNow = !!integration.connectable && (integration.key in KEY_CONNECT || !!integration.oauthAvailable);
   const disconnect = useMutation({
     mutationFn: () => api.disconnectIntegration(integration.key),
     onSuccess: () => {
@@ -121,7 +135,7 @@ export default function IntegrationsPage() {
   const { data, isLoading } = useIntegrations();
   const [category, setCategory] = useState("All");
   const [query, setQuery] = useState("");
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogProvider, setDialogProvider] = useState<string | null>(null);
 
   // Handle the return from any provider's OAuth redirect (?connected=<key> / ?error).
   useEffect(() => {
@@ -138,8 +152,7 @@ export default function IntegrationsPage() {
     window.history.replaceState({}, "", window.location.pathname);
   }, [qc]);
 
-  const linearOAuthAvailable = !!(data ?? []).find((i) => i.key === "linear")?.oauthAvailable;
-  // Mint an authenticated, workspace-bound authorize URL, then redirect the browser.
+  const oauthAvailable = (key: string | null) => !!(data ?? []).find((i) => i.key === key)?.oauthAvailable;
   const startOAuth = async (key: string) => {
     try {
       const { url } = await api.getOAuthUrl(key);
@@ -148,10 +161,10 @@ export default function IntegrationsPage() {
       toast.error(e instanceof Error ? e.message : `Could not start ${cap(key)} sign-in`);
     }
   };
-  // Linear opens the dialog (OAuth + key); OAuth-only providers go straight out.
+
   const onConnect = (key: string) => {
-    if (key === "linear") setDialogOpen(true);
-    else startOAuth(key);
+    if (oauthAvailable(key)) startOAuth(key);
+    else if (key in KEY_CONNECT) setDialogProvider(key);
   };
 
   const categories = useMemo(() => {
@@ -203,7 +216,12 @@ export default function IntegrationsPage() {
         </div>
       )}
 
-      <LinearDialog open={dialogOpen} onOpenChange={setDialogOpen} oauthAvailable={linearOAuthAvailable} onOAuth={() => startOAuth("linear")} />
+      <KeyConnectDialog
+        provider={dialogProvider}
+        onOpenChange={(o) => !o && setDialogProvider(null)}
+        oauthAvailable={oauthAvailable(dialogProvider)}
+        onOAuth={() => dialogProvider && startOAuth(dialogProvider)}
+      />
     </div>
   );
 }

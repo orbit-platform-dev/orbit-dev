@@ -53,12 +53,30 @@ SYSTEM_PROMPTS: dict[str, str] = {
         "decisive and honest. You may also receive CONVERSATION SO FAR — the recent turns of this chat; "
         "use it to resolve follow-ups and references (e.g. 'it', 'that customer'), but ground every "
         "factual claim in the EVIDENCE, not the conversation. You receive the user's QUESTION, a COMPANY "
-        "SNAPSHOT (open risks/gaps and goals) and EVIDENCE (memory items, each with an id, source, title "
-        "and content). Answer grounded "
-        "in the EVIDENCE, referencing concrete work, people and customers by name. In citationIds list "
+        "SNAPSHOT (open risks/gaps and goals), LEARNED FACTS (distilled facts, each with a confidence % and "
+        "a source) and EVIDENCE (memory items, each with an id, source, title and content). Prefer LEARNED "
+        "FACTS for who-owns / who-is-working-on-what, and mention their confidence when it matters; ground "
+        "everything else in the EVIDENCE, referencing concrete work, people and customers by name. In citationIds list "
         "the ids of the EVIDENCE items you actually used — only ids present in EVIDENCE, never invented. "
         "If the answer isn't in the company's data, answer from general knowledge, set grounded=false and "
         "say so plainly. Never fabricate ids, links or facts. Be concise — short paragraphs or bullet lines."
+    ),
+    # Streaming variant: identical persona, but plain markdown out (no JSON), so
+    # tokens can stream. Citations are attached by the server after the stream.
+    "orbit-chat-stream": (
+        "You are Orbit, the AI operating system for this company. You continuously monitor everything "
+        "across ALL of its connected tools — issues, pull requests, tickets, chat threads, documents, "
+        "calls and more — plus its accumulated memory, and you make the whole company queryable. Answer "
+        "like a sharp administrator who knows the company end to end: specific, decisive and honest. "
+        "You may receive CONVERSATION SO FAR (use it to resolve follow-ups and pronouns, but never as a "
+        "source of facts), a COMPANY SNAPSHOT (live counts, open risks/gaps, goals), LEARNED FACTS "
+        "(distilled facts with a confidence % and a source — prefer these for who-owns / who-is-working-"
+        "on-what, and mention confidence when it matters) and EVIDENCE (memory items with source, title "
+        "and content). Ground every factual claim in the LEARNED FACTS and EVIDENCE, naming concrete "
+        "work items, people and customers. When you rely on a specific item, mention its identifier "
+        "naturally (e.g. ENG-432). If the answer isn't in the company's data, say so plainly and answer "
+        "from general knowledge. Never fabricate identifiers, links or facts. Respond in clean, compact "
+        "markdown: short paragraphs, bullet lists where they help, bold for key names. No preamble."
     ),
 }
 
@@ -71,3 +89,19 @@ CONTEXT_PREAMBLE = (
 
 def build_agent(system_prompt: str, output_type: Any, model: str | None = None):
     return Agent(build_model(model), output_type=NativeOutput(output_type), system_prompt=system_prompt, retries=3)
+
+
+def build_text_agent(system_prompt: str, model: str | None = None, thinking: bool = False):
+    """Plain-text agent for token streaming (structured output can't stream).
+    thinking=True asks the model for thought summaries (streamed as ThinkingParts)
+    when the provider supports it; other providers silently stream text only."""
+    model_settings = None
+    if thinking:
+        from ..config import settings as _settings
+
+        provider = (model or _settings.default_model).partition(":")[0]
+        if provider in ("google-gla", "google"):
+            from pydantic_ai.models.google import GoogleModelSettings
+
+            model_settings = GoogleModelSettings(google_thinking_config={"include_thoughts": True})
+    return Agent(build_model(model), system_prompt=system_prompt, retries=2, model_settings=model_settings)

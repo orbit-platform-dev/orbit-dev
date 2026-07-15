@@ -112,7 +112,9 @@ _ISSUE_FIELDS = (
     "state { name type } "
     "assignee { name email } creator { name } "
     "team { key name } project { name state } "
-    "labels(first: 20) { nodes { name } }"
+    "labels(first: 20) { nodes { name } } "
+    # The discussion — where blockers, decisions and technical context live.
+    "comments(first: 8) { nodes { body createdAt user { name } } }"
 )
 
 
@@ -121,6 +123,11 @@ def _shape(n: dict[str, Any]) -> dict[str, Any]:
     project = n.get("project") or {}
     team = n.get("team") or {}
     labels = [lbl["name"] for lbl in (n.get("labels") or {}).get("nodes", []) if lbl.get("name")]
+    comments = [
+        {"author": (c.get("user") or {}).get("name"), "createdAt": c.get("createdAt"),
+         "body": (c.get("body") or "").strip()[:600]}
+        for c in (n.get("comments") or {}).get("nodes", []) if (c.get("body") or "").strip()
+    ]
     return {
         "identifier": n["identifier"], "title": n["title"],
         "description": (n.get("description") or "").strip(),
@@ -136,6 +143,7 @@ def _shape(n: dict[str, Any]) -> dict[str, Any]:
         "team": team.get("name"), "teamKey": team.get("key"),
         "project": project.get("name"), "projectState": project.get("state"),
         "labels": labels,
+        "comments": comments,
     }
 
 
@@ -149,7 +157,7 @@ async def _fetch_issues(auth: str, filt: dict, max_total: int, newest_first: boo
     out: list[dict[str, Any]] = []
     cursor: str | None = None
     while len(out) < max_total:
-        page = min(100, max_total - len(out))
+        page = min(50, max_total - len(out))  # smaller pages: each issue now nests comments
         data = await _gql(auth, query, {"n": page, "after": cursor, "filter": filt})
         conn = data["issues"]
         out.extend(_shape(x) for x in conn["nodes"])

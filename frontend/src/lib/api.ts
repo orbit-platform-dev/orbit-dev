@@ -73,6 +73,79 @@ export const getEntity = (id: string) => live<EntityDetail>(`/entities/${id}`);
 // --- Ask Orbit (reasoning layer over company memory; private per-user chats) --
 export const sendChat = (body: { message: string; conversationId?: string | null }) =>
   send<ChatAnswer>("/chat", "POST", body);
+
+export interface ChatStreamHandlers {
+  onPhase?: (phase: string) => void;
+  onThinking?: (text: string) => void;
+  onDelta: (text: string) => void;
+  onDone: (final: ChatAnswer) => void;
+  onError: (message: string) => void;
+}
+
+// Token-streamed answer (SSE over fetch). Abort via `signal` stops generation;
+// an aborted stream is not persisted server-side.
+export async function streamChat(
+  body: { message: string; conversationId?: string | null },
+  h: ChatStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!API_URL) {
+    h.onError(NEEDS_BACKEND);
+    return;
+  }
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (e) {
+    if ((e as Error).name !== "AbortError") h.onError("Couldn't reach Orbit. Is the backend running?");
+    return;
+  }
+  if (!res.ok || !res.body) {
+    const detail = (await res.json().catch(() => null))?.detail;
+    h.onError(detail || `Chat failed (${res.status})`);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const events = buf.split("\n\n");
+      buf = events.pop() ?? "";
+      for (const ev of events) {
+        const line = ev.split("\n").find((l) => l.startsWith("data: "));
+        if (!line) continue;
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(line.slice(6));
+        } catch {
+          continue;
+        }
+        if (data.type === "delta") h.onDelta(data.text as string);
+        else if (data.type === "thinking") h.onThinking?.(data.text as string);
+        else if (data.type === "phase") h.onPhase?.(data.phase as string);
+        else if (data.type === "error") h.onError(data.message as string);
+        else if (data.type === "done")
+          h.onDone({
+            conversationId: data.conversationId as string,
+            answer: "",
+            citations: (data.citations ?? []) as ChatAnswer["citations"],
+            grounded: (data.grounded ?? true) as boolean,
+          });
+      }
+    }
+  } catch (e) {
+    if ((e as Error).name !== "AbortError") h.onError("The connection dropped mid-answer.");
+  }
+}
 export const listChatConversations = () => live<ChatConversationSummary[]>("/chat/conversations");
 export const getChatConversation = (id: string) => live<ChatConversationDetail>(`/chat/conversations/${id}`);
 export const deleteChatConversation = (id: string) => send<void>(`/chat/conversations/${id}`, "DELETE");
@@ -95,8 +168,8 @@ export const setAutoSync = (enabled: boolean) =>
 
 // --- Connectors ------------------------------------------------------------
 export const getIntegrations = () => live<Integration[]>("/integrations");
-export const connectLinear = (apiKey: string) =>
-  send<Integration>("/integrations/linear/connect", "POST", { apiKey });
+export const connectWithKey = (key: string, apiKey: string) =>
+  send<Integration>(`/integrations/${key}/connect`, "POST", { apiKey });
 export const disconnectIntegration = (key: string) =>
   send<Integration>(`/integrations/${key}/disconnect`, "POST");
 // Mint an authenticated, workspace-bound authorize URL, then redirect the browser

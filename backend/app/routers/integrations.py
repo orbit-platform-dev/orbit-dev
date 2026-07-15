@@ -11,7 +11,7 @@ from ..deps import Depends, get_current_user, get_db
 from ..models import Integration
 from ..schemas import IntegrationOut
 from ..seed import ensure_integrations
-from ..services import heartbeat, ingestion, linear, slack
+from ..services import github, heartbeat, ingestion, linear, slack
 from ..services.workspace import get_workspace_id
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -19,7 +19,10 @@ router = APIRouter(prefix="/integrations", tags=["integrations"])
 # OAuth-capable connectors, each exposing the same interface
 # (oauth_configured / oauth_url / exchange_code / account_name). Every access is
 # scoped to a workspace, so one tenant never sees another's connection.
-PROVIDERS = {"linear": linear, "slack": slack}
+PROVIDERS = {"linear": linear, "slack": slack, "github": github}
+
+# Connectors that also accept a pasted personal key/token (validate_key).
+KEY_PROVIDERS = {"linear": linear, "github": github}
 
 
 async def _get(db, ws: str, key: str) -> Integration | None:
@@ -37,34 +40,37 @@ async def list_integrations(db=Depends(get_db), ws: str = Depends(get_workspace_
     return rows
 
 
-# --- Linear personal API key (Linear-only convenience path) -----------------
-class ConnectLinearIn(BaseModel):
+# --- Personal API key / token connect (Linear key, GitHub PAT) ---------------
+class ConnectKeyIn(BaseModel):
     apiKey: str
 
 
-@router.post("/linear/connect", response_model=IntegrationOut)
-async def connect_linear(body: ConnectLinearIn, db=Depends(get_db),
-                         ws: str = Depends(get_workspace_id), _=Depends(get_current_user)):
-    """Connect Linear with a personal API key — validated live, stored per workspace."""
-    key = body.apiKey.strip()
-    if not key:
+@router.post("/{key}/connect", response_model=IntegrationOut)
+async def connect_with_key(key: str, body: ConnectKeyIn, db=Depends(get_db),
+                           ws: str = Depends(get_workspace_id), _=Depends(get_current_user)):
+    """Connect with a pasted personal key/token — validated live, stored per workspace."""
+    prov = KEY_PROVIDERS.get(key)
+    if not prov:
+        raise HTTPException(404, "This integration doesn't accept an API key")
+    token = body.apiKey.strip()
+    if not token:
         raise HTTPException(422, "API key is required")
     try:
-        org = await linear.validate_key(key)
+        account = await prov.validate_key(token)
     except Exception as exc:
-        raise HTTPException(422, f"Linear rejected the key: {exc}")
+        raise HTTPException(422, f"{key.capitalize()} rejected the key: {exc}")
     await ensure_integrations(db, ws)
-    integ = await _get(db, ws, "linear")
+    integ = await _get(db, ws, key)
     if not integ:
         raise HTTPException(404, "Integration not found")
-    integ.credentials = {"apiKey": key}
+    integ.credentials = {"apiKey": token}
     integ.status = "connected"
-    integ.account = org
+    integ.account = account
     integ.last_sync = datetime.now(timezone.utc)
-    await ingestion.set_source_stale(db, ws, "linear", False)
+    await ingestion.set_source_stale(db, ws, key, False)
     await db.commit()
     await db.refresh(integ)
-    heartbeat.start_sync(ws, "linear-connect")
+    heartbeat.start_sync(ws, f"{key}-connect")
     return integ
 
 

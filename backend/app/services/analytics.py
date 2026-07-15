@@ -62,6 +62,26 @@ async def memory_stats(db, ws: str) -> str:
         assignees = Counter(m.get("assignee") for m in open_ if m.get("assignee"))
         if assignees:
             lines.append("- Open work by assignee: "
-                         + ", ".join(f"{a} ({n})" for a, n in assignees.most_common(5)))
+                         + ", ".join(f"{a} ({n})" for a, n in assignees.most_common(8)))
+        done_by = Counter(m.get("assignee") for m in completed if m.get("assignee"))
+        if done_by:
+            lines.append("- Completed (done) work by assignee: "
+                         + ", ".join(f"{a} ({n})" for a, n in done_by.most_common(10)))
+
+    gh = [r.meta or {} for r in rows if r.source in ("github-pr", "github-issue")]
+    if gh:
+        prs = [m for m in gh if m.get("isPr")]
+        open_prs = [m for m in prs if m.get("stateType") not in ("completed", "canceled")]
+        merged = [m for m in prs if m.get("state") == "merged"]
+        lines.append(f"- GitHub: {len(prs)} PRs ({len(open_prs)} open · {len(merged)} merged) "
+                     f"· {len(gh) - len(prs)} issues")
+        authors = Counter(m.get("creator") for m in open_prs if m.get("creator"))
+        if authors:
+            lines.append("- Open PRs by author: "
+                         + ", ".join(f"{a} ({n})" for a, n in authors.most_common(8)))
+        repos = Counter(m.get("project") for m in open_prs if m.get("project"))
+        if repos:
+            lines.append("- Open PRs by repo: "
+                         + ", ".join(f"{p} ({n})" for p, n in repos.most_common(5)))
 
     return "\n".join(lines)
