@@ -17,12 +17,14 @@ import {
   Trash2,
 } from "lucide-react";
 import * as api from "@/lib/api";
-import type { ChatCitation, ChatMessage, IntegrationKey } from "@/lib/types";
+import type { ChatCitation, ChatMessage } from "@/lib/types";
+import { rankFinding, sourceKey } from "@/lib/sources";
+import { useFeed } from "@/lib/hooks";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
 import { Button } from "@/components/ui/button";
 import { cn, timeAgo } from "@/lib/utils";
 
-const SUGGESTIONS = [
+const DEFAULT_SUGGESTIONS = [
   { title: "What's at risk right now?", hint: "Surface aging commitments and stalled work" },
   { title: "What did we promise customers?", hint: "Open commitments and their status" },
   { title: "Who's working on what?", hint: "Live ownership across the team" },
@@ -41,11 +43,6 @@ type Msg = ChatMessage & {
   thoughtFor?: number;  
 };
 
-const NON_CONNECTOR = new Set(["call", "document", "doc", "note", "email", "manual"]);
-function sourceKey(source: string): IntegrationKey | null {
-  const base = (source || "").split(/[-_ ]/)[0].toLowerCase();
-  return !base || NON_CONNECTOR.has(base) ? null : (base as IntegrationKey);
-}
 
 function CitationChip({ c }: { c: ChatCitation }) {
   const key = sourceKey(c.source);
@@ -203,6 +200,31 @@ export default function ChatPage() {
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
 
   const conversations = useQuery({ queryKey: ["chat", "conversations"], queryFn: api.listChatConversations });
+  const { data: feed } = useFeed();
+
+  // Live suggestions: what Orbit's radar flagged right now beats canned prompts.
+  const suggestions: { title: string; hint: string; ask?: string }[] = React.useMemo(() => {
+    const open = (feed?.findings ?? []).filter((f) => f.status === "open");
+    const live = [...open]
+      .sort((a, b) => rankFinding(b) - rankFinding(a))
+      .slice(0, 2)
+      .map((f) => ({
+        title: f.title,
+        hint: "From Orbit's radar — ask why and what to do",
+        ask: `Explain this finding and what we should do about it: "${f.title}"`,
+      }));
+    return [...live, ...DEFAULT_SUGGESTIONS.slice(0, 4 - live.length)];
+  }, [feed]);
+
+  // Deep links from other surfaces ("Ask Orbit" on an entity) prefill the box.
+  React.useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("q");
+    if (q) {
+      setInput(q);
+      window.history.replaceState({}, "", window.location.pathname);
+      inputRef.current?.focus();
+    }
+  }, []);
   const convs = conversations.data ?? [];
 
 
@@ -446,13 +468,13 @@ export default function ChatPage() {
                   own data, with sources.
                 </p>
                 <div className="mt-8 grid w-full max-w-lg gap-2.5 sm:grid-cols-2">
-                  {SUGGESTIONS.map((s) => (
+                  {suggestions.map((s) => (
                     <button
                       key={s.title}
-                      onClick={() => send(s.title)}
+                      onClick={() => send(s.ask ?? s.title)}
                       className="group rounded-xl border border-border bg-card/50 px-4 py-3 text-left transition-all hover:border-primary/40 hover:bg-card"
                     >
-                      <div className="text-sm font-medium">{s.title}</div>
+                      <div className="line-clamp-2 text-sm font-medium">{s.title}</div>
                       <div className="mt-0.5 text-xs text-muted-foreground group-hover:text-muted-foreground/80">{s.hint}</div>
                     </button>
                   ))}

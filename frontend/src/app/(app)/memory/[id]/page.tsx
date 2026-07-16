@@ -2,7 +2,8 @@
 
 import { use } from "react";
 import Link from "next/link";
-import { ArrowLeft, ArrowUpRight, Brain, Database, FileText, History, Phone } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Brain, Database, History, MessagesSquare, Phone } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -129,8 +130,15 @@ export default function EntityDetailPage({ params }: { params: Promise<{ id: str
             <CommitmentStatusChip entity={entity} />
             {entity.meta?.to ? <span className="text-xs text-muted-foreground">to {entity.meta.to}</span> : null}
             {entity.meta?.due ? <span className="text-xs text-muted-foreground">· due {entity.meta.due}</span> : null}
+            <span className="text-xs text-muted-foreground">· updated {timeAgo(entity.updatedAt)}</span>
           </div>
         </div>
+        {/* Surfaces stay connected: any entity can be interrogated in chat. */}
+        <Button asChild variant="outline" size="sm" className="shrink-0 gap-1.5">
+          <Link href={`/chat?q=${encodeURIComponent(`Tell me everything about ${entity.name} — current work, blockers, decisions and risks.`)}`}>
+            <MessagesSquare className="h-3.5 w-3.5" /> Ask Orbit
+          </Link>
+        </Button>
       </div>
 
       {(activeFacts.length > 0 || historicalFacts.length > 0) && (

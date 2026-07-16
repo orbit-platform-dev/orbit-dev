@@ -31,68 +31,69 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useArtifacts, useEntities, qk } from "@/lib/hooks";
+import { useArtifacts, useEntities, useHeartbeat, qk } from "@/lib/hooks";
 import * as api from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
 import type { Artifact, Entity } from "@/lib/types";
 import { entityMeta, CommitmentStatusChip } from "@/components/memory/entity-meta";
+import { IntegrationLogo } from "@/components/shared/integration-logo";
+import { sourceKey } from "@/lib/sources";
 import { TimeFilter, withinRange, type TimeRange } from "@/components/shared/time-filter";
 
-const SOURCE_META: Record<string, { label: string; icon: typeof Phone }> = {
-  call: { label: "Call", icon: Phone },
-  document: { label: "Document", icon: FileText },
-  "linear-issue": { label: "Linear", icon: Ticket },
-  "slack-message": { label: "Slack", icon: MessageSquare },
+const SOURCE_LABEL: Record<string, string> = {
+  call: "Call",
+  document: "Document",
+  "linear-issue": "Linear",
+  "slack-message": "Slack",
+  "github-pr": "GitHub PR",
+  "github-issue": "GitHub issue",
 };
-const sourceMeta = (s: string) => SOURCE_META[s] ?? { label: s, icon: FileText };
+const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? s;
 
-// --- Signals (artifacts) ----------------------------------------------------
-function ArtifactCard({ artifact }: { artifact: Artifact }) {
-  const meta = sourceMeta(artifact.source);
-  const Icon = meta.icon;
+// --- Sources: a provenance INDEX, not a mirror of your tools -----------------
+// One compact row per item — what Orbit read and what it extracted. The full
+// content lives in the tool itself (that's what the deep link is for).
+function SourceRow({ artifact }: { artifact: Artifact }) {
+  const key = sourceKey(artifact.source);
   const ex = artifact.extracted ?? {};
-  const commitments = ex.commitments ?? [];
-  const requests = ex.requests ?? [];
-  const decisions = ex.decisions ?? [];
-  return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Icon className="h-3.5 w-3.5 text-primary" />
-          <span className="font-medium text-foreground">{meta.label}</span>
-          <span>·</span>
-          <span>{timeAgo(artifact.occurredAt)}</span>
-          {artifact.status === "stale" && <Badge variant="muted">No longer syncing</Badge>}
-        </div>
-        {artifact.url ? (
-          <a href={artifact.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-            Source <ArrowUpRight className="h-3 w-3" />
-          </a>
-        ) : (
-          <span className="text-[11px] text-muted-foreground">observed</span>
-        )}
-      </div>
-      <h3 className="mt-3 text-[15px] font-semibold leading-snug tracking-tight">{artifact.title}</h3>
-      {ex.summary ? <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{ex.summary}</p> : null}
-      {(commitments.length > 0 || requests.length > 0 || decisions.length > 0) && (
-        <div className="mt-4 flex flex-wrap gap-1.5">
-          {commitments.length > 0 && <Badge variant="muted">{commitments.length} commitment{commitments.length > 1 ? "s" : ""}</Badge>}
-          {requests.length > 0 && <Badge variant="muted">{requests.length} request{requests.length > 1 ? "s" : ""}</Badge>}
-          {decisions.length > 0 && <Badge variant="muted">{decisions.length} decision{decisions.length > 1 ? "s" : ""}</Badge>}
-        </div>
+  const extractedBits = [
+    (ex.commitments?.length ?? 0) > 0 ? `${ex.commitments!.length} commitment${ex.commitments!.length > 1 ? "s" : ""}` : null,
+    (ex.decisions?.length ?? 0) > 0 ? `${ex.decisions!.length} decision${ex.decisions!.length > 1 ? "s" : ""}` : null,
+    (ex.requests?.length ?? 0) > 0 ? `${ex.requests!.length} request${ex.requests!.length > 1 ? "s" : ""}` : null,
+  ].filter(Boolean);
+
+  const inner = (
+    <>
+      {key ? (
+        <IntegrationLogo k={key} className="h-8 w-8 rounded-lg" />
+      ) : (
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card">
+          {artifact.source === "call" ? <Phone className="h-3.5 w-3.5 text-muted-foreground" /> : <FileText className="h-3.5 w-3.5 text-muted-foreground" />}
+        </span>
       )}
-    </Card>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{artifact.title}</span>
+        <span className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+          {sourceLabel(artifact.source)} · {timeAgo(artifact.occurredAt)}
+          {extractedBits.length > 0 ? <> · learned {extractedBits.join(", ")}</> : null}
+          {artifact.status === "stale" ? <Badge variant="muted">No longer syncing</Badge> : null}
+        </span>
+      </span>
+      {artifact.url ? <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+    </>
+  );
+  const cls = "flex min-w-0 items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 transition-colors hover:border-primary/30";
+  return artifact.url ? (
+    <a href={artifact.url} target="_blank" rel="noreferrer" className={cls}>{inner}</a>
+  ) : (
+    <div className={cls}>{inner}</div>
   );
 }
 
 function SignalsView({ range }: { range: TimeRange }) {
   const { data, isLoading } = useArtifacts();
   if (isLoading) {
-    return (
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-40 rounded-xl" />)}
-      </div>
-    );
+    return <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>;
   }
   const items = (data ?? []).filter((a) => withinRange(a.occurredAt, range));
   if (items.length === 0) {
@@ -105,9 +106,25 @@ function SignalsView({ range }: { range: TimeRange }) {
       />
     );
   }
+  // Coverage at a glance: what Orbit is reading, per tool.
+  const counts = new Map<string, number>();
+  for (const a of items) counts.set(a.source, (counts.get(a.source) ?? 0) + 1);
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {items.map((a) => <ArtifactCard key={a.id} artifact={a} />)}
+    <div>
+      <div className="mb-4 flex flex-wrap gap-2">
+        {Array.from(counts.entries()).map(([source, n]) => {
+          const key = sourceKey(source);
+          return (
+            <span key={source} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground">
+              {key ? <IntegrationLogo k={key} className="h-4 w-4 rounded-[4px] border-0" /> : <FileText className="h-3 w-3" />}
+              <span className="font-medium text-foreground">{sourceLabel(source)}</span> {n}
+            </span>
+          );
+        })}
+      </div>
+      <div className="space-y-2">
+        {items.map((a) => <SourceRow key={a.id} artifact={a} />)}
+      </div>
     </div>
   );
 }
@@ -220,10 +237,15 @@ function AddCallDialog() {
 // --- Page -------------------------------------------------------------------
 export default function MemoryPage() {
   const [range, setRange] = useState<TimeRange>("all");
+  const { data: hb } = useHeartbeat();
 
   return (
     <div>
-      <PageHeader title="Memory" actions={<AddCallDialog />} />
+      <PageHeader
+        title="Memory"
+        description={hb?.lastRunAt ? `Orbit last read your tools ${timeAgo(hb.lastRunAt)}` : undefined}
+        actions={<AddCallDialog />}
+      />
       <Tabs defaultValue="knowledge">
         <div className="mb-4 flex items-center justify-between gap-3">
           <TabsList>

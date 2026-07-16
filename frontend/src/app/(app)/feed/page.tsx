@@ -9,6 +9,7 @@ import {
   ArrowUpRight,
   CheckCircle2,
   GraduationCap,
+  Lightbulb,
   Radar,
   RefreshCw,
   Sparkles,
@@ -33,6 +34,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useFeed, useLearning, useHeartbeat, qk } from "@/lib/hooks";
 import * as api from "@/lib/api";
 import { timeAgo, cn } from "@/lib/utils";
+import { findingSources, rankFinding, SEVERITY, sourceKey } from "@/lib/sources";
+import { IntegrationLogo } from "@/components/shared/integration-logo";
 import type { Finding, Brief, Correction, SyncProgress } from "@/lib/types";
 import { TimeFilter, withinRange, rangeLabel, type TimeRange } from "@/components/shared/time-filter";
 
@@ -54,29 +57,55 @@ function KindChip({ kind }: { kind: string }) {
   );
 }
 
-function BriefCard({ brief, range }: { brief: Brief; range: TimeRange }) {
-  const cols: [string, string[]][] = [
-    ["Risks", brief.evidence?.risks ?? []],
-    ["Highlights", brief.evidence?.highlights ?? []],
-    ["Recommended", brief.evidence?.recommendations ?? []],
-  ];
+function BriefCard({ brief, range, findings }: { brief: Brief; range: TimeRange; findings: Finding[] }) {
+  const cols = [
+    { label: "Risks", icon: AlertTriangle, tone: "text-warning", items: brief.evidence?.risks ?? [] },
+    { label: "Highlights", icon: CheckCircle2, tone: "text-success", items: brief.evidence?.highlights ?? [] },
+    { label: "Recommended", icon: Lightbulb, tone: "text-primary", items: brief.evidence?.recommendations ?? [] },
+  ].filter((c) => c.items.length);
+  // Honest grounding: the brief summarizes the findings below — show the
+  // aggregate evidence per tool, never an arbitrary sample of items.
+  const byTool = new Map<string, number>();
+  for (const f of findings) for (const a of f.artifacts) {
+    const k = sourceKey(a.source);
+    if (k) byTool.set(k, (byTool.get(k) ?? 0) + 1);
+  }
   return (
     <Card glass className="mb-6 p-6">
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-primary">
         <Sparkles className="h-3.5 w-3.5" /> {rangeLabel(range)}
       </div>
       <h2 className="text-gradient mt-2 text-[20px] font-semibold tracking-[-0.02em]">{brief.title}</h2>
-      {brief.detail ? <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{brief.detail}</p> : null}
-      <div className="mt-5 grid gap-5 sm:grid-cols-3">
-        {cols.filter(([, items]) => items.length).map(([label, items]) => (
+      {brief.detail ? <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-muted-foreground">{brief.detail}</p> : null}
+      <div className="mt-6 grid gap-6 sm:grid-cols-3">
+        {cols.map(({ label, icon: Icon, tone, items }) => (
           <div key={label}>
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
-            <ul className="mt-1.5 space-y-1 text-sm">
-              {items.slice(0, 4).map((t, i) => <li key={i} className="text-foreground/90">{t}</li>)}
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <Icon className={cn("h-3.5 w-3.5", tone)} /> {label}
+            </div>
+            <ul className="mt-2.5 space-y-2.5">
+              {items.slice(0, 3).map((t, i) => (
+                <li key={i} className="flex gap-2.5 text-sm leading-snug text-foreground/85">
+                  <span className={cn("mt-[7px] h-1 w-1 shrink-0 rounded-full bg-current", tone)} />
+                  <span>{t}</span>
+                </li>
+              ))}
             </ul>
           </div>
         ))}
       </div>
+      {(findings.length > 0 || byTool.size > 0) && (
+        <div className="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/60 pt-4 text-xs text-muted-foreground">
+          <span>Grounded in the {findings.length} finding{findings.length === 1 ? "" : "s"} below</span>
+          {byTool.size > 0 && <span className="text-muted-foreground/40">·</span>}
+          {Array.from(byTool.entries()).map(([tool, n]) => (
+            <span key={tool} className="inline-flex items-center gap-1.5">
+              <IntegrationLogo k={tool} className="h-4 w-4 rounded-[4px] border-0" />
+              <span>{n} item{n === 1 ? "" : "s"}</span>
+            </span>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }
@@ -261,6 +290,51 @@ function ScanningCard({ sync }: { sync?: SyncProgress | null }) {
   );
 }
 
+
+function AttentionCard({ finding, onOpen }: { finding: Finding; onOpen: () => void }) {
+  const sev = SEVERITY[finding.kind];
+  const owner = finding.entities.find((e) => e.kind === "person");
+  const sources = findingSources(finding);
+  const related = finding.entities.filter((e) => e.kind !== "person").slice(0, 3);
+  return (
+    <button onClick={onOpen} className="w-full text-left">
+      <Card className="p-5 transition-colors hover:border-primary/40">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <KindChip kind={finding.kind} />
+          {sev ? <span className={cn("text-[11px] font-semibold uppercase tracking-wider", sev.cls)}>{sev.label}</span> : null}
+          <span className="ml-auto text-xs text-muted-foreground">{timeAgo(finding.createdAt)}</span>
+        </div>
+        <h3 className="mt-2.5 text-[16px] font-semibold leading-snug tracking-tight">{finding.title}</h3>
+        <div className="mt-2">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Why Orbit thinks this</div>
+          <p className="mt-1 line-clamp-3 text-sm leading-relaxed text-muted-foreground">{finding.detail}</p>
+        </div>
+        <div className="mt-3.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+          {owner ? (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="font-medium text-foreground">{owner.name}</span> owns this
+            </span>
+          ) : null}
+          {related.map((e) => (
+            <span key={e.id} className="rounded-md bg-muted px-2 py-0.5">{e.name}</span>
+          ))}
+          {sources.length > 0 ? (
+            <span className="inline-flex items-center gap-1.5">
+              {sources.map((s) => <IntegrationLogo key={s} k={s} className="h-4 w-4 rounded-[4px]" />)}
+              <span>{finding.artifacts.length} evidence item{finding.artifacts.length === 1 ? "" : "s"}</span>
+            </span>
+          ) : null}
+          <span className="ml-auto font-medium text-primary">
+            {finding.status === "approved"
+              ? `Approved · ${finding.action?.result?.identifier ?? "synced"}`
+              : finding.action ? "Review & approve →" : "Review evidence →"}
+          </span>
+        </div>
+      </Card>
+    </button>
+  );
+}
+
 function FindingCard({ finding, onOpen }: { finding: Finding; onOpen: () => void }) {
   const approved = finding.status === "approved";
   return (
@@ -313,9 +387,18 @@ export default function FeedPage() {
   const liveSelected = selected && data ? data.findings.find((f) => f.id === selected.id) ?? selected : selected;
   const findings = (data?.findings ?? []).filter((f) => withinRange(f.createdAt, range));
 
+  // Rank by importance (kind) + evidence + recency; the top problems get the
+  // analyst treatment, the rest stay compact. No flat lists.
+  const ranked = [...findings].sort((a, b) => rankFinding(b) - rankFinding(a));
+  const attention = ranked.filter((f) => f.kind !== "win" && f.status === "open").slice(0, 3);
+  const attentionIds = new Set(attention.map((f) => f.id));
+  const rest = ranked.filter((f) => !attentionIds.has(f.id));
+
+  const freshness = hb?.lastRunAt ? `Orbit last looked ${timeAgo(hb.lastRunAt)}` : undefined;
+
   return (
     <div>
-      <PageHeader title="Feed" actions={<TimeFilter value={range} onChange={setRange} />} />
+      <PageHeader title="Feed" description={freshness} actions={<TimeFilter value={range} onChange={setRange} />} />
 
       {isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -323,7 +406,7 @@ export default function FeedPage() {
         </div>
       ) : (
         <>
-          {findings.length > 0 && data?.brief && (data.brief.detail || data.brief.title) ? <BriefCard brief={data.brief} range={range} /> : null}
+          {findings.length > 0 && data?.brief && (data.brief.detail || data.brief.title) ? <BriefCard brief={data.brief} range={range} findings={findings} /> : null}
           {findings.length === 0 ? (
             scanning ? (
               <ScanningCard sync={sync} />
@@ -336,9 +419,28 @@ export default function FeedPage() {
               />
             )
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {findings.map((f) => <FindingCard key={f.id} finding={f} onOpen={() => setSelected(f)} />)}
-            </div>
+            <>
+              {attention.length > 0 && (
+                <div className="mb-8">
+                  <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Needs attention
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    {attention.map((f) => <AttentionCard key={f.id} finding={f} onOpen={() => setSelected(f)} />)}
+                  </div>
+                </div>
+              )}
+              {rest.length > 0 && (
+                <>
+                  <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {attention.length > 0 ? "Also on Orbit's radar" : "Findings"}
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                    {rest.map((f) => <FindingCard key={f.id} finding={f} onOpen={() => setSelected(f)} />)}
+                  </div>
+                </>
+              )}
+            </>
           )}
           <LearnedCard />
         </>
