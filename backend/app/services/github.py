@@ -143,10 +143,33 @@ async def _enrich_pr(auth: str, repo: str, item: dict[str, Any]) -> None:
         item.setdefault("reviews", [])
 
 
-async def fetch_work(auth: str) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+async def item_state(auth: str, identifier: str, is_pr: bool) -> str | None:
+    """Live state of one `owner/repo#number` ('open'/'closed'/'merged'), or None
+    when it no longer exists — the deletion signal for reconcile. 301 means the
+    repo was renamed: this ref is dead too (the new name syncs as new artifacts).
+    Transient/API errors raise; deletion needs proof, not doubt."""
+    repo, _, number = identifier.rpartition("#")
+    path = f"/repos/{repo}/{'pulls' if is_pr else 'issues'}/{number}"
+    async with httpx.AsyncClient(timeout=20) as client:
+        res = await client.get(f"{_API}{path}", headers={
+            "Authorization": auth,
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        })
+    if res.status_code in (301, 404, 410, 451):
+        return None
+    if res.status_code != 200:
+        raise RuntimeError(f"GitHub API error {res.status_code}: {res.text[:150]}")
+    d = res.json()
+    return "merged" if d.get("merged_at") else (d.get("state") or "open")
+
+
+async def fetch_work(auth: str, since: str | None = None) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
     """PRs + issues across the account's most recently active repos, with a deep
     read (stats/discussion/reviews) of the open PRs, plus top contributors per
-    repo. Returns (items, contributors_by_repo)."""
+    repo. Returns (items, contributors_by_repo). `since` (ISO) makes the read
+    incremental: listings are updated-desc, so stop at the first stale item;
+    contributors are refreshed only on full syncs."""
     repos = await _get(auth, "/user/repos", {
         "sort": "pushed", "per_page": _MAX_REPOS,
         "affiliation": "owner,collaborator,organization_member",
@@ -161,15 +184,21 @@ async def fetch_work(auth: str) -> tuple[list[dict[str, Any]], dict[str, list[di
             prs = await _get(auth, f"/repos/{full}/pulls",
                              {"state": "all", "sort": "updated", "direction": "desc", "per_page": _PER_REPO})
             shaped = [_shape(full, p, True) for p in prs]
+            if since:
+                shaped = [x for x in shaped if (x.get("updatedAt") or "") > since]
             for pr in [s for s in shaped if s["state"] == "open"][:_ENRICH_PER_REPO]:
                 await _enrich_pr(auth, full, pr)
             out.extend(shaped)
-            issues = await _get(auth, f"/repos/{full}/issues",
-                                {"state": "all", "sort": "updated", "direction": "desc", "per_page": _PER_REPO})
+            issue_params = {"state": "all", "sort": "updated", "direction": "desc", "per_page": _PER_REPO}
+            if since:
+                issue_params["since"] = since
+            issues = await _get(auth, f"/repos/{full}/issues", issue_params)
             # The issues endpoint interleaves PRs; keep only real issues.
             out.extend(_shape(full, i, False) for i in issues if "pull_request" not in i)
         except Exception:
             continue  # a single archived/blocked repo must not sink the sync
+        if since:
+            continue  # contributors barely change; full syncs refresh them
         try:
             rows = await _get(auth, f"/repos/{full}/contributors", {"per_page": _CONTRIBUTORS_PER_REPO})
             contributors[full] = [

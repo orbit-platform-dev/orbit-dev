@@ -26,10 +26,13 @@ class Settings(BaseSettings):
 
 
     frontend_url: str = "http://localhost:3000"
+    # Public base URL of THIS API (for inbound webhooks); ngrok/prod domain.
+    public_api_url: str | None = None
 
     google_client_id: str | None = None
     google_client_secret: str | None = None
     google_redirect_uri: str = "http://localhost:8000/calendar/oauth/callback"
+    gdrive_redirect_uri: str = "http://localhost:8000/integrations/google-drive/oauth/callback"
 
     meet_redirect_uri: str = "http://localhost:8000/meet/oauth/callback"
 
@@ -53,6 +56,9 @@ class Settings(BaseSettings):
 
     enable_ai: bool = False
     default_model: str = "google-gla:gemini-2.0-flash"
+    # High-volume structured extraction runs on a cheap, high-quota model so bulk
+    # syncs never exhaust the reasoning model's quota. None = use default_model.
+    extractor_model: str | None = None
     llm_api_key: str | None = None
     # Embedding model for the Context Engine's semantic retrieval (uses the
     # same LLM_API_KEY). Output is requested at models.EMBEDDING_DIM dimensions.

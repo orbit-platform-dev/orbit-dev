@@ -458,7 +458,7 @@ export default function ChatPage() {
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               </div>
             ) : messages.length === 0 ? (
-              <div className="flex min-h-[55vh] flex-col items-center justify-center text-center">
+              <div className="flex min-h-[55vh] animate-in flex-col items-center justify-center fade-in-0 zoom-in-95 text-center duration-500">
                 <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 shadow-[0_0_40px_-12px] shadow-primary/50">
                   <Sparkles className="h-7 w-7 text-primary" />
                 </div>
@@ -472,7 +472,7 @@ export default function ChatPage() {
                     <button
                       key={s.title}
                       onClick={() => send(s.ask ?? s.title)}
-                      className="group rounded-xl border border-border bg-card/50 px-4 py-3 text-left transition-all hover:border-primary/40 hover:bg-card"
+                      className="group rounded-xl border border-border bg-card/50 px-4 py-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card hover:shadow-lg hover:shadow-primary/5"
                     >
                       <div className="line-clamp-2 text-sm font-medium">{s.title}</div>
                       <div className="mt-0.5 text-xs text-muted-foreground group-hover:text-muted-foreground/80">{s.hint}</div>
@@ -482,17 +482,19 @@ export default function ChatPage() {
               </div>
             ) : (
               <div className="space-y-7">
-                {messages.map((m, i) =>
-                  m.role === "user" ? (
-                    <div key={i} className="flex justify-end">
-                      <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] leading-relaxed text-primary-foreground shadow-sm">
-                        {m.content}
+                {messages.map((m, i) => (
+                  <div key={i} className="animate-in fade-in-0 slide-in-from-bottom-1 duration-300">
+                    {m.role === "user" ? (
+                      <div className="flex justify-end">
+                        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] leading-relaxed text-primary-foreground shadow-sm">
+                          {m.content}
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <AssistantMessage key={i} m={m} phase={phase} />
-                  ),
-                )}
+                    ) : (
+                      <AssistantMessage m={m} phase={phase} />
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -502,7 +504,7 @@ export default function ChatPage() {
         <div className="mx-auto w-full max-w-[44rem] pb-2 pt-3">
           <form
             onSubmit={(e) => { e.preventDefault(); send(input); }}
-            className="relative rounded-2xl border border-border bg-card shadow-lg shadow-black/5 transition-colors focus-within:border-primary/50"
+            className="relative rounded-2xl border border-border bg-card shadow-lg shadow-black/5 transition-all duration-300 focus-within:border-primary/50 focus-within:shadow-[0_0_40px_-12px] focus-within:shadow-primary/40"
           >
             <textarea
               ref={inputRef}

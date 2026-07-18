@@ -35,7 +35,7 @@ async def extract(kind: str, title: str, content: str, corrections: str = "") ->
     if kind == "issue" or not settings.ai_enabled:
         return _fallback(title, content)
     try:
-        agent = build_agent(SYSTEM_PROMPTS["extractor"], ArtifactExtraction)
+        agent = build_agent(SYSTEM_PROMPTS["extractor"], ArtifactExtraction, model=settings.extractor_model)
         prefix = f"{corrections}\n\n" if corrections else ""
         prompt = f"{prefix}ARTIFACT (kind: {kind}) titled \"{title}\":\n\n{(content or '')[:_MAX_CONTENT]}"
         result = await agent.run(prompt)

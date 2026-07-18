@@ -19,7 +19,9 @@ from ..models import Integration
 
 _API = "https://slack.com/api"
 _AUTHORIZE = "https://slack.com/oauth/v2/authorize"
-_SCOPES = "channels:history,channels:read,groups:history,users:read"
+# files:read: image attachments are downloaded and read by the vision model.
+# Workspaces connected before it was added must reconnect to grant it.
+_SCOPES = "channels:history,channels:read,groups:history,users:read,files:read"
 
 
 def _auth_header(cred: dict[str, Any] | None) -> str | None:
@@ -108,18 +110,27 @@ async def list_channels(auth: str, limit: int = 200) -> list[dict[str, Any]]:
 
 
 async def fetch_threads(auth: str, channel_id: str, *, history_limit: int = 50,
-                        max_threads: int = 20) -> list[dict[str, Any]]:
+                        max_threads: int = 20, oldest: str | None = None) -> list[dict[str, Any]]:
     """Recent threads (root + replies) in a channel, newest first. Threads only —
     a rooted discussion is a coherent unit of intent, like a mini-call."""
-    hist = await _call(auth, "conversations.history", {"channel": channel_id, "limit": history_limit})
+    params: dict[str, Any] = {"channel": channel_id, "limit": history_limit}
+    if oldest:
+        params["oldest"] = oldest
+    hist = await _call(auth, "conversations.history", params)
     threads: list[dict[str, Any]] = []
     for m in hist.get("messages", []):
         if m.get("subtype") or m.get("reply_count", 0) < 1:
             continue  # skip joins/bot noise and non-threaded messages
         replies = await _call(auth, "conversations.replies", {"channel": channel_id, "ts": m["ts"]})
-        text = "\n\n".join((x.get("text") or "").strip() for x in replies.get("messages", []) if x.get("text"))
+        msgs = replies.get("messages", [])
+        text = "\n\n".join((x.get("text") or "").strip() for x in msgs if x.get("text"))
+        files = [
+            {"name": f.get("name") or "image", "mime": f.get("mimetype"), "url": f.get("url_private")}
+            for x in msgs for f in (x.get("files") or [])
+            if (f.get("mimetype") or "").startswith("image/") and f.get("url_private")
+        ]
         threads.append({"ts": m["ts"], "channel": channel_id, "text": text,
-                        "reply_count": m.get("reply_count", 0)})
+                        "reply_count": m.get("reply_count", 0), "files": files})
         if len(threads) >= max_threads:
             break
     return threads

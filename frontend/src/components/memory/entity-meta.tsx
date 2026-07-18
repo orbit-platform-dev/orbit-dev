@@ -36,9 +36,25 @@ export function CommitmentStatusChip({ entity }: { entity: Entity }) {
         Tracked
         {lin?.identifier ? (
           lin.url ? (
-            <a href={lin.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 hover:underline">
+            <span
+              role="link"
+              tabIndex={0}
+              className="inline-flex cursor-pointer items-center gap-0.5 hover:underline"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                window.open(lin.url, "_blank", "noopener,noreferrer");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  window.open(lin.url, "_blank", "noopener,noreferrer");
+                }
+              }}
+            >
               {lin.identifier} <ArrowUpRight className="h-3 w-3" />
-            </a>
+            </span>
           ) : (
             <span>{lin.identifier}</span>
           )

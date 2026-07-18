@@ -173,6 +173,25 @@ async def derive_from_artifact(db, ws: str, artifact) -> int:
     return n
 
 
+async def backfill_embeddings(db, ws: str, limit: int = 100) -> int:
+    """Embed facts whose write-time embedding failed (quota outages) so ranked
+    retrieval sees the whole memory. Heartbeat path; caller commits."""
+    if not embeddings.available():
+        return 0
+    rows = (await db.execute(select(Memory).where(
+        Memory.workspace_id == ws, Memory.embedding.is_(None),
+        Memory.status.in_(("active", "superseded"))).limit(limit))).scalars().all()
+    if not rows:
+        return 0
+    vectors = await embeddings.embed_many([m.fact for m in rows])
+    filled = 0
+    for m, v in zip(rows, vectors):
+        if v:
+            m.embedding = v
+            filled += 1
+    return filled
+
+
 # --- Phase 3: decay (runs in the heartbeat) --------------------------------
 async def decay(db, ws: str) -> int:
     """Unverified facts slowly lose confidence; below a floor they go stale.

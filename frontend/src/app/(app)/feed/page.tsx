@@ -36,7 +36,8 @@ import * as api from "@/lib/api";
 import { timeAgo, cn } from "@/lib/utils";
 import { findingSources, rankFinding, SEVERITY, sourceKey } from "@/lib/sources";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
-import type { Finding, Brief, Correction, SyncProgress } from "@/lib/types";
+import { SyncTheater } from "@/components/shared/sync-theater";
+import type { Finding, Brief, Correction } from "@/lib/types";
 import { TimeFilter, withinRange, rangeLabel, type TimeRange } from "@/components/shared/time-filter";
 
 const KIND: Record<string, { label: string; icon: LucideIcon; chip: string }> = {
@@ -71,7 +72,7 @@ function BriefCard({ brief, range, findings }: { brief: Brief; range: TimeRange;
     if (k) byTool.set(k, (byTool.get(k) ?? 0) + 1);
   }
   return (
-    <Card glass className="mb-6 p-6">
+    <Card glass className="mb-6 animate-in fade-in-0 slide-in-from-bottom-2 p-6 duration-500">
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-primary">
         <Sparkles className="h-3.5 w-3.5" /> {rangeLabel(range)}
       </div>
@@ -274,23 +275,6 @@ function LearnedCard() {
   );
 }
 
-function ScanningCard({ sync }: { sync?: SyncProgress | null }) {
-  const issues = sync?.counts?.issues;
-  return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-border px-6 py-14 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-        <RefreshCw className="h-5 w-5 animate-spin text-primary" />
-      </div>
-      <h3 className="mt-4 text-sm font-medium">Orbit is scanning your workspace</h3>
-      <p className="mt-1 max-w-md text-sm text-muted-foreground">
-        {sync?.message ?? "Reading your tickets and comparing them to what was promised and decided."}
-      </p>
-      {issues ? <p className="mt-2 text-xs text-muted-foreground">{issues} tickets read so far</p> : null}
-    </div>
-  );
-}
-
-
 function AttentionCard({ finding, onOpen }: { finding: Finding; onOpen: () => void }) {
   const sev = SEVERITY[finding.kind];
   const owner = finding.entities.find((e) => e.kind === "person");
@@ -298,7 +282,7 @@ function AttentionCard({ finding, onOpen }: { finding: Finding; onOpen: () => vo
   const related = finding.entities.filter((e) => e.kind !== "person").slice(0, 3);
   return (
     <button onClick={onOpen} className="w-full text-left">
-      <Card className="p-5 transition-colors hover:border-primary/40">
+      <Card className="p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5">
         <div className="flex flex-wrap items-center gap-2.5">
           <KindChip kind={finding.kind} />
           {sev ? <span className={cn("text-[11px] font-semibold uppercase tracking-wider", sev.cls)}>{sev.label}</span> : null}
@@ -339,7 +323,7 @@ function FindingCard({ finding, onOpen }: { finding: Finding; onOpen: () => void
   const approved = finding.status === "approved";
   return (
     <button onClick={onOpen} className="w-full text-left">
-      <Card className="p-5 transition-colors hover:border-primary/30">
+      <Card className="p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
         <div className="flex items-center justify-between gap-3">
           <KindChip kind={finding.kind} />
           <span className="text-xs text-muted-foreground">{timeAgo(finding.createdAt)}</span>
@@ -404,20 +388,19 @@ export default function FeedPage() {
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-44 rounded-xl" />)}
         </div>
+      ) : scanning ? (
+        // While Orbit reads the tools, the sync IS the page — no half-built data.
+        <SyncTheater sync={sync} />
       ) : (
         <>
           {findings.length > 0 && data?.brief && (data.brief.detail || data.brief.title) ? <BriefCard brief={data.brief} range={range} findings={findings} /> : null}
           {findings.length === 0 ? (
-            scanning ? (
-              <ScanningCard sync={sync} />
-            ) : (
-              <EmptyState
-                icon={Sparkles}
-                title="Nothing needs attention"
-                description="Orbit continuously compares what you promised and decided against what's actually being built. New findings appear here on their own."
-                action={<Button variant="outline" onClick={() => scan.mutate()}><RefreshCw className="h-4 w-4" /> Scan now</Button>}
-              />
-            )
+            <EmptyState
+              icon={Sparkles}
+              title="Nothing needs attention"
+              description="Orbit continuously compares what you promised and decided against what's actually being built. New findings appear here on their own."
+              action={<Button variant="outline" onClick={() => scan.mutate()}><RefreshCw className="h-4 w-4" /> Scan now</Button>}
+            />
           ) : (
             <>
               {attention.length > 0 && (
@@ -426,7 +409,11 @@ export default function FeedPage() {
                     Needs attention
                   </div>
                   <div className="flex flex-col gap-3">
-                    {attention.map((f) => <AttentionCard key={f.id} finding={f} onOpen={() => setSelected(f)} />)}
+                    {attention.map((f, i) => (
+                      <div key={f.id} className="animate-in fade-in-0 slide-in-from-bottom-2 fill-mode-backwards duration-500" style={{ animationDelay: `${i * 90}ms` }}>
+                        <AttentionCard finding={f} onOpen={() => setSelected(f)} />
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -436,7 +423,11 @@ export default function FeedPage() {
                     {attention.length > 0 ? "Also on Orbit's radar" : "Findings"}
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                    {rest.map((f) => <FindingCard key={f.id} finding={f} onOpen={() => setSelected(f)} />)}
+                    {rest.map((f, i) => (
+                      <div key={f.id} className="animate-in fade-in-0 slide-in-from-bottom-2 fill-mode-backwards duration-500" style={{ animationDelay: `${Math.min(i, 8) * 60}ms` }}>
+                        <FindingCard finding={f} onOpen={() => setSelected(f)} />
+                      </div>
+                    ))}
                   </div>
                 </>
               )}

@@ -3,9 +3,11 @@ import type { Finding, IntegrationKey } from "./types";
 // Artifact source string → connector key ("linear-issue" → "linear"). Null for
 // non-connector memory (calls, documents), which renders a generic icon.
 const NON_CONNECTOR = new Set(["call", "document", "doc", "note", "email", "manual"]);
+const ALIAS: Record<string, IntegrationKey> = { gdrive: "google-drive" };
 export function sourceKey(source: string): IntegrationKey | null {
   const base = (source || "").split(/[-_ ]/)[0].toLowerCase();
-  return !base || NON_CONNECTOR.has(base) ? null : (base as IntegrationKey);
+  if (!base || NON_CONNECTOR.has(base)) return null;
+  return ALIAS[base] ?? (base as IntegrationKey);
 }
 
 export function findingSources(f: Finding): IntegrationKey[] {

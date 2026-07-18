@@ -229,6 +229,18 @@ async def match_open_commitments(db, ws: str) -> int:
 WORK_SOURCES = ("linear-issue", "github-pr", "github-issue")
 
 
+BOT_NAMES = frozenset({"mend renovate", "renovate", "dependabot", "github-actions",
+                       "polar-sync-app", "cloudflare-workers-and-pages", "figma"})
+
+
+def is_bot(name: str | None) -> bool:
+    """Automation accounts must never become people in the company graph."""
+    if not name:
+        return True
+    n = name.strip().lower()
+    return n.endswith("[bot]") or n.removesuffix("[bot]").strip() in BOT_NAMES
+
+
 async def link_work_entities(db, ws: str, artifact: Artifact) -> None:
     """Build the ownership graph from a work item's structured meta (no LLM) —
     identical for every connector because meta uses one key vocabulary:
@@ -238,12 +250,12 @@ async def link_work_entities(db, ws: str, artifact: Artifact) -> None:
         return
     m = artifact.meta or {}
     assignee_ent = None
-    if m.get("assignee"):
+    if m.get("assignee") and not is_bot(m.get("assignee")):
         assignee_ent = await resolve_entity(db, ws, "person", m["assignee"], meta={"email": m.get("assigneeEmail")})
         if assignee_ent:
             await ensure_link(db, ws, "entity", assignee_ent.id, "artifact", artifact.id,
                               "assigned_to", source_artifact_id=artifact.id)
-    if m.get("creator") and m.get("creator") != m.get("assignee"):
+    if m.get("creator") and m.get("creator") != m.get("assignee") and not is_bot(m.get("creator")):
         ce = await resolve_entity(db, ws, "person", m["creator"])
         if ce:
             await ensure_link(db, ws, "entity", ce.id, "artifact", artifact.id,
@@ -316,6 +328,34 @@ async def build_from_artifact(db, ws: str, artifact: Artifact) -> None:
             await ensure_link(db, ws, "entity", fe.id, "entity", cust.id, "requested_by")
 
     await db.commit()
+
+
+async def traverse(db, ws: str, start_ids: list[str], depth: int = 2,
+                   edge_types: list[str] | None = None) -> list[Link]:
+    """BFS over the graph up to `depth` hops from the start set; returns the
+    edges reached. Python-side scan — swap for a recursive CTE at real scale;
+    every caller goes through this seam."""
+    frontier: set[str] = set(start_ids)
+    visited: set[str] = set(frontier)
+    edges: dict[str, Link] = {}
+    for _ in range(max(1, depth)):
+        if not frontier:
+            break
+        stmt = select(Link).where(
+            Link.workspace_id == ws,
+            or_(Link.from_id.in_(frontier), Link.to_id.in_(frontier)))
+        if edge_types:
+            stmt = stmt.where(Link.type.in_(edge_types))
+        rows = (await db.execute(stmt)).scalars().all()
+        nxt: set[str] = set()
+        for lk in rows:
+            edges[lk.id] = lk
+            for nid in (lk.from_id, lk.to_id):
+                if nid not in visited:
+                    visited.add(nid)
+                    nxt.add(nid)
+        frontier = nxt
+    return list(edges.values())
 
 
 async def neighbors(db, ws: str, entity_id: str) -> list[Link]:

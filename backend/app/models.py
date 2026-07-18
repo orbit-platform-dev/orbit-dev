@@ -178,6 +178,7 @@ class Integration(Base):
     account: Mapped[str | None] = mapped_column(String, nullable=True)
     stats: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
     credentials: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    sync_state: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
 class ActivityEvent(Base):

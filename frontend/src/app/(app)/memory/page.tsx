@@ -37,6 +37,7 @@ import { timeAgo } from "@/lib/utils";
 import type { Artifact, Entity } from "@/lib/types";
 import { entityMeta, CommitmentStatusChip } from "@/components/memory/entity-meta";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
+import { MemoryTheater } from "@/components/shared/memory-theater";
 import { sourceKey } from "@/lib/sources";
 import { TimeFilter, withinRange, type TimeRange } from "@/components/shared/time-filter";
 
@@ -47,6 +48,11 @@ const SOURCE_LABEL: Record<string, string> = {
   "slack-message": "Slack",
   "github-pr": "GitHub PR",
   "github-issue": "GitHub issue",
+  "gdrive-doc": "Google Doc",
+  "gdrive-sheet": "Google Sheet",
+  "gdrive-slides": "Google Slides",
+  "gdrive-pdf": "PDF (Drive)",
+  "gdrive-image": "Image (Drive)",
 };
 const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? s;
 
@@ -82,7 +88,7 @@ function SourceRow({ artifact }: { artifact: Artifact }) {
       {artifact.url ? <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
     </>
   );
-  const cls = "flex min-w-0 items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 transition-colors hover:border-primary/30";
+  const cls = "flex min-w-0 items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 transition-all duration-200 hover:-translate-y-px hover:border-primary/30 hover:shadow-md hover:shadow-primary/5";
   return artifact.url ? (
     <a href={artifact.url} target="_blank" rel="noreferrer" className={cls}>{inner}</a>
   ) : (
@@ -137,7 +143,7 @@ function EntityRow({ entity }: { entity: Entity }) {
   return (
     <Link
       href={`/memory/${entity.id}`}
-      className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:border-primary/30 hover:bg-accent"
+      className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 transition-all duration-200 hover:-translate-y-px hover:border-primary/30 hover:bg-accent hover:shadow-md hover:shadow-primary/5"
     >
       <Icon className="h-4 w-4 shrink-0 text-primary" />
       <span className="min-w-0 flex-1 truncate text-sm font-medium">{entity.name}</span>
@@ -238,6 +244,7 @@ function AddCallDialog() {
 export default function MemoryPage() {
   const [range, setRange] = useState<TimeRange>("all");
   const { data: hb } = useHeartbeat();
+  const sync = hb?.sync;
 
   return (
     <div>
@@ -246,21 +253,26 @@ export default function MemoryPage() {
         description={hb?.lastRunAt ? `Orbit last read your tools ${timeAgo(hb.lastRunAt)}` : undefined}
         actions={<AddCallDialog />}
       />
-      <Tabs defaultValue="knowledge">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <TabsList>
-            <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
-            <TabsTrigger value="sources">Sources</TabsTrigger>
-          </TabsList>
-          <TimeFilter value={range} onChange={setRange} />
-        </div>
-        <TabsContent value="knowledge">
-          <EntitiesView range={range} />
-        </TabsContent>
-        <TabsContent value="sources">
-          <SignalsView range={range} />
-        </TabsContent>
-      </Tabs>
+      {sync?.active ? (
+        // While Orbit reads the tools, the sync IS the page — no half-built data.
+        <MemoryTheater sync={sync} />
+      ) : (
+        <Tabs defaultValue="knowledge">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <TabsList>
+              <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
+              <TabsTrigger value="sources">Sources</TabsTrigger>
+            </TabsList>
+            <TimeFilter value={range} onChange={setRange} />
+          </div>
+          <TabsContent value="knowledge">
+            <EntitiesView range={range} />
+          </TabsContent>
+          <TabsContent value="sources">
+            <SignalsView range={range} />
+          </TabsContent>
+        </Tabs>
+      )}
     </div>
   );
 }

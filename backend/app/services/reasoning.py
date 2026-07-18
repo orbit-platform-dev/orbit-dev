@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -175,6 +175,58 @@ async def detect_findings(db, ws: str) -> int:
             "title": f"{len(stale_prs)} pull requests have sat open for {_STALE_PR_DAYS}+ days",
             "detail": f"Unmerged code is undelivered work and a review bottleneck: {examples}.",
             "entity_ids": [], "artifact_ids": [a.id for a in stale_prs[:8]], "action": None,
+        })
+
+    # 6) INFERENCE: blocked work propagates to its project.
+    #    active blocker fact (PR/issue) → the artifact → its project.
+    from ..models import Memory
+    blockers = (await db.execute(select(Memory).where(
+        Memory.workspace_id == ws, Memory.kind == "blocker", Memory.status == "active"
+    ))).scalars().all()
+    ident_art = {(a.external_ref or "").lower(): a for a in arts if a.external_ref}
+    by_project: dict[str, list] = {}
+    for b in blockers:
+        art = ident_art.get((b.subject or "").lower())
+        proj = (art.meta or {}).get("project") if art else None
+        if art and proj and (art.meta or {}).get("stateType") not in ("completed", "canceled"):
+            by_project.setdefault(proj, []).append(art)
+    for proj, blocked_arts in by_project.items():
+        idents = ", ".join(a.external_ref or a.title for a in blocked_arts[:4])
+        desired.append({
+            "dedupe_key": f"blocked-project:{proj}", "kind": "drift",
+            "title": f"{proj} has blocked work",
+            "detail": f"Waiting on review changes: {idents}. Blocked work stalls everything downstream of it.",
+            "entity_ids": [], "artifact_ids": [a.id for a in blocked_arts[:8]], "action": None,
+        })
+
+    # 7) INFERENCE: a tracked customer commitment whose issue is blocked or
+    #    stalled ⇒ the promise itself is at risk (the founder-level chain).
+    blocked_idents = {(b.subject or "").lower() for b in blockers}
+    stall_cutoff = _now() - timedelta(days=14)
+    for c in commitments:
+        if c.state != "tracked":
+            continue
+        ident = ((c.meta or {}).get("linear") or {}).get("identifier") or ""
+        art = ident_art.get(ident.lower())
+        if not art or (art.meta or {}).get("stateType") in ("completed", "canceled"):
+            continue
+        occurred = art.occurred_at
+        if occurred and occurred.tzinfo is None:
+            occurred = occurred.replace(tzinfo=timezone.utc)
+        blocked = ident.lower() in blocked_idents
+        stalled = occurred is not None and occurred < stall_cutoff
+        if not (blocked or stalled):
+            continue
+        cust_id = next((lk.to_id for lk in links
+                        if lk.type == "made_to" and lk.from_id == c.id), None)
+        cust = by_id.get(cust_id) if cust_id else None
+        why = "its work is blocked in review" if blocked else f"{ident} hasn't moved in 14+ days"
+        desired.append({
+            "dedupe_key": f"commit-risk:{c.id}", "kind": "drift",
+            "title": f"Commitment{' to ' + cust.name if cust else ''} may slip: {_clip(c.name, 60)}",
+            "detail": f"Tracked as {ident}, but {why}.",
+            "entity_ids": [c.id] + ([cust.id] if cust else []),
+            "artifact_ids": [art.id], "action": None,
         })
 
     corrections = await render_corrections(db, ws)

@@ -10,14 +10,16 @@ The legacy Meeting pipeline is untouched; this is the new memory substrate.
 from __future__ import annotations
 
 import logging
+import random
+import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 
 from ..agents.extractor import extract
 from ..models import Artifact
-from . import embeddings, github, linear, slack
+from . import embeddings, github, google_drive, linear, slack, vision
 
 logger = logging.getLogger("orbit.ingestion")
 
@@ -33,6 +35,7 @@ SOURCE_BY_INTEGRATION: dict[str, list[str]] = {
     "linear": ["linear-issue"],
     "slack": ["slack-message"],
     "github": ["github-pr", "github-issue"],
+    "google-drive": ["gdrive-doc", "gdrive-sheet", "gdrive-slides", "gdrive-pdf", "gdrive-image"],
 }
 
 
@@ -51,6 +54,68 @@ async def set_source_stale(db, workspace_id: str, integration_key: str, stale: b
             Artifact.workspace_id == workspace_id, Artifact.source.in_(sources),
             Artifact.status == "stale").values(status="extracted"))
     return (await db.execute(stmt)).rowcount
+
+
+_FULL_SYNC_EVERY_HOURS = 24   # nightly reconcile pass catches deletions/archives
+_CURSOR_OVERLAP_MINUTES = 5   # re-read a small window; dedup makes overlap free
+_RECONCILE_CHECKS = 50        # live existence probes per full sync, shuffled
+
+_IMAGE_MD = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
+_IMAGES_PER_SYNC = 5          # vision reads spend model quota — bounded per pull
+
+
+async def _fold_images(content: str, *, auth: str | None, prev: dict, budget: list[int]) -> tuple[str, dict[str, str]]:
+    """Read markdown-embedded images (issue/PR descriptions and comments) with
+    the vision model and fold what they say into the artifact content, so it
+    reaches extraction, embeddings and chat. Each image is read ONCE: descriptions
+    cache in meta.imageTexts keyed by the URL sans query (Linear re-signs URLs on
+    every fetch); dead links cache as "" so they never burn budget again."""
+    urls = list(dict.fromkeys(_IMAGE_MD.findall(content)))[:5]
+    texts: dict[str, str] = {}
+    for url in urls:
+        key = url.partition("?")[0]
+        if key in prev:
+            texts[key] = prev[key]
+        elif budget[0] > 0:
+            budget[0] -= 1
+            got = await vision.fetch_image(url, auth)
+            if got is None:
+                texts[key] = ""
+                continue
+            desc = (await vision.transcribe(*got, name=key.rsplit("/", 1)[-1]))[:800]
+            if desc:
+                texts[key] = desc
+    block = "\n".join(f"- {d}" for d in texts.values() if d)
+    if block:
+        content += "\n\nImages:\n" + block
+    return content, texts
+
+
+async def _sync_plan(db, workspace_id: str, key: str):
+    """(since_iso, integration) for a connector. since=None ⇒ FULL sync — first
+    run ever, or the periodic reconcile window has elapsed."""
+    from ..models import Integration
+
+    integ = await db.get(Integration, {"workspace_id": workspace_id, "key": key})
+    if not integ:
+        return None, None
+    st = integ.sync_state or {}
+    last_full = _parse_ts(st.get("lastFull"))
+    stale_full = not last_full or (datetime.now(timezone.utc) - last_full) >= timedelta(hours=_FULL_SYNC_EVERY_HOURS)
+    if not st.get("cursor") or stale_full:
+        return None, integ
+    return st["cursor"], integ
+
+
+def _advance_cursor(integ, *, full: bool) -> None:
+    if not integ:
+        return
+    now = datetime.now(timezone.utc)
+    st = dict(integ.sync_state or {})
+    st["cursor"] = (now - timedelta(minutes=_CURSOR_OVERLAP_MINUTES)).isoformat()
+    if full:
+        st["lastFull"] = now.isoformat()
+    integ.sync_state = st
 
 
 def _parse_ts(value: str | None) -> datetime | None:
@@ -216,13 +281,16 @@ async def pull_linear(db, workspace_id: str) -> int:
     auth = await linear.get_auth(db, workspace_id)
     if not auth:
         return 0
+    since, integ = await _sync_plan(db, workspace_id, "linear")
     try:
-        issues = await linear.fetch_open_issues(auth) + await linear.fetch_completed_issues(auth)
+        issues = (await linear.fetch_open_issues(auth, since=since)
+                  + await linear.fetch_completed_issues(auth, since=since))
     except Exception:
         logger.warning("Linear pull failed", exc_info=True)
         return 0
 
     ingested = 0
+    img_budget = [_IMAGES_PER_SYNC]
     for issue in issues:
         content, meta = _linear_content_meta(issue)
         existing = (await db.execute(
@@ -232,6 +300,12 @@ async def pull_linear(db, workspace_id: str) -> int:
                 Artifact.external_ref == issue["identifier"],
             )
         )).scalars().first()
+        content, imgs = await _fold_images(
+            content, auth=auth,
+            prev=(existing.meta or {}).get("imageTexts") or {} if existing else {},
+            budget=img_budget)
+        if imgs:
+            meta["imageTexts"] = imgs
         if existing:
             # Keep memory current AND enrich it: refresh the full ticket context
             # (state, assignee, project, labels, cycle time). Embedding is left
@@ -258,7 +332,20 @@ async def pull_linear(db, workspace_id: str) -> int:
         )
         ingested += 1
 
-    await db.commit()  # persist the in-place refreshes of existing tickets
+    # Reconcile on FULL syncs only: the open-issues fetch is complete, so any
+    # locally-open artifact missing from it was deleted/archived in Linear.
+    if since is None:
+        seen = {i["identifier"] for i in issues}
+        rows = (await db.execute(select(Artifact).where(
+            Artifact.workspace_id == workspace_id, Artifact.source == "linear-issue",
+            Artifact.status != "stale"))).scalars().all()
+        for a in rows:
+            if (a.external_ref and a.external_ref not in seen
+                    and (a.meta or {}).get("stateType") not in ("completed", "canceled")):
+                a.status = "stale"
+
+    _advance_cursor(integ, full=since is None)
+    await db.commit()  # persist refreshes + reconcile + cursor
 
     # A new issue may fulfill an earlier untracked commitment — re-match once.
     from .model import match_open_commitments
@@ -329,13 +416,15 @@ async def pull_github(db, workspace_id: str) -> int:
     auth = await github.get_auth(db, workspace_id)
     if not auth:
         return 0
+    since, integ = await _sync_plan(db, workspace_id, "github")
     try:
-        items, contributors = await github.fetch_work(auth)
+        items, contributors = await github.fetch_work(auth, since=since)
     except Exception:
         logger.warning("GitHub pull failed", exc_info=True)
         return 0
 
     ingested = 0
+    img_budget = [_IMAGES_PER_SYNC]
     for item in items:
         source = "github-pr" if item.get("isPr") else "github-issue"
         content, meta = _github_content_meta(item)
@@ -346,6 +435,12 @@ async def pull_github(db, workspace_id: str) -> int:
                 Artifact.external_ref == item["identifier"],
             )
         )).scalars().first()
+        content, imgs = await _fold_images(
+            content, auth=auth,
+            prev=(existing.meta or {}).get("imageTexts") or {} if existing else {},
+            budget=img_budget)
+        if imgs:
+            meta["imageTexts"] = imgs
         if existing:
             existing.content = content
             existing.meta = meta
@@ -370,9 +465,12 @@ async def pull_github(db, workspace_id: str) -> int:
     # and memory learns who actually builds what.
     from .memory import record
     from .model import ensure_link, resolve_entity
+    from .model import is_bot
     for repo, people in (contributors or {}).items():
         proj = await resolve_entity(db, workspace_id, "project", repo)
         for p in people:
+            if is_bot(p.get("login")):
+                continue
             ent = await resolve_entity(db, workspace_id, "person", p["login"])
             if ent and proj:
                 await ensure_link(db, workspace_id, "entity", ent.id, "entity", proj.id, "works_on")
@@ -383,7 +481,111 @@ async def pull_github(db, workspace_id: str) -> int:
                 source_ref=f"GitHub {repo}", importance=0.4, base_confidence=0.85,
             )
 
+    # Reconcile on FULL syncs: open items missing from the (capped) listing get a
+    # live probe — gone → stale; merged/closed outside the window → state fixed;
+    # still open → just outside the cap, untouched.
+    if since is None:
+        seen = {i["identifier"] for i in items}
+        rows = (await db.execute(select(Artifact).where(
+            Artifact.workspace_id == workspace_id,
+            Artifact.source.in_(("github-pr", "github-issue")),
+            Artifact.status != "stale"))).scalars().all()
+        missing = [a for a in rows
+                   if a.external_ref and a.external_ref not in seen
+                   and (a.meta or {}).get("stateType") not in ("completed", "canceled")]
+        random.shuffle(missing)
+        for a in missing[:_RECONCILE_CHECKS]:
+            try:
+                state = await github.item_state(auth, a.external_ref, a.source == "github-pr")
+            except Exception:
+                continue  # rate limit / transient — deletion needs proof, not doubt
+            if state is None:
+                a.status = "stale"
+            elif state in ("merged", "closed"):
+                a.meta = {**(a.meta or {}), "state": state, "stateType": "completed"}
+
+    _advance_cursor(integ, full=since is None)
     await db.commit()
+    return ingested
+
+
+async def pull_gdrive(db, workspace_id: str) -> int:
+    """Ingest recently-modified Google Docs/Sheets/Slides + PDFs (text layer,
+    scanned ones via OCR) as document artifacts. Content refreshes in place when
+    a file changes (modifiedTime moves). Honest when not connected (0) / on failure."""
+    try:
+        auth = await google_drive.get_auth(db, workspace_id)
+    except Exception:
+        logger.warning("Google Drive token refresh failed", exc_info=True)
+        return 0
+    if not auth:
+        return 0
+    since, integ = await _sync_plan(db, workspace_id, "google-drive")
+    # What's already in memory, so unchanged files are never re-downloaded/re-OCR'd.
+    known_rows = (await db.execute(select(Artifact.external_ref, Artifact.meta).where(
+        Artifact.workspace_id == workspace_id,
+        Artifact.source.in_(SOURCE_BY_INTEGRATION["google-drive"])))).all()
+    known = {ref: (m or {}).get("modifiedAt") for ref, m in known_rows if ref}
+    try:
+        docs, listed = await google_drive.fetch_documents(auth, since=since, known=known)
+    except Exception:
+        logger.warning("Google Drive pull failed", exc_info=True)
+        return 0
+
+    ingested = 0
+    for d in docs:
+        content = d["content"]
+        if not content:
+            continue
+        if d.get("owner"):
+            content = f"{content}\n\nOwner: {d['owner']} ({d.get('ownerEmail') or ''})"
+        meta = {k: d.get(k) for k in ("owner", "ownerEmail", "modifiedAt", "createdAt")}
+        if d.get("ocr"):
+            meta["ocr"] = True  # provenance: content came from OCR, not a text layer
+        existing = (await db.execute(
+            select(Artifact).where(
+                Artifact.workspace_id == workspace_id,
+                Artifact.source == d["source"],
+                Artifact.external_ref == d["id"],
+            )
+        )).scalars().first()
+        if existing:
+            if meta.get("modifiedAt") and (existing.meta or {}).get("modifiedAt") != meta["modifiedAt"]:
+                existing.content = content
+                existing.meta = meta
+                existing.occurred_at = _parse_ts(d.get("modifiedAt")) or existing.occurred_at
+            continue
+        await ingest_artifact(
+            db, workspace_id,
+            source=d["source"], kind=d["kind"],
+            title=d["title"][:300],
+            content=content,
+            external_ref=d["id"], url=d.get("url"),
+            occurred_at=_parse_ts(d.get("modifiedAt")),
+            meta=meta,
+        )
+        ingested += 1
+
+    # Reconcile on FULL syncs: files missing from the (capped) listing get a live
+    # probe — deleted/trashed → stale; still there → just outside the cap, untouched.
+    if since is None:
+        rows = (await db.execute(select(Artifact).where(
+            Artifact.workspace_id == workspace_id,
+            Artifact.source.in_(SOURCE_BY_INTEGRATION["google-drive"]),
+            Artifact.status != "stale"))).scalars().all()
+        missing = [a for a in rows if a.external_ref and a.external_ref not in listed]
+        random.shuffle(missing)
+        for a in missing[:_RECONCILE_CHECKS]:
+            try:
+                if not await google_drive.file_exists(auth, a.external_ref):
+                    a.status = "stale"
+            except Exception:
+                continue  # transient — deletion needs proof, not doubt
+
+    _advance_cursor(integ, full=since is None)
+    await db.commit()
+    from .model import match_open_commitments
+    await match_open_commitments(db, workspace_id)
     return ingested
 
 
@@ -400,11 +602,17 @@ async def pull_slack(db, workspace_id: str) -> int:
         logger.warning("Slack channel list failed", exc_info=True)
         return 0
     team = await slack.team_url(auth)  # permalink prefix; None degrades to no link
+    since, integ = await _sync_plan(db, workspace_id, "slack")
+    oldest = None
+    if since:
+        parsed = _parse_ts(since)
+        oldest = f"{parsed.timestamp():.6f}" if parsed else None
 
     ingested = 0
+    img_budget = [_IMAGES_PER_SYNC]
     for ch in channels:
         try:
-            threads = await slack.fetch_threads(auth, ch["id"])
+            threads = await slack.fetch_threads(auth, ch["id"], oldest=oldest)
         except Exception:
             logger.warning("Slack history failed for #%s", ch.get("name"), exc_info=True)
             continue
@@ -420,19 +628,46 @@ async def pull_slack(db, workspace_id: str) -> int:
                 if url and not existing.url:  # backfill deep links on re-sync
                     existing.url = url
                 continue
+            content = t["text"]
+            imgs: dict[str, str] = {}
+            for f in (t.get("files") or [])[:5]:
+                if img_budget[0] <= 0:
+                    break
+                img_budget[0] -= 1
+                got = await vision.fetch_image(f["url"], auth)
+                desc = (await vision.transcribe(*got, name=f["name"]))[:800] if got else ""
+                if desc:
+                    imgs[f["url"]] = desc
+            if imgs:
+                content += "\n\nImages:\n" + "\n".join(f"- {d}" for d in imgs.values())
+            meta = {"channel": ch["name"], "channelId": ch["id"],
+                    "ts": t["ts"], "replyCount": t["reply_count"]}
+            if imgs:
+                meta["imageTexts"] = imgs
             first_line = (t["text"].split("\n", 1)[0] or "thread").strip()
             await ingest_artifact(
                 db, workspace_id,
                 source="slack-message", kind="slack-thread",
                 title=f"#{ch['name']}: {first_line}"[:120],
-                content=t["text"],
+                content=content,
                 external_ref=ext, url=url,
                 occurred_at=_parse_slack_ts(t["ts"]),
-                meta={"channel": ch["name"], "channelId": ch["id"],
-                      "ts": t["ts"], "replyCount": t["reply_count"]},
+                meta=meta,
             )
             ingested += 1
-    await db.commit()  # persist url backfills on existing threads
+
+    # Full syncs also repair deep links on OLD threads — permalinks are
+    # constructible from stored meta (team/channel/ts), no extra API calls.
+    if since is None and team:
+        rows = (await db.execute(select(Artifact).where(
+            Artifact.workspace_id == workspace_id, Artifact.source == "slack-message",
+            Artifact.url.is_(None)))).scalars().all()
+        for a in rows:
+            m = a.meta or {}
+            a.url = slack.permalink(team, m.get("channelId"), m.get("ts")) or a.url
+
+    _advance_cursor(integ, full=since is None)
+    await db.commit()  # persist url backfills + cursor
 
     # A Slack thread can create a commitment; re-match against Linear.
     from .model import match_open_commitments
@@ -473,4 +708,5 @@ async def pull_all(db, workspace_id: str) -> dict[str, int]:
         "linear": await pull_linear(db, workspace_id),
         "slack": await pull_slack(db, workspace_id),
         "github": await pull_github(db, workspace_id),
+        "google-drive": await pull_gdrive(db, workspace_id),
     }

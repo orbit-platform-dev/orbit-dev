@@ -11,7 +11,7 @@ from ..deps import Depends, get_current_user, get_db
 from ..models import Integration
 from ..schemas import IntegrationOut
 from ..seed import ensure_integrations
-from ..services import github, heartbeat, ingestion, linear, slack
+from ..services import github, google_drive, heartbeat, ingestion, linear, slack
 from ..services.workspace import get_workspace_id
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/integrations", tags=["integrations"])
 # OAuth-capable connectors, each exposing the same interface
 # (oauth_configured / oauth_url / exchange_code / account_name). Every access is
 # scoped to a workspace, so one tenant never sees another's connection.
-PROVIDERS = {"linear": linear, "slack": slack, "github": github}
+PROVIDERS = {"linear": linear, "slack": slack, "github": github, "google-drive": google_drive}
 
 # Connectors that also accept a pasted personal key/token (validate_key).
 KEY_PROVIDERS = {"linear": linear, "github": github}
@@ -111,11 +111,13 @@ async def oauth_callback(key: str, code: str | None = None, state: str | None = 
     if not integ or not stored or nonce != stored:
         return RedirectResponse(f"{dest}?error=state")
     try:
+        # Google returns a credential dict (access+refresh+expiry); others a bare token.
         token = await prov.exchange_code(code)
-        account = await prov.account_name(f"Bearer {token}")
+        cred = token if isinstance(token, dict) else {"accessToken": token}
+        account = await prov.account_name(f"Bearer {cred['accessToken']}")
     except Exception:
         return RedirectResponse(f"{dest}?error=exchange")
-    integ.credentials = {"accessToken": token, "type": "oauth"}
+    integ.credentials = {**cred, "type": "oauth"}
     integ.status = "connected"
     integ.account = account
     integ.last_sync = datetime.now(timezone.utc)
@@ -123,6 +125,34 @@ async def oauth_callback(key: str, code: str | None = None, state: str | None = 
     await db.commit()
     heartbeat.start_sync(ws, f"{key}-connect")
     return RedirectResponse(f"{dest}?connected={key}")
+
+
+class WebhookUrlOut(BaseModel):
+    url: str
+    note: str
+
+
+@router.get("/{key}/webhook", response_model=WebhookUrlOut)
+async def webhook_url(key: str, db=Depends(get_db), ws: str = Depends(get_workspace_id),
+                      _=Depends(get_current_user)):
+    """Mint (once) and return this workspace's inbound webhook URL for a
+    connector. Paste it into the provider's webhook settings; for GitHub also
+    set the token as the hook secret (enables HMAC verification)."""
+    if key not in PROVIDERS:
+        raise HTTPException(404, "Integration not found")
+    integ = await _get(db, ws, key)
+    if not integ or integ.status != "connected":
+        raise HTTPException(409, f"Connect {key} first")
+    cred = dict(integ.credentials or {})
+    if not cred.get("webhookToken"):
+        cred["webhookToken"] = secrets.token_urlsafe(24)
+        integ.credentials = cred
+        await db.commit()
+    base = str(settings.public_api_url or "http://localhost:8000").rstrip("/")
+    return WebhookUrlOut(
+        url=f"{base}/webhooks/{key}?token={cred['webhookToken']}",
+        note="GitHub: also set this token as the webhook secret. Dev needs a public URL (e.g. ngrok).",
+    )
 
 
 @router.post("/{key}/disconnect", response_model=IntegrationOut)

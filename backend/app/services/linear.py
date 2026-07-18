@@ -9,6 +9,7 @@ raise; callers decide how to degrade.
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 from urllib.parse import urlencode
 
@@ -34,15 +35,47 @@ def _auth_header(cred: dict[str, Any] | None) -> str | None:
 
 async def get_auth(db, workspace_id: str = "ws_default") -> str | None:
     """The Authorization header value for THIS workspace's Linear connection, or
-    None. Scoped by workspace so one tenant never reads another's credential."""
+    None. Scoped by workspace so one tenant never reads another's credential.
+    Expiring OAuth tokens refresh in place (flushes; caller commits)."""
     integ = await db.get(Integration, {"workspace_id": workspace_id, "key": "linear"})
-    return _auth_header(integ.credentials) if integ else None
+    if not integ:
+        return None
+    cred = integ.credentials or {}
+    if cred.get("refreshToken") and time.time() >= cred.get("expiresAt", 0):
+        try:
+            integ.credentials = {**cred, **await _refresh(cred["refreshToken"])}
+            await db.flush()
+            cred = integ.credentials
+        except Exception:
+            pass  # keep the old token; the sync's own failure handling reports it
+    return _auth_header(cred)
+
+
+async def _refresh(refresh_token: str) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=20) as client:
+        res = await client.post(_TOKEN, data={
+            "client_id": settings.linear_client_id,
+            "client_secret": settings.linear_client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        })
+    if res.status_code != 200:
+        raise RuntimeError(f"Linear token refresh failed: {res.text[:150]}")
+    body = res.json()
+    out = {"accessToken": body["access_token"],
+           "expiresAt": time.time() + body.get("expires_in", 86400) - 60}
+    if body.get("refresh_token"):  # Linear rotates refresh tokens — always keep the new one
+        out["refreshToken"] = body["refresh_token"]
+    return out
 
 
 async def _gql(auth: str, query: str, variables: dict | None = None) -> dict:
+    # public-file-urls-expire-in: uploads.linear.app rejects API auth headers, so
+    # image URLs in markdown must come back pre-signed to be downloadable at all.
     async with httpx.AsyncClient(timeout=20) as client:
         res = await client.post(_API, json={"query": query, "variables": variables or {}},
-                                headers={"Authorization": auth})
+                                headers={"Authorization": auth,
+                                         "public-file-urls-expire-in": "86400"})
     body = res.json() if res.headers.get("content-type", "").startswith("application/json") else {}
     if res.status_code != 200 or body.get("errors"):
         detail = (body.get("errors") or [{}])[0].get("message", res.text[:150])
@@ -76,8 +109,10 @@ def oauth_url(state: str) -> str:
     })
 
 
-async def exchange_code(code: str) -> str:
-    """Trade the authorization code for a (long-lived) access token."""
+async def exchange_code(code: str) -> dict[str, Any] | str:
+    """Trade the authorization code for tokens. Linear now issues EXPIRING access
+    tokens with rotating refresh tokens — persist all three or the connection
+    dies within a day. Plain string only for legacy non-expiring responses."""
     async with httpx.AsyncClient(timeout=20) as client:
         res = await client.post(_TOKEN, data={
             "client_id": settings.linear_client_id,
@@ -88,9 +123,13 @@ async def exchange_code(code: str) -> str:
         })
     if res.status_code != 200:
         raise RuntimeError(f"Linear token exchange failed: {res.text[:150]}")
-    token = res.json().get("access_token")
+    body = res.json()
+    token = body.get("access_token")
     if not token:
         raise RuntimeError("Linear returned no access token")
+    if body.get("refresh_token"):
+        return {"accessToken": token, "refreshToken": body["refresh_token"],
+                "expiresAt": time.time() + body.get("expires_in", 86400) - 60}
     return token
 
 
@@ -147,6 +186,10 @@ def _shape(n: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _with_since(filt: dict, since: str | None) -> dict:
+    return {**filt, "updatedAt": {"gt": since}} if since else filt
+
+
 async def _fetch_issues(auth: str, filt: dict, max_total: int, newest_first: bool = False) -> list[dict[str, Any]]:
     """Cursor-paginate the issues connection until exhausted or the cap is hit."""
     order = ", orderBy: updatedAt" if newest_first else ""
@@ -167,15 +210,15 @@ async def _fetch_issues(auth: str, filt: dict, max_total: int, newest_first: boo
     return out
 
 
-async def fetch_open_issues(auth: str, limit: int = _MAX_OPEN) -> list[dict[str, Any]]:
+async def fetch_open_issues(auth: str, limit: int = _MAX_OPEN, since: str | None = None) -> list[dict[str, Any]]:
     """All open (not completed/canceled) issues, with descriptions."""
-    return await _fetch_issues(auth, _OPEN_FILTER, limit)
+    return await _fetch_issues(auth, _with_since(_OPEN_FILTER, since), limit)
 
 
-async def fetch_completed_issues(auth: str, limit: int = _MAX_COMPLETED) -> list[dict[str, Any]]:
+async def fetch_completed_issues(auth: str, limit: int = _MAX_COMPLETED, since: str | None = None) -> list[dict[str, Any]]:
     """Recently completed issues (newest first) — what loop closure checks
     open commitments against (promised work that actually shipped)."""
-    return await _fetch_issues(auth, _COMPLETED_FILTER, limit, newest_first=True)
+    return await _fetch_issues(auth, _with_since(_COMPLETED_FILTER, since), limit, newest_first=True)
 
 
 async def _first_team_id(auth: str) -> str:

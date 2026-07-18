@@ -1,6 +1,6 @@
 import {
-  siAsana, siConfluence, siGithub, siGitlab, siGooglecalendar, siGoogledocs, siGooglemeet, siHubspot,
-  siIntercom, siJira, siLinear, siNotion, siZendesk, siZoom,
+  siAsana, siConfluence, siGithub, siGitlab, siGooglecalendar, siGoogledocs, siGoogledrive, siGooglemeet,
+  siHubspot, siIntercom, siJira, siLinear, siNotion, siZendesk, siZoom,
 } from "simple-icons";
 import type { IntegrationKey } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -23,6 +23,7 @@ const ICONS: Partial<Record<IntegrationKey, Brand>> = {
   asana: siAsana,
   confluence: siConfluence,
   "google-docs": siGoogledocs,
+  "google-drive": siGoogledrive,
 };
 
 // Monogram fallback (short label + brand color) for marks not in simple-icons.
@@ -42,6 +43,7 @@ export const integrationBrand: Record<IntegrationKey, { short: string; color: st
   asana: { short: "As", color: "#f06a6a" },
   confluence: { short: "Cf", color: "#2684ff" },
   "google-docs": { short: "GD", color: "#4285f4" },
+  "google-drive": { short: "Dr", color: "#4285f4" },
 };
 
 // Official multi-color Slack mark (brand asset). The black backing square from

@@ -21,7 +21,7 @@ from sqlalchemy import select
 
 from ..config import settings
 from ..deps import get_current_user, get_db
-from ..models import Artifact, ChatConversation, Goal, Insight
+from ..models import Artifact, ChatConversation, Entity, Goal, Insight
 from ..services import embeddings, heartbeat, learning, memory
 from ..services.analytics import memory_stats
 from ..services.model import search_artifacts
@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 _TOP_K = 8
-_MAX_SCAN = 200          # keyword-fallback window ONLY (no-AI path); the vector
-                         # path is index-backed and uncapped.
+_MAX_SCAN = 3000         # keyword-fallback window (whole recent history; the
+                         # vector path is index-backed and uncapped).
 _HISTORY_TURNS = 8       # sliding window of recent messages given to the model
 _HISTORY_CLIP = 600      # per-message char cap, to bound the token budget
 
@@ -87,6 +87,11 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+_STOPWORDS = frozenset(
+    "what is are our the a an of for in on to and or with about show me tell give list how many much who whats".split()
+)
+
+
 def _toks(s: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]{2,}", (s or "").lower()))
 
@@ -113,7 +118,7 @@ async def _retrieve(db, ws: str, question: str, k: int = _TOP_K) -> list[Artifac
     ).scalars().all()
     if not rows:
         return []
-    q = _toks(question)
+    q = _toks(question) - _STOPWORDS
     ranked = sorted(rows, key=lambda a: (len(q & _toks(f"{a.title} {a.content or ''}")), a.occurred_at), reverse=True)
     return ranked[:k]
 
@@ -160,6 +165,44 @@ async def _person_issues(db, ws: str, question: str, cap: int = 15) -> list[Arti
     mine.sort(key=lambda a: ((a.meta or {}).get("stateType") not in ("completed", "canceled"), a.occurred_at),
               reverse=True)
     return mine[:cap]
+
+
+async def _graph_context(db, ws: str, question: str) -> str:
+    """2-hop neighborhood of the entity the question names — relationships the
+    flat retrieval can't see (who works with whom, what belongs where)."""
+    from ..services.model import traverse
+
+    q = _toks(question) - _STOPWORDS
+    if not q:
+        return ""
+    ents = (await db.execute(select(Entity).where(
+        Entity.workspace_id == ws, Entity.kind.in_(("person", "project", "customer"))
+    ))).scalars().all()
+    by_id = {e.id: e for e in ents}
+    hit = next((e for e in ents
+                if (_name_tokens(e.name) & q)
+                or any(_name_tokens(a) & q for a in (e.aliases or []))), None)
+    if not hit:
+        return ""
+    edges = await traverse(db, ws, [hit.id], depth=2)
+    if not edges:
+        return ""
+    art_ids = {x for lk in edges for x, t in ((lk.from_id, lk.from_type), (lk.to_id, lk.to_type)) if t == "artifact"}
+    art_titles: dict[str, str] = {}
+    if art_ids:
+        rows = (await db.execute(select(Artifact.id, Artifact.title).where(Artifact.id.in_(list(art_ids)[:40])))).all()
+        art_titles = {i: t for i, t in rows}
+
+    def name_of(nid: str, ntype: str) -> str:
+        if ntype == "entity":
+            e = by_id.get(nid)
+            return e.name if e else "?"
+        return (art_titles.get(nid) or "?")[:60]
+
+    lines = []
+    for lk in edges[:15]:
+        lines.append(f"- {name_of(lk.from_id, lk.from_type)} —{lk.type}→ {name_of(lk.to_id, lk.to_type)}")
+    return f"GRAPH CONTEXT (2 hops around {hit.name}):\n" + "\n".join(lines) + "\n\n"
 
 
 def _make_cites(arts) -> list[Citation]:
@@ -223,8 +266,9 @@ async def _build_context(db, ws: str, question: str, history: list[dict] | None)
                     )
                     + "\n\n"
                 )
+    graph_block = await _graph_context(db, ws, question)
     convo = _format_history(history)
-    return f"{convo}QUESTION: {question}\n\n{snapshot}{mem_block}{evidence}", hits, stats
+    return f"{convo}QUESTION: {question}\n\n{snapshot}{graph_block}{mem_block}{evidence}", hits, stats
 
 
 async def _answer(db, ws: str, question: str, history: list[dict] | None = None) -> tuple[str, list[Citation], bool]:
@@ -389,49 +433,58 @@ async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_wor
                 else:
                     yield _sse({"type": "phase", "phase": "reasoning"})
                     directives = await learning.directives_block(db, ws, question)
-                    parts: list[str] = []
-                    try:
-                        from pydantic_ai import Agent as _Agent
-                        from pydantic_ai.messages import (
-                            PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta,
-                            ThinkingPart, ThinkingPartDelta,
-                        )
+                    from pydantic_ai import Agent as _Agent
+                    from pydantic_ai.messages import (
+                        PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta,
+                        ThinkingPart, ThinkingPartDelta,
+                    )
 
-                        from ..agents.definitions import SYSTEM_PROMPTS, build_text_agent
+                    from ..agents.definitions import SYSTEM_PROMPTS, build_text_agent
 
-                        agent = build_text_agent(SYSTEM_PROMPTS["orbit-chat-stream"] + directives, thinking=True)
-                        # Event-level iteration so the model's THINKING streams to
-                        # the UI separately from the answer (the GPT-style trace).
-                        async with agent.iter(prompt) as agent_run:
-                            async for node in agent_run:
-                                if not _Agent.is_model_request_node(node):
-                                    continue
-                                async with node.stream(agent_run.ctx) as rstream:
-                                    async for event in rstream:
-                                        kind = content = None
-                                        if isinstance(event, PartStartEvent):
-                                            if isinstance(event.part, ThinkingPart):
-                                                kind, content = "thinking", event.part.content
-                                            elif isinstance(event.part, TextPart):
-                                                kind, content = "delta", event.part.content
-                                        elif isinstance(event, PartDeltaEvent):
-                                            if isinstance(event.delta, ThinkingPartDelta):
-                                                kind, content = "thinking", event.delta.content_delta
-                                            elif isinstance(event.delta, TextPartDelta):
-                                                kind, content = "delta", event.delta.content_delta
-                                        if kind and content:
-                                            if kind == "delta":
-                                                parts.append(content)
-                                            yield _sse({"type": kind, "text": content})
+                    # Resilience: if the primary model dies before producing any
+                    # answer text (503 spikes on preview models), retry once on the
+                    # high-quota extractor model before degrading to the raw list.
+                    attempts: list[tuple[str | None, bool]] = [(None, True)]
+                    if settings.extractor_model and settings.extractor_model != settings.default_model:
+                        attempts.append((settings.extractor_model, False))
+
+                    text = ""
+                    for model_id, think in attempts:
+                        parts: list[str] = []
+                        try:
+                            agent = build_text_agent(SYSTEM_PROMPTS["orbit-chat-stream"] + directives,
+                                                     model=model_id, thinking=think)
+                            # Event-level iteration so the model's THINKING streams
+                            # to the UI separately from the answer (the GPT trace).
+                            async with agent.iter(prompt) as agent_run:
+                                async for node in agent_run:
+                                    if not _Agent.is_model_request_node(node):
+                                        continue
+                                    async with node.stream(agent_run.ctx) as rstream:
+                                        async for event in rstream:
+                                            kind = content = None
+                                            if isinstance(event, PartStartEvent):
+                                                if isinstance(event.part, ThinkingPart):
+                                                    kind, content = "thinking", event.part.content
+                                                elif isinstance(event.part, TextPart):
+                                                    kind, content = "delta", event.part.content
+                                            elif isinstance(event, PartDeltaEvent):
+                                                if isinstance(event.delta, ThinkingPartDelta):
+                                                    kind, content = "thinking", event.delta.content_delta
+                                                elif isinstance(event.delta, TextPartDelta):
+                                                    kind, content = "delta", event.delta.content_delta
+                                            if kind and content:
+                                                if kind == "delta":
+                                                    parts.append(content)
+                                                yield _sse({"type": kind, "text": content})
+                        except Exception:
+                            logger.warning("orbit-chat stream failed on %s", model_id or "default model", exc_info=True)
                         text = "".join(parts).strip()
-                        if not text:
-                            text = _fallback_text(stats, hits)
-                            yield _sse({"type": "delta", "text": text})
-                    except Exception:
-                        logger.warning("orbit-chat stream failed; using fallback", exc_info=True)
+                        if text:
+                            break
+                    if not text:
                         text = _fallback_text(stats, hits)
-                        if not parts:
-                            yield _sse({"type": "delta", "text": text})
+                        yield _sse({"type": "delta", "text": text})
                     citations = _make_cites(_cites_from_text(text, hits))
 
             msgs = history
