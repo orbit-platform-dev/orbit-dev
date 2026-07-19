@@ -18,11 +18,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from ..config import settings
 from ..deps import get_current_user, get_db
-from ..models import Artifact, ChatConversation, Entity, Goal, Insight
-from ..services import embeddings, heartbeat, learning, memory
+from ..models import ActivityEvent, Artifact, ChatConversation, Entity, Goal, Insight, Integration, Memory
+from ..services import embeddings, github, heartbeat, learning, linear, memory, tickets
 from ..services.analytics import memory_stats
 from ..services.model import search_artifacts
 from ..services.workspace import get_workspace_id
@@ -65,6 +66,7 @@ class Message(_Camel):
     content: str
     citations: list[Citation] = []
     grounded: bool = True
+    draft: dict | None = None
 
 
 class ConversationSummary(_Camel):
@@ -391,6 +393,196 @@ def _cites_from_text(text: str, hits: list[Artifact], cap: int = 6) -> list[Arti
     return (used or hits[:3])[:cap]
 
 
+# --- Ticket drafting: the in-chat closed loop --------------------------------
+
+_TICKET_NOUNS = ("ticket", "issue", "bug", "task", "story", "card")
+_ACTION_VERBS = ("create", "file", "open", "raise", "log", "make", "add", "track", "draft")
+
+_DRAFT_SYSTEM = (
+    "You turn a user's request into a software ticket draft. First decide if the user is actually "
+    "asking to create/file/track a ticket, issue, bug, or task (isActionable). If they are only asking "
+    "a question, set isActionable=false. When actionable, write a clear, self-contained title and a "
+    "description (context + what's needed + any acceptance criteria implied by the conversation). "
+    "Pick connector 'github' if it's about code, a repo, or a PR; otherwise 'linear'. "
+    "Never invent facts that aren't in the conversation."
+)
+
+_PROACTIVE_SYSTEM = (
+    "The user is NOT explicitly asking to create a ticket. Decide whether their message describes a "
+    "concrete, trackable problem, bug, or feature request that clearly warrants one (isActionable). Be "
+    "conservative: true only for a specific, actionable item — never for general questions or discussion. "
+    "When true, draft a clear title + description and pick connector ('github' for code, else 'linear')."
+)
+
+_TRACKABLE_HINTS = ("bug", "broken", "crash", "error", "failing", "fails", "regression", "not working",
+                    "doesn't work", "issue", "complain", "request", "need", "should", "missing",
+                    "feature", "blocked", "flaky", "slow")
+
+
+class _DraftIntent(BaseModel):
+    is_actionable: bool = False
+    connector: str = "linear"
+    title: str = ""
+    description: str = ""
+
+
+def _maybe_actionable(text: str) -> bool:
+    """Cheap gate so the lite draft model only runs on plausibly-actionable turns."""
+    t = (text or "").lower()
+    return any(n in t for n in _TICKET_NOUNS) and any(v in t for v in _ACTION_VERBS)
+
+
+def _maybe_trackable(text: str) -> bool:
+    """Cheap gate for PROACTIVE offers: a statement that sounds like a problem/request."""
+    t = (text or "").lower()
+    return any(h in t for h in _TRACKABLE_HINTS)
+
+
+async def _run_draft(system: str, question: str, history: list[dict] | None) -> dict | None:
+    """Lite-model pass: message + recent context → a ticket draft, or None. Shared by
+    the explicit ask (_draft_ticket) and the proactive offer (_proactive_draft)."""
+    if not settings.ai_enabled:
+        return None
+    convo = _format_history(history)
+    prompt = f"{convo}\n\nUser message: {question}" if convo else f"User message: {question}"
+    try:
+        from ..agents.definitions import build_agent
+        out = (await build_agent(system, _DraftIntent).run(prompt)).output
+    except Exception:
+        logger.warning("ticket draft failed", exc_info=True)
+        return None
+    if not out.is_actionable or not out.title.strip():
+        return None
+    connector = out.connector if out.connector in ("linear", "github") else "linear"
+    return {"connector": connector, "title": out.title.strip()[:255], "description": out.description.strip()}
+
+
+async def _draft_ticket(question: str, history: list[dict] | None) -> dict | None:
+    return await _run_draft(_DRAFT_SYSTEM, question, history)
+
+
+async def _proactive_draft(question: str, history: list[dict] | None) -> dict | None:
+    return await _run_draft(_PROACTIVE_SYSTEM, question, history)
+
+
+async def _default_target(db, ws: str, connector: str) -> tuple[str | None, str | None]:
+    """A sensible default destination (id, label) for a fresh draft — the first
+    team / most-recently-pushed repo. The user can change it in the card."""
+    try:
+        if connector == "github":
+            auth = await github.get_auth(db, ws)
+            repos = await github.list_repos(auth) if auth else []
+            return (repos[0]["fullName"], repos[0]["fullName"]) if repos else (None, None)
+        auth = await linear.get_auth(db, ws)
+        teams = await linear.list_teams(auth) if auth else []
+        return (teams[0]["id"], teams[0]["name"]) if teams else (None, None)
+    except Exception:
+        return (None, None)
+
+
+async def _build_action(db, ws: str, d: dict, *, proactive: bool = False) -> dict:
+    target, label = await _default_target(db, ws, d["connector"])
+    return {
+        "actionId": f"act_{uuid.uuid4().hex[:10]}", "type": "create-ticket",
+        "connector": d["connector"], "title": d["title"], "description": d["description"],
+        "target": target, "targetLabel": label, "status": "pending", "result": None,
+        "proactive": proactive,
+    }
+
+
+def _find_action(conv: ChatConversation, action_id: str) -> dict | None:
+    """The draft dict inside a conversation's messages, by actionId (or None)."""
+    for m in conv.messages or []:
+        d = m.get("draft")
+        if d and d.get("actionId") == action_id:
+            return d
+    return None
+
+
+# --- Self-decide-to-pull: fetch fresh data when memory can't answer ----------
+
+_PULLABLE = ("linear", "github", "slack", "google-drive")
+_PULL_LABEL = {"linear": "Linear", "github": "GitHub", "slack": "Slack", "google-drive": "Google Drive"}
+_PULL_SYSTEM = (
+    "A question couldn't be answered from memory. Given the connected tools, pick the ONE whose fresh "
+    "data would most likely answer it (linear=issues/tickets/roadmap, github=code/PRs/commits, "
+    "slack=team conversations, google-drive=docs/specs). If it isn't about company data or no tool fits, "
+    "return an empty connector."
+)
+
+
+class _PullPick(BaseModel):
+    connector: str = ""
+
+
+# Keyword → the connector a question is clearly ABOUT. Deterministic routing keeps
+# the strategy identical across connectors (docs→Drive, tickets→Linear, code→GitHub,
+# messages→Slack), so a doc question never mis-pulls Linear.
+_CONNECTOR_HINTS: dict[str, tuple[str, ...]] = {
+    "google-drive": ("document", " doc", "docs", "spec", "sheet", "spreadsheet", "slide", "deck",
+                     " pdf", "drive", "proposal", "rfc", "one-pager", "prd", "write-up", "notes doc"),
+    "github": ("pull request", " pr ", " prs", "commit", "repo", "branch", "merge", "codebase",
+               "code review", " ci ", "diff", "pipeline"),
+    "linear": ("ticket", "sprint", "backlog", "roadmap", "story", "epic", "linear"),
+    "slack": ("slack", "channel", "thread", "message in", "conversation in"),
+}
+
+
+def _hint_connector(question: str) -> str | None:
+    """The connector a question is clearly about (by keyword), or None if unclear."""
+    t = f" {(question or '').lower()} "
+    for key, hints in _CONNECTOR_HINTS.items():
+        if any(h in t for h in hints):
+            return key
+    return None
+
+
+async def _connected_pullable(db, ws: str) -> list[str]:
+    rows = (await db.execute(select(Integration).where(
+        Integration.workspace_id == ws, Integration.key.in_(_PULLABLE),
+        Integration.status == "connected"))).scalars().all()
+    return [r.key for r in rows if r.credentials]
+
+
+async def _decide_pull(db, ws: str, question: str) -> str | None:
+    """Which connected tool to pull for an unanswerable question (or None). Only
+    called when memory returned nothing, so the pull latency is worth it."""
+    if not settings.ai_enabled:
+        return None
+    connected = await _connected_pullable(db, ws)
+    if not connected:
+        return None
+    hint = _hint_connector(question)
+    if hint:
+        # Question is clearly about one tool: pull it iff connected, never another.
+        return hint if hint in connected else None
+    try:  # ambiguous — let the model choose among connected tools
+        from ..agents.definitions import build_agent
+        pick = (await build_agent(_PULL_SYSTEM, _PullPick).run(
+            f"Question: {question}\nConnected tools: {', '.join(connected)}")).output.connector
+    except Exception:
+        logger.warning("pull decision failed", exc_info=True)
+        return None
+    return pick if pick in connected else None
+
+
+async def _run_pull(db, ws: str, connector: str) -> None:
+    from ..services import ingestion
+    fn = {"linear": ingestion.pull_linear, "github": ingestion.pull_github,
+          "slack": ingestion.pull_slack, "google-drive": ingestion.pull_gdrive}.get(connector)
+    if fn:
+        await fn(db, ws)
+
+
+async def _ticket_habit(db, ws: str) -> bool:
+    """Has the team established a ticket-creation habit (recorded on first approval)?
+    Gates proactive offers so Orbit only nudges teams that actually want tickets."""
+    row = (await db.execute(select(Memory.id).where(
+        Memory.workspace_id == ws, Memory.subject == "ticket-habit",
+        Memory.status == "active").limit(1))).first()
+    return row is not None
+
+
 @router.post("/stream")
 async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_workspace_id), user=Depends(get_current_user)):
     """Token-streamed answer as Server-Sent Events:
@@ -415,15 +607,39 @@ async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_wor
     async def gen():
         try:
             sync = heartbeat.status(ws).get("sync") or {}
+            draft_action = None
+            if not sync.get("active") and _maybe_actionable(question):
+                d = await _draft_ticket(question, history)
+                if d:
+                    draft_action = await _build_action(db, ws, d)
+
             if sync.get("active"):
                 text = ("I'm still reading and understanding your company from the connected tools "
                         f"(currently: {sync.get('phase', 'reading')}). Ask me again in a moment "
                         "and I'll answer from the full picture.")
                 yield _sse({"type": "delta", "text": text})
                 citations, grounded = [], False
+            elif draft_action:
+                yield _sse({"type": "phase", "phase": "drafting"})
+                text = (f"I've drafted a {draft_action['connector'].capitalize()} ticket from that — "
+                        "review or edit it below, then approve and I'll create it.")
+                yield _sse({"type": "delta", "text": text})
+                yield _sse({"type": "draft", "draft": draft_action})
+                citations, grounded = [], True
             else:
                 yield _sse({"type": "phase", "phase": "retrieving"})
                 prompt, hits, stats = await _build_context(db, ws, question, history)
+                # Self-decide-to-pull: nothing in memory → fetch fresh data from the
+                # tool most likely to have it, then re-retrieve and answer.
+                if not hits and not stats:
+                    pick = await _decide_pull(db, ws, question)
+                    if pick:
+                        yield _sse({"type": "phase", "phase": "pulling", "connector": _PULL_LABEL.get(pick, pick)})
+                        try:
+                            await _run_pull(db, ws, pick)
+                        except Exception:
+                            logger.warning("chat-triggered pull failed", exc_info=True)
+                        prompt, hits, stats = await _build_context(db, ws, question, history)
                 grounded = bool(hits or stats)
 
                 if not settings.ai_enabled:
@@ -432,7 +648,9 @@ async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_wor
                     citations = _make_cites(hits[:6])
                 else:
                     yield _sse({"type": "phase", "phase": "reasoning"})
-                    directives = await learning.directives_block(db, ws, question)
+                    # Team corrections + THIS user's own answer ratings (per-person loop).
+                    directives = (await learning.directives_block(db, ws, question)
+                                  + await learning.directives_block(db, ws, question, user_id=uid))
                     from pydantic_ai import Agent as _Agent
                     from pydantic_ai.messages import (
                         PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta,
@@ -487,10 +705,22 @@ async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_wor
                         yield _sse({"type": "delta", "text": text})
                     citations = _make_cites(_cites_from_text(text, hits))
 
+            # Proactive: once the team has the ticket habit, offer to file one for a
+            # trackable statement they didn't explicitly ask to track.
+            if (draft_action is None and not sync.get("active")
+                    and _maybe_trackable(question) and await _ticket_habit(db, ws)):
+                pd = await _proactive_draft(question, history)
+                if pd:
+                    draft_action = await _build_action(db, ws, pd, proactive=True)
+                    yield _sse({"type": "draft", "draft": draft_action})
+
             msgs = history
             msgs.append({"role": "user", "content": question, "citations": [], "grounded": True})
-            msgs.append({"role": "assistant", "content": text,
-                         "citations": [c.model_dump() for c in citations], "grounded": grounded})
+            assistant_msg = {"role": "assistant", "content": text,
+                             "citations": [c.model_dump() for c in citations], "grounded": grounded}
+            if draft_action:
+                assistant_msg["draft"] = draft_action
+            msgs.append(assistant_msg)
             conv.messages = msgs
             conv.updated_at = _now()
             if not conv.title or conv.title == "New chat":
@@ -498,10 +728,170 @@ async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_wor
             await db.commit()
 
             yield _sse({"type": "done", "conversationId": conv.id,
-                        "citations": [c.model_dump() for c in citations], "grounded": grounded})
+                        "citations": [c.model_dump() for c in citations], "grounded": grounded,
+                        "draft": draft_action})
         except Exception:
             logger.warning("chat stream errored", exc_info=True)
             yield _sse({"type": "error", "message": "Something went wrong while answering. Please try again."})
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class TicketTargets(_Camel):
+    linear: list[dict] = []   
+    github: list[dict] = []   
+
+
+@router.get("/ticket-targets", response_model=TicketTargets)
+async def ticket_targets(db=Depends(get_db), ws: str = Depends(get_workspace_id), _=Depends(get_current_user)):
+    """Destinations for a draft: Linear teams + GitHub repos, only for connected tools."""
+    out = TicketTargets()
+    la = await linear.get_auth(db, ws)
+    if la:
+        try:
+            out.linear = await linear.list_teams(la)
+        except Exception:
+            logger.warning("linear teams list failed", exc_info=True)
+    ga = await github.get_auth(db, ws)
+    if ga:
+        try:
+            out.github = await github.list_repos(ga)
+        except Exception:
+            logger.warning("github repos list failed", exc_info=True)
+    return out
+
+
+class EditActionIn(_Camel):
+    title: str | None = None
+    description: str | None = None
+    connector: str | None = None
+    target: str | None = None
+    target_label: str | None = None
+    discard: bool = False
+
+
+@router.patch("/conversations/{cid}/actions/{action_id}")
+async def edit_action(cid: str, action_id: str, body: EditActionIn, db=Depends(get_db),
+                      ws: str = Depends(get_workspace_id), user=Depends(get_current_user)):
+    """Edit a still-pending draft before approving (or discard it). Title/description
+    edits are captured as learning signal, exactly like Feed corrections."""
+    conv = await _owned(db, ws, _uid(user), cid)
+    draft = _find_action(conv, action_id)
+    if not draft:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Draft not found")
+    if draft.get("status") != "pending":
+        raise HTTPException(status.HTTP_409_CONFLICT, "This draft has already been actioned")
+    if body.discard:
+        draft["status"] = "discarded"
+        flag_modified(conv, "messages")  
+        await db.commit()
+        return draft
+    for field in ("title", "description"):
+        v = getattr(body, field)
+        if v is not None and v != draft.get(field, ""):
+            await learning.record_feedback(db, ws, section="chat-ticket", field=field,
+                                           before=str(draft.get(field, "")), after=str(v),
+                                           context=draft.get("title", ""))
+            draft[field] = v
+    if body.connector in ("linear", "github") and body.connector != draft.get("connector"):
+        draft["connector"] = body.connector
+        if body.target is None:  # connector changed with no explicit target → pick a default
+            draft["target"], draft["targetLabel"] = await _default_target(db, ws, body.connector)
+    if body.target is not None:
+        draft["target"] = body.target
+        draft["targetLabel"] = body.target_label or body.target
+    flag_modified(conv, "messages")  # nested JSON edit — value-equal reassignment won't persist
+    conv.updated_at = _now()
+    await db.commit()
+    return draft
+
+
+@router.post("/conversations/{cid}/actions/{action_id}/approve")
+async def approve_action(cid: str, action_id: str, db=Depends(get_db),
+                         ws: str = Depends(get_workspace_id), user=Depends(get_current_user)):
+    """Approve a draft → really create the issue in the chosen tool, ingest it into
+    memory (so it's tracked immediately), and return the live link."""
+    conv = await _owned(db, ws, _uid(user), cid)
+    draft = _find_action(conv, action_id)
+    if not draft:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Draft not found")
+    if draft.get("status") != "pending":
+        raise HTTPException(status.HTTP_409_CONFLICT, "This draft has already been actioned")
+
+    connector = draft.get("connector")
+    title, description = draft.get("title", ""), draft.get("description", "")
+    try:
+        result = await tickets.create_ticket(db, ws, connector=connector, title=title,
+                                             description=description, target=draft.get("target"))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"{connector} did not create the issue: {exc}") from exc
+
+    draft["status"], draft["result"] = "created", result
+    flag_modified(conv, "messages")  
+    conv.updated_at = _now()
+    db.add(ActivityEvent(
+        id=f"ac_{uuid.uuid4().hex[:8]}",
+        actor={"name": user.get("name", "You"), "isAgent": False}, action="approved",
+        target=f"Created {result.get('identifier', 'a ticket')} from chat",
+        target_type="chat-ticket", at=_now(),
+    ))
+    await db.commit()  # the creation is recorded before the best-effort loop-close below
+
+    try:
+        await tickets.ingest_created(db, ws, connector, result, title, description)
+        await db.commit()
+    except Exception:
+        logger.warning("post-create ingest failed", exc_info=True)
+        await db.rollback()
+
+    # Learn the habit (reinforces) so proactive offers can begin for this team.
+    try:
+        await memory.record(db, ws, fact="The team creates tickets in Orbit to track work and requests.",
+                            kind="preference", subject="ticket-habit", source_ref="Orbit",
+                            importance=0.5, base_confidence=0.8)
+        await db.commit()
+    except Exception:
+        logger.warning("habit record failed", exc_info=True)
+        await db.rollback()
+
+    return {"actionId": action_id, "status": "created", "result": result}
+
+
+class RateIn(_Camel):
+    rating: str  # "up" | "down"
+
+
+@router.post("/conversations/{cid}/messages/{index}/rate")
+async def rate_answer(cid: str, index: int, body: RateIn, db=Depends(get_db),
+                      ws: str = Depends(get_workspace_id), user=Depends(get_current_user)):
+    """Thumbs up/down on an answer → a PER-PERSON learning signal. The rating is
+    stored on the message (persists, stays highlighted) and recorded scoped to
+    THIS user, so it shapes only their future answers to similar questions — not
+    the whole team's."""
+    if body.rating not in ("up", "down"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "rating must be 'up' or 'down'")
+    uid = _uid(user)
+    conv = await _owned(db, ws, uid, cid)
+    msgs = list(conv.messages or [])
+    if index < 0 or index >= len(msgs) or msgs[index].get("role") != "assistant":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No answer at that position")
+    msgs[index] = {**msgs[index], "rating": body.rating}
+    conv.messages = msgs
+    flag_modified(conv, "messages")
+    conv.updated_at = _now()
+    question = next((msgs[i].get("content", "") for i in range(index - 1, -1, -1)
+                     if msgs[i].get("role") == "user"), "")
+    answer = msgs[index].get("content", "")
+    try:
+        await learning.record_feedback(db, ws, section="chat-answer", field="rating",
+                                       before=question[:280], after=f"{body.rating}: {answer[:180]}",
+                                       user_id=uid)
+    except Exception:
+        logger.warning("rating feedback record failed", exc_info=True)
+    await db.commit()
+    return {"index": index, "rating": body.rating}

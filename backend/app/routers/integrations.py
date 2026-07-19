@@ -11,18 +11,21 @@ from ..deps import Depends, get_current_user, get_db
 from ..models import Integration
 from ..schemas import IntegrationOut
 from ..seed import ensure_integrations
-from ..services import github, google_drive, heartbeat, ingestion, linear, slack
+from ..services import circleback, fireflies, github, google_drive, heartbeat, ingestion, linear, slack
 from ..services.workspace import get_workspace_id
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
-# OAuth-capable connectors, each exposing the same interface
-# (oauth_configured / oauth_url / exchange_code / account_name). Every access is
-# scoped to a workspace, so one tenant never sees another's connection.
+
 PROVIDERS = {"linear": linear, "slack": slack, "github": github, "google-drive": google_drive}
 
-# Connectors that also accept a pasted personal key/token (validate_key).
-KEY_PROVIDERS = {"linear": linear, "github": github}
+KEY_PROVIDERS = {"linear": linear, "github": github, "fireflies": fireflies, "circleback": circleback}
+
+WEBHOOK_FIRST = {"circleback"}
+
+# Built end-to-end but not yet launched — surfaced as roadmap ("coming soon")
+# and not connectable via any path. Remove a key here to flip it live.
+COMING_SOON = {"fireflies", "circleback"}
 
 
 async def _get(db, ws: str, key: str) -> Integration | None:
@@ -35,8 +38,8 @@ async def list_integrations(db=Depends(get_db), ws: str = Depends(get_workspace_
     rows = (await db.execute(select(Integration).where(Integration.workspace_id == ws))).scalars().all()
     for r in rows:
         prov = PROVIDERS.get(r.key)
-        r.connectable = prov is not None
-        r.oauth_available = bool(prov and prov.oauth_configured())
+        r.connectable = (prov is not None or r.key in KEY_PROVIDERS) and r.key not in COMING_SOON
+        r.oauth_available = bool(prov and prov.oauth_configured() and r.key not in COMING_SOON)
     return rows
 
 
@@ -49,6 +52,8 @@ class ConnectKeyIn(BaseModel):
 async def connect_with_key(key: str, body: ConnectKeyIn, db=Depends(get_db),
                            ws: str = Depends(get_workspace_id), _=Depends(get_current_user)):
     """Connect with a pasted personal key/token — validated live, stored per workspace."""
+    if key in COMING_SOON:
+        raise HTTPException(404, "This integration isn't available yet")
     prov = KEY_PROVIDERS.get(key)
     if not prov:
         raise HTTPException(404, "This integration doesn't accept an API key")
@@ -63,7 +68,8 @@ async def connect_with_key(key: str, body: ConnectKeyIn, db=Depends(get_db),
     integ = await _get(db, ws, key)
     if not integ:
         raise HTTPException(404, "Integration not found")
-    integ.credentials = {"apiKey": token}
+
+    integ.credentials = {**(integ.credentials or {}), "apiKey": token}
     integ.status = "connected"
     integ.account = account
     integ.last_sync = datetime.now(timezone.utc)
@@ -138,10 +144,16 @@ async def webhook_url(key: str, db=Depends(get_db), ws: str = Depends(get_worksp
     """Mint (once) and return this workspace's inbound webhook URL for a
     connector. Paste it into the provider's webhook settings; for GitHub also
     set the token as the hook secret (enables HMAC verification)."""
-    if key not in PROVIDERS:
+    if key in COMING_SOON:
+        raise HTTPException(404, "This integration isn't available yet")
+    if key not in PROVIDERS and key not in KEY_PROVIDERS:
         raise HTTPException(404, "Integration not found")
     integ = await _get(db, ws, key)
-    if not integ or integ.status != "connected":
+    if not integ:
+        raise HTTPException(404, "Integration not found")
+    # Webhook-first connectors (Circleback) need the URL BEFORE connecting — the
+    # provider generates the signing secret from it. Everything else connects first.
+    if key not in WEBHOOK_FIRST and integ.status != "connected":
         raise HTTPException(409, f"Connect {key} first")
     cred = dict(integ.credentials or {})
     if not cred.get("webhookToken"):
@@ -149,16 +161,22 @@ async def webhook_url(key: str, db=Depends(get_db), ws: str = Depends(get_worksp
         integ.credentials = cred
         await db.commit()
     base = str(settings.public_api_url or "http://localhost:8000").rstrip("/")
+    notes = {
+        "github": "GitHub: also set this token as the webhook secret.",
+        "circleback": "Circleback → Automations → Send webhook request: paste this URL, "
+                      "then copy the signing secret Circleback gives you and connect it here.",
+    }
     return WebhookUrlOut(
         url=f"{base}/webhooks/{key}?token={cred['webhookToken']}",
-        note="GitHub: also set this token as the webhook secret. Dev needs a public URL (e.g. ngrok).",
+        note=(notes.get(key, "Paste this URL into the provider's webhook settings.")
+              + " Dev needs a public URL (e.g. ngrok)."),
     )
 
 
 @router.post("/{key}/disconnect", response_model=IntegrationOut)
 async def disconnect(key: str, db=Depends(get_db), ws: str = Depends(get_workspace_id),
                      _=Depends(get_current_user)):
-    if key not in PROVIDERS:
+    if key not in PROVIDERS and key not in KEY_PROVIDERS:
         raise HTTPException(404, "Integration not found")
     integ = await _get(db, ws, key)
     if not integ:

@@ -153,7 +153,7 @@ _ISSUE_FIELDS = (
     "team { key name } project { name state } "
     "labels(first: 20) { nodes { name } } "
     # The discussion — where blockers, decisions and technical context live.
-    "comments(first: 8) { nodes { body createdAt user { name } } }"
+    "comments(first: 50) { nodes { body createdAt user { name } } }"
 )
 
 
@@ -229,9 +229,15 @@ async def _first_team_id(auth: str) -> str:
     return teams[0]["id"]
 
 
-async def create_issue(auth: str, title: str, description: str) -> dict[str, str]:
-    """Really creates the issue. Returns its identifier and URL."""
-    team_id = await _first_team_id(auth)
+async def list_teams(auth: str) -> list[dict[str, str]]:
+    """Teams the account can file into — the destination picker for a draft."""
+    data = await _gql(auth, "{ teams(first: 50) { nodes { id name key } } }")
+    return [{"id": t["id"], "name": t["name"], "key": t.get("key", "")} for t in data["teams"]["nodes"]]
+
+
+async def create_issue(auth: str, title: str, description: str, team_id: str | None = None) -> dict[str, str]:
+    """Really creates the issue (in team_id, or the first team). Returns identifier + URL."""
+    team_id = team_id or await _first_team_id(auth)
     data = await _gql(auth, """
       mutation($input: IssueCreateInput!) {
         issueCreate(input: $input) { success issue { identifier url } }

@@ -38,7 +38,6 @@ import { findingSources, rankFinding, SEVERITY, sourceKey } from "@/lib/sources"
 import { IntegrationLogo } from "@/components/shared/integration-logo";
 import { SyncTheater } from "@/components/shared/sync-theater";
 import type { Finding, Brief, Correction } from "@/lib/types";
-import { TimeFilter, withinRange, rangeLabel, type TimeRange } from "@/components/shared/time-filter";
 
 const KIND: Record<string, { label: string; icon: LucideIcon; chip: string }> = {
   gap: { label: "Gap", icon: AlertTriangle, chip: "text-warning bg-warning/10 border-warning/20" },
@@ -58,7 +57,7 @@ function KindChip({ kind }: { kind: string }) {
   );
 }
 
-function BriefCard({ brief, range, findings }: { brief: Brief; range: TimeRange; findings: Finding[] }) {
+function BriefCard({ brief, findings }: { brief: Brief; findings: Finding[] }) {
   const cols = [
     { label: "Risks", icon: AlertTriangle, tone: "text-warning", items: brief.evidence?.risks ?? [] },
     { label: "Highlights", icon: CheckCircle2, tone: "text-success", items: brief.evidence?.highlights ?? [] },
@@ -74,7 +73,7 @@ function BriefCard({ brief, range, findings }: { brief: Brief; range: TimeRange;
   return (
     <Card glass className="mb-6 animate-in fade-in-0 slide-in-from-bottom-2 p-6 duration-500">
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-primary">
-        <Sparkles className="h-3.5 w-3.5" /> {rangeLabel(range)}
+        <Sparkles className="h-3.5 w-3.5" /> Company brief
       </div>
       <h2 className="text-gradient mt-2 text-[20px] font-semibold tracking-[-0.02em]">{brief.title}</h2>
       {brief.detail ? <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-muted-foreground">{brief.detail}</p> : null}
@@ -343,7 +342,6 @@ export default function FeedPage() {
   const qc = useQueryClient();
   const { data, isLoading } = useFeed();
   const { data: hb } = useHeartbeat();
-  const [range, setRange] = useState<TimeRange>("all");
   const [selected, setSelected] = useState<Finding | null>(null);
   const scannedOnce = useRef(false);
 
@@ -369,7 +367,7 @@ export default function FeedPage() {
 
   // Keep the drawer's finding fresh after mutations.
   const liveSelected = selected && data ? data.findings.find((f) => f.id === selected.id) ?? selected : selected;
-  const findings = (data?.findings ?? []).filter((f) => withinRange(f.createdAt, range));
+  const findings = data?.findings ?? [];
 
   // Rank by importance (kind) + evidence + recency; the top problems get the
   // analyst treatment, the rest stay compact. No flat lists.
@@ -382,7 +380,7 @@ export default function FeedPage() {
 
   return (
     <div>
-      <PageHeader title="Feed" description={freshness} actions={<TimeFilter value={range} onChange={setRange} />} />
+      <PageHeader title="Feed" description={freshness} />
 
       {isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -393,7 +391,7 @@ export default function FeedPage() {
         <SyncTheater sync={sync} />
       ) : (
         <>
-          {findings.length > 0 && data?.brief && (data.brief.detail || data.brief.title) ? <BriefCard brief={data.brief} range={range} findings={findings} /> : null}
+          {findings.length > 0 && data?.brief && (data.brief.detail || data.brief.title) ? <BriefCard brief={data.brief} findings={findings} /> : null}
           {findings.length === 0 ? (
             <EmptyState
               icon={Sparkles}

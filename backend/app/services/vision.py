@@ -4,12 +4,42 @@ returns "" on any failure so callers skip honestly instead of ingesting noise.
 """
 from __future__ import annotations
 
+import ipaddress
+import socket
+from urllib.parse import urljoin, urlparse
+
 import httpx
 
 from ..config import settings
 
-_MAX_BYTES = 8_000_000  
+_MAX_BYTES = 8_000_000
 _IMAGE_MIMES = {"image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"}
+
+# Only these hosts may receive a connector's auth token (private uploads live
+# here). Everything else is fetched WITHOUT auth, so a token can never leak to a
+# URL an attacker planted in issue/PR/message content.
+_AUTHED_HOSTS = ("uploads.linear.app", ".slack.com", ".githubusercontent.com", ".googleusercontent.com")
+_MAX_REDIRECTS = 3
+
+
+def _public_host(host: str) -> bool:
+    """SSRF guard: reject hosts that resolve to a private/loopback/link-local IP —
+    e.g. the cloud metadata server 169.254.169.254, which hands out SA tokens."""
+    if not host:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            return False
+    return True
+
+
+def _may_send_auth(host: str) -> bool:
+    return any(host == h or host.endswith(h) for h in _AUTHED_HOSTS)
 
 _DOC_PROMPT = (
     "You transcribe documents. Output ONLY the text visible in the file, in reading "
@@ -43,15 +73,30 @@ async def transcribe(data: bytes, mime: str, name: str = "") -> str:
 
 
 async def fetch_image(url: str, auth: str | None = None) -> tuple[bytes, str] | None:
-    """Download an image, passing the connector's auth through (private uploads
-    on Linear/Slack need it). None unless the response really is a supported
-    image within the size cap — an HTML login page must never reach the model."""
-    try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-            res = await client.get(url, headers={"Authorization": auth} if auth else {})
-    except Exception:
+    """Download an image for the model. Auth is forwarded ONLY to known connector
+    hosts (`_AUTHED_HOSTS`) and only on the first hop; redirects are followed
+    manually so every hop's host is SSRF-checked (no private/metadata IPs) and no
+    token is carried to a redirect target. None unless the response really is a
+    supported image within the size cap — an HTML login page must never reach the
+    model."""
+    res = None
+    for _ in range(_MAX_REDIRECTS + 1):
+        host = (urlparse(url).hostname or "").lower()
+        if not _public_host(host):
+            return None
+        headers = {"Authorization": auth} if (auth and _may_send_auth(host)) else {}
+        try:
+            async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+                res = await client.get(url, headers=headers)
+        except Exception:
+            return None
+        if res.status_code in (301, 302, 303, 307, 308) and res.headers.get("location"):
+            url, auth = urljoin(url, res.headers["location"]), None  # never forward the token past a redirect
+            continue
+        break
+    if res is None or res.status_code != 200:
         return None
     mime = (res.headers.get("content-type") or "").partition(";")[0].strip()
-    if res.status_code != 200 or mime not in _IMAGE_MIMES or len(res.content) > _MAX_BYTES:
+    if mime not in _IMAGE_MIMES or len(res.content) > _MAX_BYTES:
         return None
     return res.content, mime

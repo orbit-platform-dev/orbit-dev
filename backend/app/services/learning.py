@@ -40,14 +40,23 @@ def rule_text(section: str, field: str, before: str, after: str, context: str = 
     if field == "dismiss":
         reason = after or "not relevant"
         return f'The team dismissed a {section}{ctx}: "{before}". Reason: {reason}. Surface fewer like it.'
+    if field == "rating":
+        # after = "up: <answer snippet>" | "down: <answer snippet>"
+        verdict = after.split(":", 1)[0].strip()
+        if verdict == "down":
+            return f'The team rated a chat answer UNHELPFUL for the question "{before}". Answer questions like it better — be specific and evidence-backed.'
+        return f'The team rated a chat answer HELPFUL for the question "{before}". Keep answering questions like it the same way.'
     instead = f' instead of "{before}"' if before else ""
     return f'When producing the {field} of a {section}{ctx}, the team prefers "{after}"{instead}.'
 
 
 async def record_feedback(
     db, workspace_id: str, *, section: str, field: str, before: str, after: str, context: str = "",
+    user_id: str | None = None,
 ) -> Feedback:
     """Persist one correction AND its embedding, synchronously (the write path).
+    `user_id` set = a PER-PERSON signal (e.g. a chat answer rating); None = a
+    team-wide correction.
 
     The embedding is None when embeddings are unavailable (AI off / no key) —
     stored as SQL NULL and backfilled later. Caller commits."""
@@ -55,6 +64,7 @@ async def record_feedback(
     fb = Feedback(
         id=f"fb_{uuid.uuid4().hex[:8]}",
         workspace_id=workspace_id,
+        user_id=user_id,
         section=section,
         field=field,
         before=(before or "")[:280],
@@ -81,8 +91,11 @@ async def render_corrections(db, workspace_id: str) -> str:
     return "\n".join(lines)
 
 
-async def relevant_rules(db, workspace_id: str, query_text: str, k: int = 3) -> list[Feedback]:
+async def relevant_rules(db, workspace_id: str, query_text: str, k: int = 3,
+                         *, user_id: str | None = None) -> list[Feedback]:
     """The behavioral rules most relevant to `query_text` — STRICTLY READ-ONLY.
+    `user_id` None → team-wide rules (Feedback.user_id IS NULL); set → that one
+    person's rules (their chat answer ratings).
 
     Native pgvector cosine distance (`<=>`) on Postgres; Python cosine on SQLite.
     Returns [] when embeddings are unavailable or nothing is relevant."""
@@ -91,18 +104,19 @@ async def relevant_rules(db, workspace_id: str, query_text: str, k: int = 3) -> 
     qv = await embeddings.embed_query(query_text)
     if not qv:
         return []
+    scope = (Feedback.user_id == user_id) if user_id else Feedback.user_id.is_(None)
 
     if engine.dialect.name == "postgresql":
         distance = cast(Feedback.embedding, Vector(EMBEDDING_DIM)).cosine_distance(qv)
         stmt = (select(Feedback).where(
-            Feedback.workspace_id == workspace_id,
+            Feedback.workspace_id == workspace_id, scope,
             Feedback.embedding.isnot(None),
             distance <= _RULE_MAX_DISTANCE,
         ).order_by(distance).limit(k))
         return list((await db.execute(stmt)).scalars().all())
 
     rows = (await db.execute(select(Feedback).where(
-        Feedback.workspace_id == workspace_id, Feedback.embedding.isnot(None)))).scalars().all()
+        Feedback.workspace_id == workspace_id, scope, Feedback.embedding.isnot(None)))).scalars().all()
     floor = 1.0 - _RULE_MAX_DISTANCE
     scored = [(r, embeddings.cosine(qv, r.embedding)) for r in rows if r.embedding]
     scored = [(r, s) for r, s in scored if s >= floor]
@@ -110,12 +124,15 @@ async def relevant_rules(db, workspace_id: str, query_text: str, k: int = 3) -> 
     return [r for r, _ in scored[:k]]
 
 
-async def directives_block(db, workspace_id: str, query_text: str, k: int = 3) -> str:
+async def directives_block(db, workspace_id: str, query_text: str, k: int = 3,
+                           *, user_id: str | None = None) -> str:
     """The relevant behavioral rules formatted as a <System_Directives> block for
-    system-prompt injection, or '' when there are none."""
-    rules = await relevant_rules(db, workspace_id, query_text, k=k)
+    system-prompt injection, or '' when there are none. `user_id` set → that
+    person's own feedback (e.g. chat answer ratings); None → team corrections."""
+    rules = await relevant_rules(db, workspace_id, query_text, k=k, user_id=user_id)
     if not rules:
         return ""
     body = "\n".join(f"- {rule_text(r.section, r.field, r.before, r.after)}" for r in rules)
-    return ("\n\n<System_Directives> (learned from this team's past corrections — honor them "
+    whose = "your own past feedback" if user_id else "this team's past corrections"
+    return (f"\n\n<System_Directives> (learned from {whose} — honor them "
             f"unless the user explicitly overrides)\n{body}\n</System_Directives>")

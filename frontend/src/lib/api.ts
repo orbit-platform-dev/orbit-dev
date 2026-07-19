@@ -7,6 +7,7 @@ import type {
   ChatAnswer,
   ChatConversationDetail,
   ChatConversationSummary,
+  ChatDraft,
   Correction,
   Entity,
   EntityDetail,
@@ -14,6 +15,7 @@ import type {
   Finding,
   HeartbeatStatus,
   Integration,
+  TicketTargets,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
@@ -74,10 +76,26 @@ export const getEntity = (id: string) => live<EntityDetail>(`/entities/${id}`);
 export const sendChat = (body: { message: string; conversationId?: string | null }) =>
   send<ChatAnswer>("/chat", "POST", body);
 
+// In-chat ticket drafts: where they can go, and edit / approve-to-create.
+export const getTicketTargets = () => live<TicketTargets>("/chat/ticket-targets");
+export const editChatAction = (
+  cid: string,
+  actionId: string,
+  patch: Partial<{ title: string; description: string; connector: string; target: string; targetLabel: string; discard: boolean }>,
+) => send<ChatDraft>(`/chat/conversations/${cid}/actions/${actionId}`, "PATCH", patch);
+export const approveChatAction = (cid: string, actionId: string) =>
+  send<{ actionId: string; status: string; result: { identifier?: string; url?: string } }>(
+    `/chat/conversations/${cid}/actions/${actionId}/approve`,
+    "POST",
+  );
+export const rateChatAnswer = (cid: string, index: number, rating: "up" | "down") =>
+  send<{ index: number; rating: string }>(`/chat/conversations/${cid}/messages/${index}/rate`, "POST", { rating });
+
 export interface ChatStreamHandlers {
-  onPhase?: (phase: string) => void;
+  onPhase?: (phase: string, connector?: string) => void;
   onThinking?: (text: string) => void;
   onDelta: (text: string) => void;
+  onDraft?: (draft: ChatDraft) => void;
   onDone: (final: ChatAnswer) => void;
   onError: (message: string) => void;
 }
@@ -131,7 +149,8 @@ export async function streamChat(
         }
         if (data.type === "delta") h.onDelta(data.text as string);
         else if (data.type === "thinking") h.onThinking?.(data.text as string);
-        else if (data.type === "phase") h.onPhase?.(data.phase as string);
+        else if (data.type === "phase") h.onPhase?.(data.phase as string, data.connector as string | undefined);
+        else if (data.type === "draft") h.onDraft?.(data.draft as ChatDraft);
         else if (data.type === "error") h.onError(data.message as string);
         else if (data.type === "done")
           h.onDone({
@@ -139,6 +158,7 @@ export async function streamChat(
             answer: "",
             citations: (data.citations ?? []) as ChatAnswer["citations"],
             grounded: (data.grounded ?? true) as boolean,
+            draft: (data.draft ?? null) as ChatAnswer["draft"],
           });
       }
     }
@@ -176,3 +196,7 @@ export const disconnectIntegration = (key: string) =>
 // to it. The workspace is derived server-side from the signed-in user.
 export const getOAuthUrl = (key: string) =>
   send<{ url: string }>(`/integrations/${key}/oauth/url`, "POST");
+// Mint (once) this workspace's inbound webhook URL for a connector — used by
+// push-based connectors like Circleback, which deliver meetings to this URL.
+export const getWebhookUrl = (key: string) =>
+  live<{ url: string; note: string }>(`/integrations/${key}/webhook`);

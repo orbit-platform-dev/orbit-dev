@@ -20,7 +20,7 @@ from sqlalchemy import select
 
 from ..deps import Depends, get_db
 from ..models import Integration
-from ..services import heartbeat
+from ..services import circleback, heartbeat, ingestion
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -55,6 +55,19 @@ async def receive(key: str, token: str, request: Request, db=Depends(get_db)):
         raise HTTPException(401, "Bad signature")
 
     ws = match.workspace_id
+
+    # Circleback PUSHES the whole meeting (there's no API to poll), so this
+    # delivery IS the data: verify its signature and ingest the payload directly,
+    # rather than triggering a sync like the poll-based connectors.
+    if key == "circleback":
+        secret = (match.credentials or {}).get("apiKey")
+        if not circleback.signature_ok(secret, body, request.headers.get("x-signature")):
+            raise HTTPException(401, "Bad signature")
+        import json
+
+        ingestion.start_circleback_ingest(ws, json.loads(body))
+        return {"ok": True}
+
     now = time.time()
     if now - _last_trigger.get(ws, 0) >= _DEBOUNCE_SECONDS:
         _last_trigger[ws] = now

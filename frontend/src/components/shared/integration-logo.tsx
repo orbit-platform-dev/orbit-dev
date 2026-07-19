@@ -26,6 +26,11 @@ const ICONS: Partial<Record<IntegrationKey, Brand>> = {
   "google-drive": siGoogledrive,
 };
 
+const LOCAL_LOGOS: Partial<Record<IntegrationKey, string>> = {
+  fireflies: "/connectors/fireflies.png",
+  circleback: "/connectors/circleback.png",
+};
+
 // Monogram fallback (short label + brand color) for marks not in simple-icons.
 export const integrationBrand: Record<IntegrationKey, { short: string; color: string }> = {
   "google-meet": { short: "GM", color: "#00897b" },
@@ -44,11 +49,10 @@ export const integrationBrand: Record<IntegrationKey, { short: string; color: st
   confluence: { short: "Cf", color: "#2684ff" },
   "google-docs": { short: "GD", color: "#4285f4" },
   "google-drive": { short: "Dr", color: "#4285f4" },
+  fireflies: { short: "Ff", color: "#8b5cf6" },
+  circleback: { short: "Cb", color: "#f97316" },
 };
 
-// Official multi-color Slack mark (brand asset). The black backing square from
-// the source file is dropped so the colored glyph sits on the white tile like
-// every other logo.
 const SLACK_MARK: { d: string; fill: string }[] = [
   { fill: "#00BBD3", d: "M152.999466,228.340637 C124.667336,228.339905 96.834679,228.444809 69.003273,228.303665 C48.347614,228.198898 35.835205,217.145035 33.475445,197.358017 C31.147240,177.835602 44.526749,161.230988 64.110542,159.772781 C71.406799,159.229492 78.765121,159.448776 86.095238,159.443253 C121.260353,159.416763 156.425568,159.388931 191.590591,159.451538 C208.970490,159.482468 220.307327,166.607544 225.593338,180.534775 C233.421600,201.160141 222.257965,228.391724 193.997101,228.313416 C180.498016,228.276016 166.998703,228.328766 152.999466,228.340637 z" },
   { fill: "#FE9700", d: "M448.641357,354.870941 C405.351471,354.900238 362.524872,355.021698 319.699219,354.867462 C301.455170,354.801727 289.022339,343.280487 286.395142,324.761749 C284.039062,308.154114 293.756561,292.174011 309.191406,287.617615 C312.346069,286.686401 315.728607,286.091339 319.007812,286.083771 C362.000458,285.984497 404.993958,285.892487 447.986023,286.080017 C465.839783,286.157928 478.312195,298.258575 480.625092,316.886353 C482.680206,333.438446 472.546967,349.181152 456.959686,353.479431 C454.409302,354.182739 451.726562,354.406250 448.641357,354.870941 z" },
@@ -61,6 +65,17 @@ const SLACK_MARK: { d: string; fill: string }[] = [
 ];
 
 export function IntegrationLogo({ k, className }: { k: IntegrationKey; className?: string }) {
+  const local = LOCAL_LOGOS[k];
+  if (local) {
+    return (
+      <div
+        role="img"
+        aria-label={k}
+        className={cn("h-10 w-10 shrink-0 rounded-lg border border-border bg-cover bg-center", className)}
+        style={{ backgroundImage: `url(${local})` }}
+      />
+    );
+  }
   if (k === "slack") {
     return (
       <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-white", className)}>

@@ -16,9 +16,9 @@ from pydantic.alias_generators import to_camel
 from sqlalchemy import select
 
 from ..deps import Depends, get_current_user, get_db
-from ..models import ActivityEvent, Artifact, Entity, Insight
+from ..models import ActivityEvent, Artifact, Entity, Feedback, Insight
 from ..schemas import ArtifactOut, BriefOut, CorrectionOut, EntityOut, FeedOut, FindingOut
-from ..services import heartbeat, learning, linear
+from ..services import heartbeat, learning, tickets
 from ..services.workspace import get_workspace_id
 
 router = APIRouter(tags=["feed"])
@@ -127,11 +127,11 @@ async def approve_finding(finding_id: str, db=Depends(get_db), ws: str = Depends
     if action.get("type") != "create-linear-issue":
         raise HTTPException(422, "This finding has no action to approve")
 
-    auth = await linear.get_auth(db, ws)
-    if not auth:
-        raise HTTPException(409, "Connect Linear to create issues")
     try:
-        result = await linear.create_issue(auth, action["title"], action.get("description", ""))
+        result = await tickets.create_ticket(db, ws, connector="linear",
+                                             title=action["title"], description=action.get("description", ""))
+    except PermissionError as exc:
+        raise HTTPException(409, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, f"Linear did not create the issue: {exc}") from exc
 

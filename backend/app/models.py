@@ -152,6 +152,7 @@ class Feedback(Base):
     __tablename__ = "feedback"
     id: Mapped[str] = mapped_column(String, primary_key=True)
     workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default", index=True)
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
     plan_id: Mapped[str | None] = mapped_column(String, nullable=True)
     section: Mapped[str] = mapped_column(String, index=True)  # finding | ...

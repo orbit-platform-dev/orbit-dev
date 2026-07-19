@@ -37,6 +37,14 @@ _IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp")
 _VISION_PER_SYNC = 3
 
 
+_OFFICE_MIME = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ("gdrive-doc", "docx"),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ("gdrive-sheet", "xlsx"),
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ("gdrive-slides", "pptx"),
+}
+_OFFICE_MAX_BYTES = 15_000_000
+
+
 def oauth_configured() -> bool:
     return bool(settings.google_client_id and settings.google_client_secret)
 
@@ -135,6 +143,41 @@ def _pdf_text(data: bytes) -> str:
         return ""
 
 
+def _office_text(data: bytes, fmt: str) -> str:
+    """Text from an uploaded Office file (docx/xlsx/pptx). Empty string on any
+    parse failure — the caller skips rather than ingesting noise."""
+    import io
+
+    buf = io.BytesIO(data)
+    try:
+        if fmt == "docx":
+            from docx import Document
+            return "\n".join(p.text for p in Document(buf).paragraphs if p.text).strip()
+        if fmt == "xlsx":
+            from openpyxl import load_workbook
+            wb = load_workbook(buf, read_only=True, data_only=True)
+            lines: list[str] = []
+            for ws in wb.worksheets:
+                lines.append(f"# {ws.title}")
+                for row in ws.iter_rows(values_only=True):
+                    cells = [str(c) for c in row if c is not None]
+                    if cells:
+                        lines.append(", ".join(cells))
+            wb.close()
+            return "\n".join(lines).strip()
+        if fmt == "pptx":
+            from pptx import Presentation
+            out: list[str] = []
+            for i, slide in enumerate(Presentation(buf).slides, 1):
+                texts = [s.text for s in slide.shapes if s.has_text_frame and s.text.strip()]
+                if texts:
+                    out.append(f"Slide {i}:\n" + "\n".join(texts))
+            return "\n\n".join(out).strip()
+    except Exception:
+        return ""
+    return ""
+
+
 async def file_exists(auth: str, file_id: str) -> bool:
     """False ONLY when the file is gone or trashed — the deletion signal for
     reconcile. Transient/API errors raise; deletion needs proof, not doubt."""
@@ -164,7 +207,7 @@ async def fetch_documents(
     modified after the cursor. `known` maps file id → modifiedTime already in
     memory: unchanged files are listed (for reconcile) but never re-downloaded
     or re-read. Returns (docs, listed_ids)."""
-    mimes = " or ".join(f"mimeType='{m}'" for m in [*_MIME_EXPORT, _PDF_MIME, *_IMAGE_MIMES])
+    mimes = " or ".join(f"mimeType='{m}'" for m in [*_MIME_EXPORT, *_OFFICE_MIME, _PDF_MIME, *_IMAGE_MIMES])
     q = f"({mimes}) and trashed=false"
     if since:
         q += f" and modifiedTime > '{since}'"
@@ -210,6 +253,18 @@ async def fetch_documents(
             if not text:
                 continue
             ocr = True
+        elif f["mimeType"] in _OFFICE_MIME:
+            source, fmt = _OFFICE_MIME[f["mimeType"]]
+            kind = "doc"
+            if int(f.get("size") or 0) > _OFFICE_MAX_BYTES:
+                continue
+            try:
+                data = await _get_bytes(auth, f"{_API}/files/{f['id']}", {"alt": "media"})
+            except Exception:
+                continue
+            text = _office_text(data, fmt)
+            if not text:
+                continue  # unreadable/empty Office file — skip rather than store noise
         else:
             export_mime, source, kind = _MIME_EXPORT[f["mimeType"]]
             try:

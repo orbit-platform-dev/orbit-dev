@@ -38,6 +38,11 @@ const KEY_CONNECT: Record<string, { name: string; placeholder: string; help: str
     placeholder: "ghp_… or github_pat_…",
     help: "GitHub → Settings → Developer settings → Personal access tokens (repo read access). Validated live; stored server-side, never exposed.",
   },
+  fireflies: {
+    name: "Fireflies",
+    placeholder: "your Fireflies API key",
+    help: "Fireflies → Settings → Developer settings (Personal tab) → API key. Validated live; stored server-side, never exposed.",
+  },
 };
 
 function KeyConnectDialog({ provider, onOpenChange, oauthAvailable, onOAuth }: {
@@ -90,10 +95,76 @@ function KeyConnectDialog({ provider, onOpenChange, oauthAvailable, onOAuth }: {
   );
 }
 
+function CirclebackConnectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const qc = useQueryClient();
+  const [secret, setSecret] = useState("");
+  const [hook, setHook] = useState<{ url: string; note: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!open) { setHook(null); setSecret(""); return; }
+    api.getWebhookUrl("circleback").then(setHook).catch(() => toast.error("Could not generate the webhook URL"));
+  }, [open]);
+
+  const connect = useMutation({
+    mutationFn: () => api.connectWithKey("circleback", secret.trim()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.integrations });
+      toast.success("Circleback connected");
+      onOpenChange(false);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not connect Circleback"),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Connect Circleback</DialogTitle></DialogHeader>
+        <div className="space-y-1.5">
+          <Label>1 · Webhook URL</Label>
+          <div className="flex gap-2">
+            <Input readOnly value={hook?.url ?? "Generating…"} className="font-mono text-xs" />
+            <Button
+              variant="outline"
+              disabled={!hook?.url}
+              onClick={() => {
+                if (!hook?.url) return;
+                navigator.clipboard.writeText(hook.url);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }}
+            >
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {hook?.note ?? "In Circleback → Automations → Send webhook request, paste this URL."}
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="cb-secret">2 · Signing secret</Label>
+          <Input id="cb-secret" placeholder="whsec_…" value={secret} onChange={(e) => setSecret(e.target.value)} />
+          <p className="text-xs text-muted-foreground">
+            Copy the signing secret Circleback shows after adding the webhook. Stored server-side, used only to verify deliveries.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={() => connect.mutate()} disabled={connect.isPending || !secret.trim()}>
+            {connect.isPending ? "Connecting…" : "Connect"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function IntegrationRow({ integration, onConnect }: { integration: Integration; onConnect: (key: string) => void }) {
   const qc = useQueryClient();
   const connected = integration.status === "connected" || integration.status === "syncing";
-  const canConnectNow = !!integration.connectable && (integration.key in KEY_CONNECT || !!integration.oauthAvailable);
+  const needsReconnect = integration.status === "reconnect";  // token expired / scope missing
+  const canConnectNow = !!integration.connectable
+    && (integration.key in KEY_CONNECT || !!integration.oauthAvailable || integration.key === "circleback");
   const disconnect = useMutation({
     mutationFn: () => api.disconnectIntegration(integration.key),
     onSuccess: () => {
@@ -115,6 +186,11 @@ function IntegrationRow({ integration, onConnect }: { integration: Integration; 
       </div>
       {connected ? (
         <Button variant="outline" size="sm" onClick={() => disconnect.mutate()} disabled={disconnect.isPending}>Disconnect</Button>
+      ) : needsReconnect && canConnectNow ? (
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-[11px] font-medium text-warning">Session expired</span>
+          <Button size="sm" onClick={() => onConnect(integration.key)}><Plug className="h-4 w-4" /> Reconnect</Button>
+        </div>
       ) : canConnectNow ? (
         <Button size="sm" onClick={() => onConnect(integration.key)}><Plug className="h-4 w-4" /> Connect</Button>
       ) : (
@@ -136,6 +212,7 @@ export default function IntegrationsPage() {
   const [category, setCategory] = useState("All");
   const [query, setQuery] = useState("");
   const [dialogProvider, setDialogProvider] = useState<string | null>(null);
+  const [circlebackOpen, setCirclebackOpen] = useState(false);
 
   // Handle the return from any provider's OAuth redirect (?connected=<key> / ?error).
   useEffect(() => {
@@ -163,7 +240,8 @@ export default function IntegrationsPage() {
   };
 
   const onConnect = (key: string) => {
-    if (oauthAvailable(key)) startOAuth(key);
+    if (key === "circleback") setCirclebackOpen(true);
+    else if (oauthAvailable(key)) startOAuth(key);
     else if (key in KEY_CONNECT) setDialogProvider(key);
   };
 
@@ -222,6 +300,7 @@ export default function IntegrationsPage() {
         oauthAvailable={oauthAvailable(dialogProvider)}
         onOAuth={() => dialogProvider && startOAuth(dialogProvider)}
       />
+      <CirclebackConnectDialog open={circlebackOpen} onOpenChange={setCirclebackOpen} />
     </div>
   );
 }

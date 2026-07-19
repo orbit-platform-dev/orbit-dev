@@ -109,10 +109,11 @@ async def list_channels(auth: str, limit: int = 200) -> list[dict[str, Any]]:
     return [{"id": c["id"], "name": c.get("name", c["id"])} for c in data.get("channels", [])]
 
 
-async def fetch_threads(auth: str, channel_id: str, *, history_limit: int = 50,
-                        max_threads: int = 20, oldest: str | None = None) -> list[dict[str, Any]]:
+async def fetch_threads(auth: str, channel_id: str, *, history_limit: int = 200,
+                        max_threads: int = 50, oldest: str | None = None) -> list[dict[str, Any]]:
     """Recent threads (root + replies) in a channel, newest first. Threads only —
-    a rooted discussion is a coherent unit of intent, like a mini-call."""
+    a rooted discussion is a coherent unit of intent, like a mini-call. Caps are
+    generous because the sync time window (oldest) is the real bound on volume."""
     params: dict[str, Any] = {"channel": channel_id, "limit": history_limit}
     if oldest:
         params["oldest"] = oldest

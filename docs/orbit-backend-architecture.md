@@ -1,6 +1,6 @@
 # Orbit Backend — Complete Design (diagram-first, with low-level internals)
 
-*Accurate as of 2026-07-18. One FastAPI monolith · SQLite dev / Postgres+pgvector prod · no queues, no microservices. Part I is the map; Part II is every screw and bolt.*
+*Accurate as of 2026-07-19. One FastAPI monolith · SQLite dev / Postgres+pgvector prod · no queues, no microservices. Part I is the map; Part II is every screw and bolt.*
 
 ---
 
@@ -65,19 +65,22 @@ What happens when the heartbeat ticks (env `HEARTBEAT_INTERVAL_MINUTES`) or you 
 ```
  HEARTBEAT TICK (per workspace)
  │
- ├─▶ 1. pull_all() — INCREMENTAL: each connector keeps a cursor (sync_state)
- │      and fetches only items changed since; a FULL pass every 24h reconciles
- │      deletions — Linear by complete-listing diff; GitHub/Drive by LIVE
- │      existence probes on items missing from their capped listings (gone/404
+ ├─▶ 1. pull_all() — FIRST connect: a 20-day backfill window (recent history, not
+ │      years — the cursor grows it forward). Thereafter INCREMENTAL: each connector
+ │      keeps a cursor (sync_state) and fetches only items changed since; a FULL pass
+ │      every 24h reconciles deletions — Linear by complete-listing diff; GitHub/Drive
+ │      by LIVE existence probes on items missing from their capped listings (gone/404
  │      → stale · merged/closed outside the window → state fixed · still there
  │      → untouched; ≤50 probes/night, shuffled; transient errors never stale)
- │      Linear: all open + recent completed issues (+8 comments each)
- │      GitHub: 15 repos × PRs/issues; open PRs get reviews+stats (3 calls each, capped 8/repo)
+ │      Linear: all open + recent completed issues (+50 comments each)
+ │      GitHub: 15 repos × PRs/issues; ALL discussion comments on every item (issues
+ │              AND PRs, paginated); open PRs also get reviews+stats
  │      Slack:  threads (root+replies) from bot channels (+permalinks, +image files)
- │      Drive:  30 latest Docs→text / Sheets→CSV / Slides→text / PDFs — text
- │              layer via pypdf, scanned PDFs OCR'd by the vision (lite) model
- │              (3/sync) / standalone images read by vision; unchanged files are
- │              never re-downloaded or re-read (modifiedTime memo); hourly token
+ │      Drive:  30 latest Docs→text / Sheets→CSV / Slides→text / Office
+ │              .docx·.xlsx·.pptx→text (python-docx/openpyxl/python-pptx) / PDFs
+ │              — text layer via pypdf, scanned PDFs OCR'd by the vision (lite)
+ │              model (3/sync) / standalone images read by vision; unchanged files
+ │              are never re-downloaded or re-read (modifiedTime memo); hourly token
  │              auto-refresh
  │
  ├─▶ 2. per item — INGESTION
@@ -123,6 +126,11 @@ What happens when the heartbeat ticks (env `HEARTBEAT_INTERVAL_MINUTES`) or you 
  │
  ├─ auth: Clerk JWT → workspace_id · conversation loaded (private to this user)
  │
+ ├─ INTENT FORK (before answering):
+ │    • "create a ticket for X" (actionable) → draft a ticket, stream a `draft` card,
+ │      skip retrieval  (Phase 1 — see §15b; approve → services/tickets → real issue)
+ │    • otherwise → answer path below
+ │
  ├─ CONTEXT ASSEMBLY (_build_context) ── one prompt from seven blocks:
  │    ① CONVERSATION SO FAR   last 8 turns (resolves "it/they"; never a fact source)
  │    ② MEMORY STATS          computed counts — issues open/done per person, PR stats,
@@ -139,6 +147,10 @@ What happens when the heartbeat ticks (env `HEARTBEAT_INTERVAL_MINUTES`) or you 
  │    ⑦ DIRECTIVES            past human corrections relevant to THIS question
  │                            (vector match, appended to the SYSTEM prompt)
  │
+ ├─ SELF-DECIDE-TO-PULL (Phase 2): nothing retrieved (no hits, no stats)?
+ │    → pick the connected tool most likely to have it → phase:"pulling" ("Checking
+ │      Linear…") → run its pull → re-assemble context → continue
+ │
  ├─ GENERATION (SSE events streamed to UI)
  │    phase:"retrieving" → phase:"reasoning"
  │    smart model with include_thoughts
@@ -147,9 +159,12 @@ What happens when the heartbeat ticks (env `HEARTBEAT_INTERVAL_MINUTES`) or you 
  │    ✚ resilience: primary dies with no text? retry once on lite model
  │    ✚ still nothing? deterministic fallback (stats + top memory list) — never crashes
  │
+ ├─ PROACTIVE OFFER (Phase 3): a trackable statement + the team has the ticket habit?
+ │    → attach a `draft` card flagged proactive ("Suggested ticket")
+ │
  └─ FINISH
       citations = evidence actually referenced (by identifier/title match, else top-3)
-      done:{conversationId, citations[{source,title,url}], grounded}
+      done:{conversationId, citations[{source,title,url}], grounded, draft?}
       conversation persisted · UI renders connector-logo chips with deep links
 ```
 
@@ -229,7 +244,7 @@ gets more accurate by running, even with zero human feedback.
 | `goals` | declared intentions | what drift is measured against |
 | `feedback` | corrections | section/field/before/after + vector (the learning store) |
 | `integrations` | connector creds + cursors | composite PK `(workspace_id, key)` · `credentials` JSON · `sync_state` {cursor,lastFull} |
-| `chat_conversations` | Ask-Orbit history | private per `(workspace_id, user_id)`; messages as JSON |
+| `chat_conversations` | Ask-Orbit history | private per `(workspace_id, user_id)`; messages as JSON — an assistant message may carry a `draft` (the in-chat ticket + its status/result) |
 | `activity_events` | audit trail | every autonomous act ("scanned", "drafted") is logged |
 
 ---
@@ -281,33 +296,40 @@ Everything below is function-level, with the exact constants and algorithms in t
 - Two auth modes: personal API key (raw header value) or OAuth (`Bearer <token>`).
 - **Expiring OAuth tokens (2026-07-18)**: `exchange_code` returns `{accessToken, refreshToken, expiresAt}` when Linear supplies a refresh token (expiry defaults to `expires_in` or 86400s, minus 60s skew); `get_auth` auto-refreshes when `time.time() >= expiresAt` and persists the ROTATED refresh token. A failed refresh keeps the old token so the sync's own error handling reports it. Connections made before this fix have no refresh token and must be reconnected once.
 - `_gql` always sends `public-file-urls-expire-in: 86400` — `uploads.linear.app` rejects ALL API auth headers, so image URLs in issue markdown must come back pre-signed to be downloadable at all (signed for 24h, re-signed on every fetch — see §11 image cache keys).
-- Caps: `_MAX_OPEN = 2000` open issues (paginated fully), `_MAX_COMPLETED = 500` recent completions, 8 comments per issue. `_with_since` merges `{"updatedAt": {"gt": since}}` into the GraphQL filter.
+- Caps: `_MAX_OPEN = 2000` open issues (paginated fully), `_MAX_COMPLETED = 500` recent completions, 50 comments per issue. `_with_since` merges `{"updatedAt": {"gt": since}}` into the GraphQL filter.
 
 **GitHub (`services/github.py`)**
 - PAT paste or OAuth; both become `Bearer <token>`.
-- `fetch_work(auth, since)`: `_MAX_REPOS = 15` most-recently-pushed repos × `_PER_REPO = 30` PRs + 30 issues (`state=all`, sorted by `updated` desc; the issues endpoint interleaves PRs — filtered by the `pull_request` key). PRs use a client-side cutoff on `updatedAt > since`; issues use the API-native `since` param. Open PRs get `_enrich_pr` — 3 extra calls each (detail stats: additions/deletions/changedFiles/commits · ≤8 issue comments · ≤10 reviews), capped `_ENRICH_PER_REPO = 8`. Top `_CONTRIBUTORS_PER_REPO = 10` contributors per repo, refreshed on FULL syncs only.
+- `fetch_work(auth, since)`: `_MAX_REPOS = 15` most-recently-pushed repos × `_PER_REPO = 100` PRs + 100 issues (`state=all`, sorted by `updated` desc; the issues endpoint interleaves PRs — filtered by the `pull_request` key). The page ceiling is high on purpose — the sync **time window** (20-day cold start, then cursor) is the real bound, not a count. PRs use a client-side cutoff on `updatedAt > since`; issues use the API-native `since` param. **Every item — issue OR PR — gets its full discussion** via `_fetch_comments` (paginated, ≤`_COMMENTS_MAX = 200`; a 0-comment item skips the call). Image links in comment bodies are OCR'd downstream. Open PRs additionally get `_enrich_pr` (detail stats: additions/deletions/changedFiles/commits · ≤10 reviews), capped `_ENRICH_PER_REPO = 20`. Top `_CONTRIBUTORS_PER_REPO = 10` contributors per repo, refreshed on FULL syncs only.
 - `item_state(auth, "owner/repo#n", is_pr)` — the reconcile probe: GET `/repos/{repo}/{pulls|issues}/{n}`; status 301/404/410/451 ⇒ `None` (gone — 301 means the repo was renamed, so the old ref is dead and the new name syncs as new artifacts); 200 ⇒ `"merged"` (merged_at set) / `"closed"` / `"open"`; anything else raises (rate limit ≠ deletion).
 
 **Slack (`services/slack.py`)**
 - OAuth only; scopes `channels:history, channels:read, groups:history, users:read, files:read` (files:read added for image attachments — pre-existing connections must reconnect to grant it).
-- `list_channels`: channels the bot is a member of (public+private, ≤200). `fetch_threads(auth, channel, history_limit=50, max_threads=20, oldest=None)`: only rooted threads (`reply_count ≥ 1`, subtypes skipped); each thread = root + all replies joined by blank lines, plus `files` = image attachments (`mimetype image/*`, `url_private`) from every message in the thread. The `oldest` param is the ISO cursor converted to an epoch string.
+- `list_channels`: channels the bot is a member of (public+private, ≤200). `fetch_threads(auth, channel, history_limit=200, max_threads=50, oldest=None)`: only rooted threads (`reply_count ≥ 1`, subtypes skipped); each thread = root + all replies joined by blank lines, plus `files` = image attachments (`mimetype image/*`, `url_private`) from every message in the thread. Caps are generous because the `oldest` window (the ISO cursor as an epoch string) is the real bound on volume.
 - Deep links: `permalink(team_url, channel, ts)` = `{team}/archives/{channel}/p{ts-sans-dot}` — constructible from stored meta, so FULL syncs backfill missing permalinks on old threads with zero API calls.
 
 **Google Drive (`services/google_drive.py`)**
 - Access tokens expire HOURLY: credentials persist `{accessToken, refreshToken, expiresAt}` (`expires_in − 60s` skew); `get_auth` refreshes in place and flushes (caller commits). Authorize with `access_type=offline&prompt=consent` (Google only issues a refresh token on explicit consent).
 - `fetch_documents(auth, since, known) → (docs, listed_ids)`: one query over Google-native mimes + PDF + PNG/JPEG/WebP, `orderBy=modifiedTime desc`, `pageSize = _MAX_FILES = 30`, optional `modifiedTime > since`. The `known` map (file id → modifiedTime already in memory) means **unchanged files are listed (for reconcile) but never re-downloaded/re-exported/re-OCR'd**.
   - Google Docs → `text/plain` export · Sheets → `text/csv` · Slides → `text/plain`; clipped to `_EXPORT_CLIP = 20000` chars.
+  - **Uploaded Office files** (`_OFFICE_MIME`, ≤15MB): downloaded raw (not exportable) and parsed by `_office_text` — `.docx` via python-docx (paragraphs), `.xlsx` via openpyxl (cells as CSV per sheet), `.pptx` via python-pptx (slide text). Mapped to the **same source as their Google-native cousin** (`gdrive-doc`/`gdrive-sheet`/`gdrive-slides`) — a doc is a doc regardless of format. Empty/unparseable → skipped.
   - PDFs (≤ `_PDF_MAX_BYTES` 15MB): pypdf text layer first; if under `_PDF_MIN_TEXT = 200` chars it's scanned → `vision.transcribe` (budgeted); still under 200 → skipped honestly, retried next sync. Source `gdrive-pdf`, `ocr` flag when vision produced the text.
   - Images → `vision.transcribe` directly (source `gdrive-image`; any non-empty text accepted).
   - Shared vision budget `_VISION_PER_SYNC = 3` per pull.
 - `file_exists(auth, file_id)` — reconcile probe: `files.get(fields=id,trashed)`; 404 or `trashed:true` ⇒ False; other non-200 raises (deletion needs proof, not doubt).
 
 **Cursors & reconcile (`services/ingestion.py`)**
-- `Integration.sync_state = {"cursor": iso, "lastFull": iso}`. `_sync_plan` returns `since=None` (⇒ FULL sync) on first run or when `lastFull` is older than `_FULL_SYNC_EVERY_HOURS = 24`; otherwise the cursor. `_advance_cursor` sets `cursor = now − _CURSOR_OVERLAP_MINUTES (5)` — the overlap re-reads a small window, and dedup makes overlap free.
+- `Integration.sync_state = {"cursor": iso, "lastFull": iso}`. `_sync_plan`:
+  - **first connect (no cursor)** ⇒ `since = now − _INITIAL_BACKFILL_DAYS (20)` — a bounded cold start, so connecting doesn't ingest years of history in one tick; the cursor then grows the corpus forward.
+  - **cursor set, `lastFull` older than `_FULL_SYNC_EVERY_HOURS = 24`** ⇒ `since = None` (a FULL reconcile that also catches deletions).
+  - **otherwise** ⇒ the cursor (incremental).
+  `_advance_cursor` sets `cursor = now − _CURSOR_OVERLAP_MINUTES (5)` — the overlap re-reads a small window, and dedup makes overlap free. It also sets `lastFull` on the FIRST advance (not just full passes), so the tick right after the initial backfill stays incremental instead of immediately running a full reconcile. Net effect: a fast, recent cold start; steady incremental growth; a daily full reconcile that both catches deletions and fills in still-open work older than the 20-day window (Orbit accumulates more context over time).
 - **Reconcile runs only on FULL syncs**:
   - *Linear*: its open-issue fetch is complete, so any locally-open artifact missing from the fetched set (and not completed/canceled) → `status="stale"` directly.
   - *GitHub / Drive*: listings are capped, so absence proves nothing. Open artifacts missing from the listing are probed live (`item_state` / `file_exists`), shuffled, capped at `_RECONCILE_CHECKS = 50` per source per pass: gone → stale; GitHub merged/closed outside the window → `meta.stateType` corrected to completed; still-open/existing → untouched. Probe errors skip the item.
   - *Slack*: not reconciled (threads have no open state; a deleted message simply stops being cited).
+
+**Sync health / self-healing reconnect (`_note_sync_health`)** — a dead credential no longer fails silently. When a pull throws an **auth-looking** error (`_AUTH_SIGNALS`: 401 / unauthorized / invalid_auth / missing_scope / invalid_grant / token refresh failed — deliberately **not** 403, which GitHub uses for rate limits), a `connected` integration flips to `status="reconnect"` and the Integrations UI shows a "Session expired · Reconnect" affordance. A subsequent clean pull flips it back to `connected`, so a transient error that trips it never sticks. This makes the one-time re-auth (a new OAuth scope, or a pre-existing token with no refresh token — neither of which any code can conjure) **visible and actionable** rather than a silent zero.
 
 ## 9. Webhooks (`routers/webhooks.py`, `routers/integrations.py`)
 
@@ -327,6 +349,7 @@ Everything below is function-level, with the exact constants and algorithms in t
 - `fetch_image(url, auth)` — downloads with the connector's Authorization header passed through (Linear/Slack private uploads need it), follows redirects, and returns `None` unless the response is really a supported image (`png/jpeg/webp/heic/heif` by content-type — an HTML login page or SVG badge never reaches the model) within the size cap.
 - **`_fold_images(content, auth, prev, budget)`** — for Linear + GitHub items: regex `!\[…\](url)` over the composed content (descriptions + comments), first 5 unique URLs. Cache key = **URL without its query string** (Linear re-signs URLs on every fetch; the base identifies the image). For each URL: cached in `prev` (= existing `meta.imageTexts`) → reuse; else spend budget (`_IMAGES_PER_SYNC = 5` per connector per pull, shared mutable `[int]`), download+transcribe, clip to 800 chars. Download failures cache as `""` (dead links never burn budget again); transcribe failures (likely quota) stay uncached and retry next sync. Non-empty texts render an `Images:` block appended to content **before** extraction/embedding, and the map persists to `meta.imageTexts`.
 - Slack images go through the same fetch/transcribe path per thread file (≤5/thread) at creation time only — threads don't refresh.
+- **Re-embed on new image text** (`_reembed_if_images_changed`): a routine refresh never re-embeds (that would be a per-tick storm across the whole backlog), but when `_fold_images` reads a *new* image on an already-embedded artifact (`imgs != prev_imgs`), that one artifact is re-embedded so its image content becomes semantically searchable — not just present in the LLM context. Rare by construction (only the tick that actually read a new image), so no storm.
 
 ## 12. Memory engine (`services/memory.py`)
 
@@ -355,7 +378,8 @@ Constants: `_MERGE_SIM = 0.90` · `_STALE_FLOOR = 0.35` · `_DECAY_AFTER_DAYS = 
 
 - **`normalize_name`**: lowercase, punctuation→space, trailing corporate suffixes dropped (`inc llc ltd gmbh corp co kk sa srl plc…`) — "Acme Inc." ≡ "acme".
 - **`text_match(a, b)`** — the deterministic "same thing?" check used by commitment matching and the drift detector: ≥2 shared significant tokens (len ≥3, stopwords removed) OR `difflib.SequenceMatcher ≥ 0.82` on normalized strings.
-- **`resolve_entity(kind, name)`** — find-or-create by normalized name or alias; deliberately conservative (a wrong merge is worse than a duplicate — the known cost: `VijayBharathi27` ≠ `Bharathi Vijaya` until identity unification ships). Merges non-empty `meta` keys on match.
+- **`resolve_entity(kind, name)`** — find-or-create by normalized name or alias; deliberately conservative (a wrong merge is worse than a duplicate). Merges non-empty `meta` keys on match. Used for customers/projects/features/commitments.
+- **`resolve_person(name, email?, handle?)`** — the person-specific resolver that **unifies identity across connectors**. Match order: (1) **email** — the one deterministic key that survives every tool, case-insensitive, stored in `identifiers.emails`; (2) **handle** — e.g. a GitHub login, in `identifiers.handles`; (3) normalized name / alias (weakest, exact-only). On match it *enriches* — folds the new name in as an alias and adds any new email/handle. On an email hit it also **merges legacy duplicates** that share that email via `merge_person` (repoints every edge onto the canonical entity, unions aliases + identifiers, deletes the dup). It never merges on name similarity alone — so `Bharathi Vijaya` (Linear, +email) and a Fireflies/Circleback attendee with the same email collapse into one; a GitHub login with no email stays separate (the honest residual). Wired into `link_work_entities` (Linear name+email / GitHub login-as-handle), `build_from_artifact` (extraction persons + note-taker attendees), and GitHub contributors.
 - **`ensure_link`** — idempotent typed edge `(from_type, from_id) —type→ (to_type, to_id)` with `source_artifact_id` as evidence; re-calls merge meta.
 - **`link_work_entities`** (no LLM, one vocabulary for all connectors): Person —assigned_to→ Item · Person —created→ Item (when creator ≠ assignee) · Item —belongs_to→ Project · Person —works_on→ Project. `is_bot()` filters automation accounts (`*[bot]` suffix or the `BOT_NAMES` set: renovate, dependabot, github-actions, polar-sync-app, cloudflare-workers-and-pages, figma, mend renovate).
 - **`build_from_artifact`** (per extraction): customers/persons mentioned → entities + `mentions` edges; each commitment → entity + `source_of` edge + `made_to` its customer (named "to", else the artifact's primary customer) + immediate `match_commitment_to_linear`; each request → feature entity + `requested_by` every mentioned customer.
@@ -383,6 +407,21 @@ Constants: `_TOP_K = 8` · `_MAX_SCAN = 3000` (keyword-fallback window) · `_HIS
 - **Citations for streamed text (`_cites_from_text`)**: evidence items whose identifier (e.g. `ENG-432`) appears in the answer, or whose title (≥12 chars, first 40) appears — else the top 3 hits; cap 6. The JSON (non-stream) endpoint instead validates the model's `citation_ids` against the hit set.
 - **Conversations**: `ChatConversation(workspace_id, user_id)` — ownership checked on every access (404 otherwise). Messages appended as JSON (reassigned so SQLAlchemy tracks the change); title = first question[:60]. An aborted stream is not persisted. If an initial sync is active, chat answers with the live sync phase instead of guessing from half-built memory.
 
+### 15b. The closed loop in chat — draft → approve → create → learn
+
+Chat is not just Q&A; it's an **Act surface**. Three behaviors layer on the answer path, each gated so it never fires spuriously:
+
+- **Explicit ticket draft (Phase 1).** Cheap keyword gate `_maybe_actionable` (a ticket-noun + an action-verb) → lite-model `_draft_ticket` (`_DRAFT_SYSTEM`, `_DraftIntent` schema) turns the ask into `{connector, title, description}`. `_build_action` attaches a default destination (`_default_target`: first Linear team / most-recent GitHub repo) and yields a `draft` SSE event. The draft is stored **inside the assistant message JSON** (`message.draft = {actionId, connector, title, description, target, targetLabel, status, result, proactive}`) — single source of truth, no extra table.
+- **Self-decide-to-pull (Phase 2).** When `_build_context` returns **no hits and no stats**, `_decide_pull` (lite `_PullPick` over `_connected_pullable` = connected + credentialed of linear/github/slack/google-drive) picks the ONE tool most likely to have the answer. The stream emits `phase:"pulling"` + `connector` ("Checking Linear…"), `_run_pull` runs that connector's normal `ingestion.pull_*` (respects the sync plan — cheap incremental in steady state), then `_build_context` re-runs and the answer proceeds. Fires only on empty grounding, so it never adds latency to answerable questions.
+- **Proactive offer (Phase 3).** After answering a normal turn, if `_maybe_trackable` (problem/request keywords) **and** `_ticket_habit` (a workspace-scoped `Memory(subject="ticket-habit")` exists — set on the team's FIRST approval), `_proactive_draft` (`_PROACTIVE_SYSTEM`, conservative) may attach a draft flagged `proactive:true` ("Suggested ticket" in the UI).
+
+Endpoints (all conversation-scoped, ownership-checked):
+- `GET /chat/ticket-targets` → `{linear:[{id,name,key}], github:[{fullName}]}` for connected tools (the draft-card pickers).
+- `PATCH /chat/conversations/{cid}/actions/{id}` → edit a *pending* draft (title/description edits recorded as learning via `learning.record_feedback` section=`chat-ticket`) or `discard:true` (status→`discarded`, hidden on reload). 409 if already actioned.
+- `POST /chat/conversations/{cid}/actions/{id}/approve` → **the one real outbound action**: `services/tickets.create_ticket` (below) creates the issue, `ingest_created` folds it into memory immediately (idempotent by external_ref), an `ActivityEvent` is logged, and the habit `Memory` is reinforced. Returns `{identifier, url}`.
+
+`_draft_ticket` and `_proactive_draft` share `_run_draft` (same schema/parse, different system prompt). These classifiers use `build_agent` with **inline** prompts — they are not in `SYSTEM_PROMPTS` (feature-local).
+
 ## 16. Analytics (`services/analytics.py`)
 
 `memory_stats` computes the MEMORY STATS block with SQL/Counter math only (no LLM, no embeddings, quota-proof), reading only lean columns (source, meta, occurred_at): artifacts by source · Linear totals/open/completed, created today / last 7 days, avg cycle time over completed tickets (`cycleTimeDays` computed at ingest from createdAt→completedAt) · open work by project and by assignee, completed by assignee · GitHub PR totals/open/merged, open PRs by author and by repo. Injected into every chat prompt AND used by the deterministic fallback — quantitative questions never depend on the LLM guessing numbers.
@@ -406,6 +445,12 @@ Constants: `_UNREQUESTED_THRESHOLD = 3` · `_STALE_PR_DAYS = 7` · commitment st
 
 `dispatch_for_workspace` (heartbeat step 7): open gap/drift findings without a proposal, newest first, **≤3 per tick** (`_MAX_PER_RUN`). Each gets `draft_proposal` — the `product-agent` with question-relevant `<System_Directives>`, over the finding + its entity/artifact evidence; deterministic template on failure/AI-off (`kind`: drift→slack-alert, gap→action-plan). The draft is stored at `Insight.evidence["proposal"]` (`{kind, title, body, draftedAt, status:"draft"}`) — the detector re-scan never overwrites `evidence`, so drafts survive. One `ActivityEvent(action="drafted")` each. Drafting only — execution stays behind human approval.
 
+**Write actuators — one seam (`services/tickets.py`).** Every surface that creates a real issue goes through here, so a new connector is added in one place:
+- `create_ticket(db, ws, connector, title, description, target)` — dispatches to `linear.create_issue` (team id) / `github.create_issue` (owner/repo). Raises `PermissionError` (not connected → 409), `ValueError` (missing/invalid target → 422), or the connector's own error (→ 502).
+- `ingest_created(...)` — folds the new issue into memory (`ingest_artifact`, `meta.createdInOrbit=true`), idempotent by external_ref; the next connector pull refreshes it in place.
+
+Both **chat `approve_action`** (§15b) and the **Feed `findings.approve_finding`** call `create_ticket` — one audited write path, credentials never leave the server. GitHub gained write here (`create_issue`/`list_repos`/`_post`); it was read-only before.
+
 ## 19. Learning (`services/learning.py`)
 
 - `record_feedback(section, field, before, after)` — written synchronously on the request path (human actions are low-frequency); before/after clipped to 280 chars; the row's **embedding is of `rule_text(...)`** — the correction rendered as a natural-language behavioral rule (e.g. *'The team dismissed a finding: "…". Reason: … Surface fewer like it.'*), so it's retrievable by topic.
@@ -419,17 +464,26 @@ Clerk JWT verified against JWKS per request (key rotation handled) → `workspac
 
 ## 21. Honest gaps (current)
 
-- Person identities not unified across connectors (designed, deferred by choice)
+- Person identities are unified across connectors by **email** (the deterministic
+  key) with alias/handle accumulation and legacy-duplicate merge (`resolve_person`).
+  Residual: a person seen only via a handle with no email anywhere (e.g. a GitHub
+  login that never appears with an email) stays separate — we don't fuzzy-merge on
+  name, because a wrong merge is worse than a duplicate
 - Free-tier model quotas can exhaust for the day (billing removes; budgeter deferred)
 - Vision reads are bounded — 3 Drive files + 5 embedded images per connector per
   sync, ≤8MB each, needs AI on; unreadable/oversized files are skipped and
-  retried next sync, never ingested as garbage. SVGs (badges) are rejected
-- Image text folded into an already-embedded artifact reaches the LLM context
-  but not its vector until the next re-embed (refreshes don't re-embed by design)
-- One-time reconnects needed: Linear (expiring OAuth tokens — old connections
-  have no refresh token) and Slack (new files:read scope for image attachments)
-- Office files in Drive (.pptx/.docx/.xlsx) aren't read — only Google-native
-  formats + PDFs + images
+  retried next sync, never ingested as garbage. SVGs (badges) are rejected. New
+  image text folded into an existing artifact now DOES re-embed that one artifact
+  (`_reembed_if_images_changed`), so it's semantically searchable — routine
+  refreshes still don't re-embed (no storm)
+- Office files in Drive ARE read now — `.docx`/`.xlsx`/`.pptx` parsed to text.
+  Residual: only text is extracted (images/objects embedded *inside* an Office
+  file aren't OCR'd), and legacy `.doc`/`.xls`/`.ppt` (pre-2007 binary) aren't parsed
+- Reconnects are inherent to OAuth (a new scope needs re-consent; a token with no
+  refresh token can't be refreshed) — but no longer silent: an auth failure flips
+  the connector to a self-healing `reconnect` status the UI surfaces. New Linear
+  connections carry refresh tokens; new Slack connections carry `files:read` — so
+  this only affects connections made before those shipped, once
 - Existence probes cap at 50 per nightly pass (shuffled) — a very large deleted
   backlog converges over several nights, not one
 - Slack deletions aren't reconciled (threads have no open/closed state; a

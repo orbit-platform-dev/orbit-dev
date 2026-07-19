@@ -19,6 +19,7 @@ const integrationStatusMeta: Record<IntegrationStatus, { label: string; variant:
   error: { label: "Action needed", variant: "destructive", dot: "bg-destructive", pulse: false },
   syncing: { label: "Syncing", variant: "info", dot: "bg-info", pulse: true },
   "coming-soon": { label: "Coming soon", variant: "muted", dot: "bg-muted-foreground", pulse: false },
+  reconnect: { label: "Session expired", variant: "warning", dot: "bg-warning", pulse: false },
 };
 
 export function IntegrationStatusBadge({ status }: { status: IntegrationStatus }) {

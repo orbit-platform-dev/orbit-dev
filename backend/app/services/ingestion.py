@@ -9,6 +9,7 @@ The legacy Meeting pipeline is untouched; this is the new memory substrate.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import re
@@ -18,8 +19,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, update
 
 from ..agents.extractor import extract
-from ..models import Artifact
-from . import embeddings, github, google_drive, linear, slack, vision
+from ..models import Artifact, Integration
+from . import embeddings, fireflies, github, google_drive, linear, slack, vision
 
 logger = logging.getLogger("orbit.ingestion")
 
@@ -36,6 +37,8 @@ SOURCE_BY_INTEGRATION: dict[str, list[str]] = {
     "slack": ["slack-message"],
     "github": ["github-pr", "github-issue"],
     "google-drive": ["gdrive-doc", "gdrive-sheet", "gdrive-slides", "gdrive-pdf", "gdrive-image"],
+    "fireflies": ["fireflies"],
+    "circleback": ["circleback"],
 }
 
 
@@ -56,9 +59,10 @@ async def set_source_stale(db, workspace_id: str, integration_key: str, stale: b
     return (await db.execute(stmt)).rowcount
 
 
-_FULL_SYNC_EVERY_HOURS = 24   # nightly reconcile pass catches deletions/archives
-_CURSOR_OVERLAP_MINUTES = 5   # re-read a small window; dedup makes overlap free
-_RECONCILE_CHECKS = 50        # live existence probes per full sync, shuffled
+_FULL_SYNC_EVERY_HOURS = 24
+_CURSOR_OVERLAP_MINUTES = 5
+_RECONCILE_CHECKS = 50
+_INITIAL_BACKFILL_DAYS = 20   
 
 _IMAGE_MD = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
 _IMAGES_PER_SYNC = 5          # vision reads spend model quota — bounded per pull
@@ -92,19 +96,23 @@ async def _fold_images(content: str, *, auth: str | None, prev: dict, budget: li
 
 
 async def _sync_plan(db, workspace_id: str, key: str):
-    """(since_iso, integration) for a connector. since=None ⇒ FULL sync — first
-    run ever, or the periodic reconcile window has elapsed."""
+    """(since_iso, integration) for a connector.
+    First connect (no cursor) ⇒ a bounded INITIAL_BACKFILL window: a cold start
+    ingests recent history, not years of it, and the cursor grows it forward. With
+    a cursor and 24h+ since the last full pass ⇒ since=None, an unbounded reconcile
+    that also catches deletions. Otherwise ⇒ incremental from the cursor.
+    (since=None ⇒ full/reconcile; a timestamp ⇒ bounded/incremental.)"""
     from ..models import Integration
 
     integ = await db.get(Integration, {"workspace_id": workspace_id, "key": key})
     if not integ:
         return None, None
     st = integ.sync_state or {}
+    if not st.get("cursor"):
+        return (datetime.now(timezone.utc) - timedelta(days=_INITIAL_BACKFILL_DAYS)).isoformat(), integ
     last_full = _parse_ts(st.get("lastFull"))
     stale_full = not last_full or (datetime.now(timezone.utc) - last_full) >= timedelta(hours=_FULL_SYNC_EVERY_HOURS)
-    if not st.get("cursor") or stale_full:
-        return None, integ
-    return st["cursor"], integ
+    return (None if stale_full else st["cursor"]), integ
 
 
 def _advance_cursor(integ, *, full: bool) -> None:
@@ -113,7 +121,9 @@ def _advance_cursor(integ, *, full: bool) -> None:
     now = datetime.now(timezone.utc)
     st = dict(integ.sync_state or {})
     st["cursor"] = (now - timedelta(minutes=_CURSOR_OVERLAP_MINUTES)).isoformat()
-    if full:
+    # The first advance (initial backfill) sets the reconcile baseline too, so the
+    # very next tick stays incremental instead of immediately running a full pull.
+    if full or not st.get("lastFull"):
         st["lastFull"] = now.isoformat()
     integ.sync_state = st
 
@@ -135,6 +145,41 @@ def _parse_slack_ts(ts: str | None) -> datetime | None:
         return datetime.fromtimestamp(float(ts), tz=timezone.utc) if ts else None
     except (ValueError, TypeError):
         return None
+
+
+def _parse_epoch_ms(value) -> datetime | None:
+    """Fireflies `date` is epoch milliseconds (a number) → tz-aware datetime.
+    Tolerates seconds too. Non-numeric (e.g. ISO) → None, so callers fall back
+    to _parse_ts."""
+    try:
+        v = float(value)
+    except (ValueError, TypeError):
+        return None
+    if v > 1e12:  # milliseconds
+        v /= 1000.0
+    return datetime.fromtimestamp(v, tz=timezone.utc)
+
+
+_AUTH_SIGNALS = ("401", "unauthorized", "invalid_auth", "missing_scope",
+                 "authentication required", "not authenticated",
+                 "token refresh failed", "invalid_grant", "token expired")
+
+
+async def _note_sync_health(db, integ: Integration | None, exc: Exception | None) -> None:
+    """Surface a dead connection instead of failing silently. On an auth-looking
+    failure, flip a connected integration to 'reconnect' so the UI prompts a
+    re-auth (a new OAuth scope or a token with no refresh token can only be fixed
+    by reconnecting). On a clean pull, clear a prior 'reconnect' — self-healing,
+    so a transient error that trips it never sticks. Caller need not commit."""
+    if not integ:
+        return
+    if exc is not None:
+        if integ.status == "connected" and any(s in str(exc).lower() for s in _AUTH_SIGNALS):
+            integ.status = "reconnect"
+            await db.commit()
+    elif integ.status == "reconnect":
+        integ.status = "connected"
+        await db.commit()
 
 
 async def ingest_artifact(
@@ -270,6 +315,17 @@ def _linear_content_meta(s: dict) -> tuple[str, dict]:
     return content, meta
 
 
+async def _reembed_if_images_changed(existing, content: str, imgs: dict, prev_imgs: dict) -> None:
+    """Re-embed a refreshed artifact ONLY when new image text was folded in, so
+    image content becomes semantically searchable. Routine refreshes still never
+    re-embed (that would be a storm) — this fires only on the rare tick that
+    actually read a new image."""
+    if imgs and imgs != prev_imgs and embeddings.available():
+        vec = await embeddings.embed_text(_embed_input(existing.title, content))
+        if vec:
+            existing.embedding = vec
+
+
 async def pull_linear(db, workspace_id: str) -> int:
     """Ingest Linear issues as full-context artifacts. Returns the count of NEW
     artifacts (existing ones are REFRESHED in place, so a re-pull enriches the
@@ -285,8 +341,9 @@ async def pull_linear(db, workspace_id: str) -> int:
     try:
         issues = (await linear.fetch_open_issues(auth, since=since)
                   + await linear.fetch_completed_issues(auth, since=since))
-    except Exception:
+    except Exception as exc:
         logger.warning("Linear pull failed", exc_info=True)
+        await _note_sync_health(db, integ, exc)
         return 0
 
     ingested = 0
@@ -300,20 +357,15 @@ async def pull_linear(db, workspace_id: str) -> int:
                 Artifact.external_ref == issue["identifier"],
             )
         )).scalars().first()
-        content, imgs = await _fold_images(
-            content, auth=auth,
-            prev=(existing.meta or {}).get("imageTexts") or {} if existing else {},
-            budget=img_budget)
+        prev_imgs = (existing.meta or {}).get("imageTexts") or {} if existing else {}
+        content, imgs = await _fold_images(content, auth=auth, prev=prev_imgs, budget=img_budget)
         if imgs:
             meta["imageTexts"] = imgs
         if existing:
-            # Keep memory current AND enrich it: refresh the full ticket context
-            # (state, assignee, project, labels, cycle time). Embedding is left
-            # as-is to avoid a re-embed storm; content/meta are what answer "who
-            # owns it / how long did it take / which project".
             existing.content = content
             existing.meta = meta
             existing.occurred_at = _parse_ts(issue.get("updatedAt")) or existing.occurred_at
+            await _reembed_if_images_changed(existing, content, imgs, prev_imgs)
             # Enrich the ownership graph on every refresh (backfills existing issues).
             from .model import link_work_entities
             await link_work_entities(db, workspace_id, existing)
@@ -332,8 +384,7 @@ async def pull_linear(db, workspace_id: str) -> int:
         )
         ingested += 1
 
-    # Reconcile on FULL syncs only: the open-issues fetch is complete, so any
-    # locally-open artifact missing from it was deleted/archived in Linear.
+
     if since is None:
         seen = {i["identifier"] for i in issues}
         rows = (await db.execute(select(Artifact).where(
@@ -344,8 +395,9 @@ async def pull_linear(db, workspace_id: str) -> int:
                     and (a.meta or {}).get("stateType") not in ("completed", "canceled")):
                 a.status = "stale"
 
+    await _note_sync_health(db, integ, None) 
     _advance_cursor(integ, full=since is None)
-    await db.commit()  # persist refreshes + reconcile + cursor
+    await db.commit() 
 
     # A new issue may fulfill an earlier untracked commitment — re-match once.
     from .model import match_open_commitments
@@ -419,8 +471,9 @@ async def pull_github(db, workspace_id: str) -> int:
     since, integ = await _sync_plan(db, workspace_id, "github")
     try:
         items, contributors = await github.fetch_work(auth, since=since)
-    except Exception:
+    except Exception as exc:
         logger.warning("GitHub pull failed", exc_info=True)
+        await _note_sync_health(db, integ, exc)
         return 0
 
     ingested = 0
@@ -435,16 +488,15 @@ async def pull_github(db, workspace_id: str) -> int:
                 Artifact.external_ref == item["identifier"],
             )
         )).scalars().first()
-        content, imgs = await _fold_images(
-            content, auth=auth,
-            prev=(existing.meta or {}).get("imageTexts") or {} if existing else {},
-            budget=img_budget)
+        prev_imgs = (existing.meta or {}).get("imageTexts") or {} if existing else {}
+        content, imgs = await _fold_images(content, auth=auth, prev=prev_imgs, budget=img_budget)
         if imgs:
             meta["imageTexts"] = imgs
         if existing:
             existing.content = content
             existing.meta = meta
             existing.occurred_at = _parse_ts(item.get("updatedAt")) or existing.occurred_at
+            await _reembed_if_images_changed(existing, content, imgs, prev_imgs)
             from .model import link_work_entities
             await link_work_entities(db, workspace_id, existing)
             from .memory import derive_from_artifact
@@ -464,14 +516,14 @@ async def pull_github(db, workspace_id: str) -> int:
     # Contributors: every repo's people join the graph (Person -works_on-> repo)
     # and memory learns who actually builds what.
     from .memory import record
-    from .model import ensure_link, resolve_entity
+    from .model import ensure_link, resolve_entity, resolve_person
     from .model import is_bot
     for repo, people in (contributors or {}).items():
         proj = await resolve_entity(db, workspace_id, "project", repo)
         for p in people:
             if is_bot(p.get("login")):
                 continue
-            ent = await resolve_entity(db, workspace_id, "person", p["login"])
+            ent = await resolve_person(db, workspace_id, p["login"], handle=p["login"])
             if ent and proj:
                 await ensure_link(db, workspace_id, "entity", ent.id, "entity", proj.id, "works_on")
             await record(
@@ -504,6 +556,7 @@ async def pull_github(db, workspace_id: str) -> int:
             elif state in ("merged", "closed"):
                 a.meta = {**(a.meta or {}), "state": state, "stateType": "completed"}
 
+    await _note_sync_health(db, integ, None)  # a clean pull clears any prior 'reconnect'
     _advance_cursor(integ, full=since is None)
     await db.commit()
     return ingested
@@ -515,8 +568,9 @@ async def pull_gdrive(db, workspace_id: str) -> int:
     a file changes (modifiedTime moves). Honest when not connected (0) / on failure."""
     try:
         auth = await google_drive.get_auth(db, workspace_id)
-    except Exception:
+    except Exception as exc:
         logger.warning("Google Drive token refresh failed", exc_info=True)
+        await _note_sync_health(db, await db.get(Integration, {"workspace_id": workspace_id, "key": "google-drive"}), exc)
         return 0
     if not auth:
         return 0
@@ -528,8 +582,9 @@ async def pull_gdrive(db, workspace_id: str) -> int:
     known = {ref: (m or {}).get("modifiedAt") for ref, m in known_rows if ref}
     try:
         docs, listed = await google_drive.fetch_documents(auth, since=since, known=known)
-    except Exception:
+    except Exception as exc:
         logger.warning("Google Drive pull failed", exc_info=True)
+        await _note_sync_health(db, integ, exc)
         return 0
 
     ingested = 0
@@ -582,6 +637,7 @@ async def pull_gdrive(db, workspace_id: str) -> int:
             except Exception:
                 continue  # transient — deletion needs proof, not doubt
 
+    await _note_sync_health(db, integ, None)  # a clean pull clears any prior 'reconnect'
     _advance_cursor(integ, full=since is None)
     await db.commit()
     from .model import match_open_commitments
@@ -596,13 +652,14 @@ async def pull_slack(db, workspace_id: str) -> int:
     auth = await slack.get_auth(db, workspace_id)
     if not auth:
         return 0
+    since, integ = await _sync_plan(db, workspace_id, "slack")
     try:
         channels = await slack.list_channels(auth)
-    except Exception:
+    except Exception as exc:
         logger.warning("Slack channel list failed", exc_info=True)
+        await _note_sync_health(db, integ, exc)
         return 0
     team = await slack.team_url(auth)  # permalink prefix; None degrades to no link
-    since, integ = await _sync_plan(db, workspace_id, "slack")
     oldest = None
     if since:
         parsed = _parse_ts(since)
@@ -656,8 +713,6 @@ async def pull_slack(db, workspace_id: str) -> int:
             )
             ingested += 1
 
-    # Full syncs also repair deep links on OLD threads — permalinks are
-    # constructible from stored meta (team/channel/ts), no extra API calls.
     if since is None and team:
         rows = (await db.execute(select(Artifact).where(
             Artifact.workspace_id == workspace_id, Artifact.source == "slack-message",
@@ -666,13 +721,160 @@ async def pull_slack(db, workspace_id: str) -> int:
             m = a.meta or {}
             a.url = slack.permalink(team, m.get("channelId"), m.get("ts")) or a.url
 
+    await _note_sync_health(db, integ, None)  # a clean pull clears any prior 'reconnect'
     _advance_cursor(integ, full=since is None)
-    await db.commit()  # persist url backfills + cursor
+    await db.commit()  
 
-    # A Slack thread can create a commitment; re-match against Linear.
     from .model import match_open_commitments
     await match_open_commitments(db, workspace_id)
     return ingested
+
+
+def _fireflies_content_meta(t: dict) -> tuple[str, dict]:
+    """Shaped Fireflies transcript → memory text (summary + transcript) + meta.
+    A meeting is conversational, so it extracts like a call, not a work item."""
+    blocks = [t["title"]]
+    if t.get("overview"):
+        blocks.append(t["overview"])
+    if t.get("actionItems"):
+        ai = t["actionItems"]
+        blocks.append("Action items:\n" + (ai if isinstance(ai, str) else "\n".join(ai)))
+    if t.get("participants"):
+        blocks.append("Participants: " + ", ".join(str(p) for p in t["participants"]))
+    if t.get("sentences"):
+        blocks.append("Transcript:\n" + "\n".join(
+            f"{s.get('speaker') or 'someone'}: {s['text']}" for s in t["sentences"] if s.get("text")))
+    meta = {
+        "identifier": t.get("identifier"), "host": t.get("host"),
+        "participants": t.get("participants") or [], "actionItems": t.get("actionItems") or "",
+        "keywords": t.get("keywords") or [], "duration": t.get("duration"),
+        "date": t.get("date"), "url": t.get("url"),
+    }
+    return "\n\n".join(b for b in blocks if b), meta
+
+
+async def pull_fireflies(db, workspace_id: str) -> int:
+    """Ingest Fireflies meeting transcripts as call artifacts. Transcripts are
+    immutable once written, so existing ones are left untouched (no refresh
+    churn). Honest when not connected (0) / on failure."""
+    auth = await fireflies.get_auth(db, workspace_id)
+    if not auth:
+        return 0
+    since, integ = await _sync_plan(db, workspace_id, "fireflies")
+    try:
+        transcripts = await fireflies.fetch_transcripts(auth, since=since)
+    except Exception as exc:
+        logger.warning("Fireflies pull failed", exc_info=True)
+        await _note_sync_health(db, integ, exc)
+        return 0
+
+    ingested = 0
+    for t in transcripts:
+        ext = t.get("identifier")
+        if not ext:
+            continue
+        existing = (await db.execute(select(Artifact).where(
+            Artifact.workspace_id == workspace_id, Artifact.source == "fireflies",
+            Artifact.external_ref == ext))).scalars().first()
+        if existing:
+            continue
+        content, meta = _fireflies_content_meta(t)
+        if not content.strip():
+            continue
+        await ingest_artifact(
+            db, workspace_id,
+            source="fireflies", kind="call",
+            title=t["title"][:300], content=content,
+            external_ref=ext, url=t.get("url"),
+            occurred_at=_parse_epoch_ms(t.get("date")) or _parse_ts(t.get("date")),
+            meta=meta,
+        )
+        ingested += 1
+
+    await _note_sync_health(db, integ, None)  # a clean pull clears any prior 'reconnect'
+    _advance_cursor(integ, full=since is None)
+    await db.commit()
+    # A meeting can create a commitment; re-match against Linear.
+    from .model import match_open_commitments
+    await match_open_commitments(db, workspace_id)
+    return ingested
+
+
+def _circleback_content_meta(payload: dict) -> tuple[str, dict]:
+    """Circleback webhook payload → memory text (notes + action items + transcript)
+    + meta. Same meeting shape as Fireflies, just delivered by push."""
+    name = payload.get("name") or "Meeting"
+    blocks = [name]
+    if payload.get("notes"):
+        blocks.append(payload["notes"])
+    items = payload.get("actionItems") or []
+    if items:
+        lines = []
+        for a in items:
+            assignee = (a.get("assignee") or {}).get("name") or (a.get("assignee") or {}).get("email")
+            line = f"- {a.get('title') or a.get('description') or ''}"
+            if assignee:
+                line += f" (owner: {assignee})"
+            if a.get("status"):
+                line += f" [{a['status']}]"
+            lines.append(line)
+        blocks.append("Action items:\n" + "\n".join(lines))
+    attendees = payload.get("attendees") or []
+    if attendees:
+        blocks.append("Attendees: " + ", ".join(
+            a.get("name") or a.get("email") for a in attendees if a.get("name") or a.get("email")))
+    transcript = payload.get("transcript") or []
+    if transcript:
+        blocks.append("Transcript:\n" + "\n".join(
+            f"{s.get('speaker') or 'someone'}: {s['text']}" for s in transcript if s.get("text")))
+    meta = {
+        "identifier": str(payload.get("id") or ""), "attendees": attendees,
+        "actionItems": items, "tags": payload.get("tags") or [],
+        "recordingUrl": payload.get("recordingUrl"), "createdAt": payload.get("createdAt"),
+        "duration": payload.get("duration"),
+    }
+    return "\n\n".join(b for b in blocks if b), meta
+
+
+async def ingest_circleback_meeting(db, workspace_id: str, payload: dict) -> Artifact | None:
+    """Ingest one Circleback meeting delivered by webhook. Idempotent by meeting
+    id, since Circleback may re-deliver. Returns the artifact, or None if empty."""
+    ext = str(payload.get("id") or "").strip()
+    if not ext:
+        return None
+    content, meta = _circleback_content_meta(payload)
+    if not content.strip():
+        return None
+    existing = (await db.execute(select(Artifact).where(
+        Artifact.workspace_id == workspace_id, Artifact.source == "circleback",
+        Artifact.external_ref == ext))).scalars().first()
+    if existing:
+        return existing
+    return await ingest_artifact(
+        db, workspace_id,
+        source="circleback", kind="call",
+        title=(payload.get("name") or "Meeting")[:300], content=content,
+        external_ref=ext, url=payload.get("url") or payload.get("recordingUrl"),
+        occurred_at=_parse_ts(payload.get("createdAt")),
+        meta=meta,
+    )
+
+
+def start_circleback_ingest(workspace_id: str, payload: dict) -> None:
+    """Fire-and-forget ingest of a pushed Circleback meeting, so the webhook
+    handler returns immediately (safe to call from a request handler)."""
+    asyncio.get_event_loop().create_task(_circleback_ingest_bg(workspace_id, payload))
+
+
+async def _circleback_ingest_bg(workspace_id: str, payload: dict) -> None:
+    from ..database import SessionLocal
+    try:
+        async with SessionLocal() as db:
+            await ingest_circleback_meeting(db, workspace_id, payload)
+            from .model import match_open_commitments
+            await match_open_commitments(db, workspace_id)
+    except Exception:
+        logger.warning("Circleback ingest failed", exc_info=True)
 
 
 async def backfill_embeddings(db, workspace_id: str, limit: int = 100) -> int:
@@ -709,4 +911,5 @@ async def pull_all(db, workspace_id: str) -> dict[str, int]:
         "slack": await pull_slack(db, workspace_id),
         "github": await pull_github(db, workspace_id),
         "google-drive": await pull_gdrive(db, workspace_id),
+        "fireflies": await pull_fireflies(db, workspace_id),
     }

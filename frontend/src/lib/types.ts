@@ -120,7 +120,7 @@ export interface Correction {
 // ---------------------------------------------------------------------------
 // Connectors + system status
 // ---------------------------------------------------------------------------
-export type IntegrationStatus = "connected" | "disconnected" | "syncing" | "coming-soon" | "error";
+export type IntegrationStatus = "connected" | "disconnected" | "syncing" | "coming-soon" | "reconnect" | "error";
 export type IntegrationKey = string;
 
 export interface Integration {
@@ -163,11 +163,31 @@ export interface ChatCitation {
   url?: string | null;
 }
 
+export interface ChatDraft {
+  actionId: string;
+  type: string; 
+  connector: "linear" | "github" | string;
+  title: string;
+  description: string;
+  target?: string | null; 
+  targetLabel?: string | null;
+  status: "pending" | "created" | "discarded";
+  result?: { identifier?: string; url?: string } | null;
+  proactive?: boolean;
+}
+
+export interface TicketTargets {
+  linear: { id: string; name: string; key?: string }[];
+  github: { fullName: string }[];
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   citations?: ChatCitation[];
   grounded?: boolean;
+  draft?: ChatDraft | null;
+  rating?: "up" | "down" | null;
 }
 
 export interface ChatAnswer {
@@ -175,6 +195,7 @@ export interface ChatAnswer {
   answer: string;
   citations: ChatCitation[];
   grounded: boolean;
+  draft?: ChatDraft | null;
 }
 
 export interface ChatConversationSummary {

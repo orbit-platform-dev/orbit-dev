@@ -8,20 +8,29 @@ import remarkGfm from "remark-gfm";
 import {
   ArrowUp,
   ArrowUpRight,
+  Check,
   ChevronRight,
   FileText,
   Loader2,
   MessageSquarePlus,
   Sparkles,
   Square,
+  ThumbsDown,
+  ThumbsUp,
+  Ticket,
   Trash2,
+  X,
 } from "lucide-react";
 import * as api from "@/lib/api";
-import type { ChatCitation, ChatMessage } from "@/lib/types";
+import type { ChatCitation, ChatDraft, ChatMessage } from "@/lib/types";
 import { rankFinding, sourceKey } from "@/lib/sources";
 import { useFeed } from "@/lib/hooks";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn, timeAgo } from "@/lib/utils";
 
 const DEFAULT_SUGGESTIONS = [
@@ -34,7 +43,14 @@ const DEFAULT_SUGGESTIONS = [
 const PHASE_COPY: Record<string, string> = {
   retrieving: "Searching company memory…",
   reasoning: "Reasoning over the evidence…",
+  drafting: "Drafting a ticket…",
 };
+
+function phaseLabel(phase: string | null): string {
+  if (!phase) return "Thinking…";
+  if (phase.startsWith("pulling:")) return `Checking ${phase.slice(8)} for the latest…`;
+  return PHASE_COPY[phase] ?? "Thinking…";
+}
 
 type Msg = ChatMessage & {
   streaming?: boolean;
@@ -61,6 +77,175 @@ function CitationChip({ c }: { c: ChatCitation }) {
     <a href={c.url} target="_blank" rel="noreferrer" title={c.title} className="max-w-full">{body}</a>
   ) : (
     <span title={c.title} className="max-w-full">{body}</span>
+  );
+}
+
+const CONNECTORS: { key: "linear" | "github"; label: string }[] = [
+  { key: "linear", label: "Linear" },
+  { key: "github", label: "GitHub" },
+];
+
+/** The in-chat closed loop: edit the drafted ticket, pick where it goes, approve
+ *  to create it for real, then open the live link — all without leaving chat. */
+function DraftCard({ draft, conversationId }: { draft: ChatDraft; conversationId: string | null }) {
+  const [d, setD] = React.useState<ChatDraft>(draft);
+  const [creating, setCreating] = React.useState(false);
+  const [dismissed, setDismissed] = React.useState(false);
+  const saved = React.useRef({ title: draft.title, description: draft.description });
+
+  const editable = d.status === "pending";
+  const targets = useQuery({ queryKey: ["chat", "ticket-targets"], queryFn: api.getTicketTargets, enabled: editable });
+  const options =
+    d.connector === "github"
+      ? (targets.data?.github ?? []).map((r) => ({ value: r.fullName, label: r.fullName }))
+      : (targets.data?.linear ?? []).map((t) => ({ value: t.id, label: t.name }));
+
+  const persist = async (patch: Partial<ChatDraft>) => {
+    if (!conversationId) return; // brand-new convo not saved yet — server has the draft after 'done'
+    try {
+      const updated = await api.editChatAction(conversationId, d.actionId, patch as never);
+      setD(updated);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  const saveText = (field: "title" | "description") => {
+    if (d[field] === saved.current[field]) return;
+    saved.current[field] = d[field];
+    void persist({ [field]: d[field] } as Partial<ChatDraft>);
+  };
+
+  const switchConnector = (key: "linear" | "github") => {
+    if (key === d.connector) return;
+    setD((x) => ({ ...x, connector: key, target: null, targetLabel: null }));
+    void persist({ connector: key });
+  };
+
+  const approve = async () => {
+    if (!conversationId) return;
+    setCreating(true);
+    try {
+      const res = await api.approveChatAction(conversationId, d.actionId);
+      setD((x) => ({ ...x, status: "created", result: res.result }));
+      toast.success(`Created ${res.result?.identifier ?? "the ticket"}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const dismiss = () => {
+    setDismissed(true);
+    if (conversationId) void api.editChatAction(conversationId, d.actionId, { discard: true }).catch(() => {});
+  };
+
+  if (dismissed || d.status === "discarded") return null;
+
+  const created = d.status === "created" && d.result?.url;
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl border border-border bg-card shadow-sm animate-in fade-in slide-in-from-bottom-1 duration-300">
+      <div className="flex items-center gap-2 border-b border-border/70 bg-muted/40 px-3 py-2">
+        <IntegrationLogo k={d.connector} className="h-4 w-4 rounded-[4px] border-0" />
+        <span className="text-xs font-semibold">
+          {created ? "Ticket created" : d.proactive ? "Suggested ticket" : "Draft ticket"}
+        </span>
+        {created ? (
+          <Check className="h-3.5 w-3.5 text-success" />
+        ) : (
+          <span className="ml-auto flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+            <Ticket className="h-3 w-3" /> {d.proactive ? "Suggested" : "Needs approval"}
+          </span>
+        )}
+      </div>
+
+      <div className="space-y-3 p-3">
+        {editable ? (
+          <>
+            <Input
+              value={d.title}
+              onChange={(e) => setD((x) => ({ ...x, title: e.target.value }))}
+              onBlur={() => saveText("title")}
+              placeholder="Ticket title"
+              className="font-medium"
+            />
+            <Textarea
+              value={d.description}
+              onChange={(e) => setD((x) => ({ ...x, description: e.target.value }))}
+              onBlur={() => saveText("description")}
+              placeholder="Description"
+              rows={4}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-lg border border-border p-0.5">
+                {CONNECTORS.map((c) => (
+                  <button
+                    key={c.key}
+                    onClick={() => switchConnector(c.key)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+                      d.connector === c.key ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <IntegrationLogo k={c.key} className="h-3.5 w-3.5 rounded-[3px] border-0" />
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+              <Select
+                value={d.target ?? ""}
+                onValueChange={(v) => {
+                  const opt = options.find((o) => o.value === v);
+                  setD((x) => ({ ...x, target: v, targetLabel: opt?.label ?? v }));
+                  void persist({ target: v, targetLabel: opt?.label ?? v });
+                }}
+              >
+                <SelectTrigger className="min-w-[10rem] flex-1 text-xs">
+                  <SelectValue placeholder={targets.isLoading ? "Loading…" : d.connector === "github" ? "Choose a repo" : "Choose a team"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {options.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-sm font-medium">{d.title}</div>
+            {d.description ? <div className="whitespace-pre-wrap text-[13px] leading-6 text-muted-foreground">{d.description}</div> : null}
+          </>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 border-t border-border/70 px-3 py-2">
+        {created ? (
+          <a
+            href={d.result!.url!}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+          >
+            Open {d.result?.identifier ?? "ticket"} <ArrowUpRight className="h-3.5 w-3.5" />
+          </a>
+        ) : (
+          <>
+            <Button size="sm" onClick={approve} disabled={creating || !conversationId || !d.target}>
+              {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              {creating ? "Creating…" : "Approve & create"}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={dismiss} disabled={creating}>
+              <X className="h-3.5 w-3.5" /> Dismiss
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -145,10 +330,53 @@ function ThinkingBlock({ text, active, seconds }: { text: string; active: boolea
   );
 }
 
-function AssistantMessage({ m, phase }: { m: Msg; phase: string | null }) {
+function RatingRow({ rating, onRate }: { rating?: "up" | "down" | null; onRate: (r: "up" | "down") => void }) {
+  const [thanks, setThanks] = React.useState(false);
+  const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  const rate = (r: "up" | "down") => {
+    onRate(r);
+    setThanks(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setThanks(false), 2500);
+  };
+  const btn = (r: "up" | "down", Icon: typeof ThumbsUp) => (
+    <button
+      onClick={() => rate(r)}
+      aria-label={r === "up" ? "Helpful" : "Not helpful"}
+      className={cn(
+        "rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+        rating === r && (r === "up" ? "text-success" : "text-destructive"),
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </button>
+  );
+  // Stays visible once rated (so the highlight is always shown); hover-reveal otherwise.
+  return (
+    <div className={cn(
+      "mt-2 flex items-center gap-1 transition-opacity",
+      rating ? "opacity-100" : "opacity-0 group-hover:opacity-100 has-[button:focus]:opacity-100",
+    )}>
+      {btn("up", ThumbsUp)}
+      {btn("down", ThumbsDown)}
+      {thanks ? <span className="ml-1 text-[11px] text-muted-foreground animate-in fade-in">Thanks for your feedback</span> : null}
+    </div>
+  );
+}
+
+function AssistantMessage({
+  m, phase, conversationId, index, onRate,
+}: {
+  m: Msg;
+  phase: string | null;
+  conversationId: string | null;
+  index: number;
+  onRate: (index: number, rating: "up" | "down") => void;
+}) {
   const waiting = m.streaming && !m.content && !m.thinking;
   return (
-    <div className="flex gap-3.5">
+    <div className="group flex gap-3.5">
       <OrbitAvatar thinking={m.streaming} />
       <div className="min-w-0 flex-1 pt-0.5">
         {waiting ? (
@@ -157,7 +385,7 @@ function AssistantMessage({ m, phase }: { m: Msg; phase: string | null }) {
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
             </span>
-            {PHASE_COPY[phase ?? ""] ?? "Thinking…"}
+            {phaseLabel(phase)}
           </div>
         ) : (
           <>
@@ -171,6 +399,7 @@ function AssistantMessage({ m, phase }: { m: Msg; phase: string | null }) {
             {!m.streaming && m.grounded === false ? (
               <div className="mt-2 text-xs text-muted-foreground">Answered from general knowledge, not your company&apos;s data.</div>
             ) : null}
+            {!m.streaming && m.draft ? <DraftCard draft={m.draft} conversationId={conversationId} /> : null}
             {!m.streaming && m.citations && m.citations.length > 0 ? (
               <div className="mt-3 flex flex-wrap gap-1.5 animate-in fade-in slide-in-from-bottom-1 duration-300">
                 <span className="flex w-full items-center gap-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -178,6 +407,9 @@ function AssistantMessage({ m, phase }: { m: Msg; phase: string | null }) {
                 </span>
                 {m.citations.map((c) => <CitationChip key={c.id} c={c} />)}
               </div>
+            ) : null}
+            {!m.streaming && m.content && !m.stopped ? (
+              <RatingRow rating={m.rating} onRate={(r) => onRate(index, r)} />
             ) : null}
           </>
         )}
@@ -194,6 +426,7 @@ export default function ChatPage() {
   const [phase, setPhase] = React.useState<string | null>(null);
   const [streaming, setStreaming] = React.useState(false);
   const [loadingConv, setLoadingConv] = React.useState(false);
+  const [pendingDelete, setPendingDelete] = React.useState<string | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const stickRef = React.useRef(true);
   const abortRef = React.useRef<AbortController | null>(null);
@@ -249,7 +482,7 @@ export default function ChatPage() {
     });
 
   const finalize = React.useCallback((final: import("@/lib/types").ChatAnswer) => {
-    finishLast({ citations: final.citations, grounded: final.grounded });
+    finishLast({ citations: final.citations, grounded: final.grounded, draft: final.draft ?? null });
     setStreaming(false);
     setActiveId(final.conversationId);
     qc.invalidateQueries({ queryKey: ["chat", "conversations"] });
@@ -317,7 +550,7 @@ export default function ChatPage() {
     void api.streamChat(
       { message: q, conversationId: activeId },
       {
-        onPhase: setPhase,
+        onPhase: (p, connector) => setPhase(connector ? `pulling:${connector}` : p),
         onThinking: (t) => {
           if (thinkStartRef.current == null) thinkStartRef.current = Date.now();
           appendThinking(t);
@@ -336,6 +569,13 @@ export default function ChatPage() {
           pendingRef.current += t;
           kickDrain();
         },
+        onDraft: (draft) =>
+          setMessages((m) => {
+            const next = [...m];
+            const last = next[next.length - 1];
+            if (last?.role === "assistant") next[next.length - 1] = { ...last, draft };
+            return next;
+          }),
         onDone: (final) => {
           doneRef.current = final;
           kickDrain();
@@ -384,16 +624,26 @@ export default function ChatPage() {
     inputRef.current?.focus();
   };
 
-  const remove = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const doDelete = async (id: string) => {
     try {
       await api.deleteChatConversation(id);
       if (id === activeId) newChat();
       qc.invalidateQueries({ queryKey: ["chat", "conversations"] });
-    } catch {
+    } catch (e) {
       toast.error("Couldn't delete that conversation");
+      throw e; 
     }
   };
+
+  const rate = React.useCallback(async (index: number, rating: "up" | "down") => {
+    if (!activeId) return;
+    setMessages((m) => m.map((x, i) => (i === index ? { ...x, rating } : x)));
+    try {
+      await api.rateChatAnswer(activeId, index, rating);
+    } catch {
+      toast.error("Couldn't save your feedback");
+    }
+  }, [activeId]);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -436,7 +686,10 @@ export default function ChatPage() {
                 <span className="block text-[11px] text-muted-foreground">{timeAgo(c.updatedAt)}</span>
               </span>
               <Trash2
-                onClick={(e) => remove(c.id, e)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPendingDelete(c.id);
+                }}
                 className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
               />
             </button>
@@ -491,7 +744,7 @@ export default function ChatPage() {
                         </div>
                       </div>
                     ) : (
-                      <AssistantMessage m={m} phase={phase} />
+                      <AssistantMessage m={m} phase={phase} conversationId={activeId} index={i} onRate={rate} />
                     )}
                   </div>
                 ))}
@@ -535,6 +788,15 @@ export default function ChatPage() {
           </p>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        onOpenChange={(o) => !o && setPendingDelete(null)}
+        title="Delete conversation?"
+        description="This conversation and its messages will be permanently removed. This can't be undone."
+        confirmLabel="Delete"
+        onConfirm={() => doDelete(pendingDelete!)}
+      />
     </div>
   );
 }

@@ -11,7 +11,7 @@ import {
   FileText,
   MessageSquare,
   Phone,
-  Plus,
+  // Plus,  (used only by the Add-call button, hidden for MVP)
   Ticket,
 } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
@@ -53,6 +53,8 @@ const SOURCE_LABEL: Record<string, string> = {
   "gdrive-slides": "Google Slides",
   "gdrive-pdf": "PDF (Drive)",
   "gdrive-image": "Image (Drive)",
+  fireflies: "Fireflies",
+  circleback: "Circleback",
 };
 const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? s;
 
@@ -210,7 +212,6 @@ function AddCallDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Add call</Button>
       <DialogContent>
         <DialogHeader><DialogTitle>Add a customer call</DialogTitle></DialogHeader>
         <div className="space-y-4">

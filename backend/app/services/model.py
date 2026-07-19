@@ -148,6 +148,116 @@ async def resolve_entity(db, ws: str, kind: str, name: str, *, meta: dict | None
     return e
 
 
+# --- Person identity unification across connectors --------------------------
+# A human shows up as different handles in different tools (GitHub login
+# `VijayBharathi27`, Linear name `Bharathi Vijaya`, an email on a call). We unify
+# on the one deterministic key that survives every connector — email — and
+# accumulate names as aliases and logins as handles. We deliberately do NOT merge
+# on name similarity alone (a wrong merge is worse than a duplicate).
+def _emails(e: Entity) -> set[str]:
+    ids = e.identifiers or {}
+    out = {x.lower() for x in (ids.get("emails") or []) if x}
+    if (e.meta or {}).get("email"):
+        out.add(e.meta["email"].lower())
+    return out
+
+
+def _handles(e: Entity) -> set[str]:
+    return {x.lower() for x in ((e.identifiers or {}).get("handles") or []) if x}
+
+
+def _alias_norms(e: Entity) -> set[str]:
+    return {normalize_name(a) for a in (e.aliases or [])}
+
+
+def _enrich_person(e: Entity, name: str, email: str | None, handle: str | None) -> None:
+    """Fold a freshly-seen name/email/handle into a matched person."""
+    norm = normalize_name(name)
+    if norm and norm != e.normalized_name and norm not in _alias_norms(e):
+        e.aliases = [*(e.aliases or []), name.strip()[:200]]
+    ids = dict(e.identifiers or {})
+    if email and email not in _emails(e):
+        ids["emails"] = sorted({*(ids.get("emails") or []), email})
+    if handle and handle not in _handles(e):
+        ids["handles"] = sorted({*(ids.get("handles") or []), handle})
+    e.identifiers = ids
+    e.updated_at = _now()
+
+
+async def merge_person(db, ws: str, keep: Entity, drop: Entity) -> None:
+    """Fold `drop` into `keep`: repoint every edge, union identity signals, delete
+    `drop`. Only ever called when the two share an email (a safe, unique key)."""
+    if keep.id == drop.id:
+        return
+    links = (await db.execute(select(Link).where(
+        Link.workspace_id == ws, or_(Link.from_id == drop.id, Link.to_id == drop.id)))).scalars().all()
+    for lk in links:
+        new_from = keep.id if lk.from_id == drop.id else lk.from_id
+        new_to = keep.id if lk.to_id == drop.id else lk.to_id
+        twin = (await db.execute(select(Link).where(
+            Link.workspace_id == ws, Link.from_type == lk.from_type, Link.from_id == new_from,
+            Link.to_type == lk.to_type, Link.to_id == new_to, Link.type == lk.type))).scalars().first()
+        if twin and twin.id != lk.id:  # keep already has this edge — drop the redundant one
+            await db.delete(lk)
+        else:
+            lk.from_id, lk.to_id = new_from, new_to
+    for a in [drop.name, *(drop.aliases or [])]:
+        if a and normalize_name(a) != keep.normalized_name and normalize_name(a) not in _alias_norms(keep):
+            keep.aliases = [*(keep.aliases or []), a]
+    keep.identifiers = {
+        **(keep.identifiers or {}),
+        "emails": sorted(_emails(keep) | _emails(drop)),
+        "handles": sorted(_handles(keep) | _handles(drop)),
+    }
+    keep.meta = {**(drop.meta or {}), **(keep.meta or {})}
+    keep.updated_at = _now()
+    await db.delete(drop)
+    await db.flush()
+
+
+async def resolve_person(db, ws: str, name: str, *, email: str | None = None,
+                         handle: str | None = None) -> Entity | None:
+    """Find-or-create a person, unified across connectors by email (then handle,
+    then name). Enriches the match with any new signal; merges legacy duplicates
+    that share an email. Returns None when there's nothing to key on."""
+    norm = normalize_name(name)
+    email = (email or "").strip().lower() or None
+    handle = (handle or "").strip().lower() or None
+    if not (norm or email or handle):
+        return None
+    persons = (await db.execute(select(Entity).where(
+        Entity.workspace_id == ws, Entity.kind == "person"))).scalars().all()
+
+    match = None
+    if email:  # strong, cross-connector key — collapse any duplicates on it
+        owners = [e for e in persons if email in _emails(e)]
+        if owners:
+            match = owners[0]
+            for dup in owners[1:]:
+                await merge_person(db, ws, match, dup)
+    if match is None and handle:  # e.g. a GitHub login — deterministic per tool
+        match = next((e for e in persons if handle in _handles(e)), None)
+    if match is None and norm:  # weakest signal; conservative exact/alias match only
+        match = next((e for e in persons if e.normalized_name == norm or norm in _alias_norms(e)), None)
+
+    if match is not None:
+        _enrich_person(match, name, email, handle)
+        return match
+
+    e = Entity(
+        id=f"en_{uuid.uuid4().hex[:10]}", workspace_id=ws, kind="person",
+        name=name.strip()[:200], normalized_name=norm,
+        aliases=[], identifiers={k: v for k, v in
+                                 (("emails", [email] if email else None),
+                                  ("handles", [handle] if handle else None)) if v},
+        meta={"email": email} if email else {}, state="open",
+        created_at=_now(), updated_at=_now(),
+    )
+    db.add(e)
+    await db.flush()
+    return e
+
+
 async def ensure_link(db, ws: str, from_type: str, from_id: str, to_type: str, to_id: str,
                       link_type: str, *, source_artifact_id: str | None = None, meta: dict | None = None) -> Link:
     """Idempotent typed link between two nodes (entity or artifact)."""
@@ -249,14 +359,20 @@ async def link_work_entities(db, ws: str, artifact: Artifact) -> None:
     if artifact.source not in WORK_SOURCES:
         return
     m = artifact.meta or {}
+    # GitHub's assignee/creator are logins (a handle); Linear's are display names
+    # carrying a separate email. resolve_person unifies both onto one identity.
+    is_gh = artifact.source in ("github-pr", "github-issue")
     assignee_ent = None
     if m.get("assignee") and not is_bot(m.get("assignee")):
-        assignee_ent = await resolve_entity(db, ws, "person", m["assignee"], meta={"email": m.get("assigneeEmail")})
+        assignee_ent = await resolve_person(
+            db, ws, m["assignee"],
+            email=None if is_gh else m.get("assigneeEmail"),
+            handle=m["assignee"] if is_gh else None)
         if assignee_ent:
             await ensure_link(db, ws, "entity", assignee_ent.id, "artifact", artifact.id,
                               "assigned_to", source_artifact_id=artifact.id)
     if m.get("creator") and m.get("creator") != m.get("assignee") and not is_bot(m.get("creator")):
-        ce = await resolve_entity(db, ws, "person", m["creator"])
+        ce = await resolve_person(db, ws, m["creator"], handle=m["creator"] if is_gh else None)
         if ce:
             await ensure_link(db, ws, "entity", ce.id, "artifact", artifact.id,
                               "created", source_artifact_id=artifact.id)
@@ -289,10 +405,24 @@ async def build_from_artifact(db, ws: str, artifact: Artifact) -> None:
                 await ensure_link(db, ws, "artifact", artifact.id, "entity", c.id, "mentions",
                                   source_artifact_id=artifact.id)
         elif kind == "person":
-            p = await resolve_entity(db, ws, "person", name)
+            p = await resolve_person(db, ws, name)
             if p:
                 await ensure_link(db, ws, "artifact", artifact.id, "entity", p.id, "mentions",
                                   source_artifact_id=artifact.id)
+
+    # Note-takers carry structured attendees with emails — the strongest signal
+    # for unifying a person across tools (an attendee email ties back to a Linear
+    # assignee email). Circleback: [{name,email}]; Fireflies: [email, …].
+    if artifact.source in ("circleback", "fireflies"):
+        m = artifact.meta or {}
+        attendees = [(a.get("name"), a.get("email")) for a in m.get("attendees", []) or []]
+        attendees += [(None, em) for em in m.get("participants", []) or [] if isinstance(em, str) and "@" in em]
+        for nm, em in attendees:
+            if (nm or em) and not (nm and is_bot(nm)):
+                p = await resolve_person(db, ws, nm or em, email=em)
+                if p:
+                    await ensure_link(db, ws, "artifact", artifact.id, "entity", p.id, "mentions",
+                                      source_artifact_id=artifact.id)
 
     primary_customer = next(iter(customer_ents.values()), None)
 
