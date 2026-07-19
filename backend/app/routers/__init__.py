@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
-from . import artifacts, chat, entities, findings, goals, integrations, webhooks
+from . import artifacts, chat, entities, findings, goals, integrations, internal, webhooks
 
 api_router = APIRouter()
-for module in (artifacts, chat, entities, findings, goals, integrations, webhooks):
+for module in (artifacts, chat, entities, findings, goals, integrations, internal, webhooks):
     api_router.include_router(module.router)

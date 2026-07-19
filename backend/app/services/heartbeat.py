@@ -17,7 +17,7 @@ from sqlalchemy import func, select
 
 from ..config import settings
 from ..database import SessionLocal
-from ..models import ActivityEvent, Artifact, Entity, Insight, Workspace
+from ..models import ActivityEvent, Artifact, Entity, Insight, Integration, Workspace
 from .ingestion import backfill_embeddings, pull_all
 from .memory import backfill_embeddings as backfill_memory_embeddings, decay as decay_memories
 from .proposals import dispatch_for_workspace
@@ -147,6 +147,14 @@ async def _brief_is_stale(db, ws: str) -> bool:
     return datetime.now(timezone.utc) - latest > timedelta(days=settings.brief_max_age_days)
 
 
+async def _has_live_connector(db, ws: str) -> bool:
+    """True if the workspace has at least one connected, credentialed connector.
+    With none, a tick has nothing new to observe — skip it (no wasted LLM/embed spend)."""
+    rows = (await db.execute(select(Integration).where(
+        Integration.workspace_id == ws, Integration.status == "connected"))).scalars().all()
+    return any(r.credentials for r in rows)
+
+
 async def _tick() -> None:
     async with SessionLocal() as db:
         workspaces = (await db.execute(select(Workspace.id))).scalars().all() or ["ws_default"]
@@ -155,6 +163,9 @@ async def _tick() -> None:
             # An immediate sync (connect / "Scan now") is already doing this work;
             # skip to avoid double work and write contention.
             if _sync.get(ws, {}).get("active"):
+                continue
+            # No connected tool → nothing new to pull or reason about → skip (no charge).
+            if not await _has_live_connector(db, ws):
                 continue
             # Observe: auto-pull new artifacts from every connected sensor, then reason.
             try:
@@ -208,6 +219,13 @@ async def _run_forever() -> None:
         except Exception:
             logger.exception("heartbeat tick failed; continuing")
         await asyncio.sleep(max(60, settings.heartbeat_interval_minutes * 60))
+
+
+async def run_tick() -> None:
+    """One tick across all workspaces, driven externally (Cloud Scheduler). Used
+    when the in-process loop is off (HEARTBEAT_ENABLED=false) so the app can scale
+    to zero — the schedule is the cadence, so this ignores the runtime pause toggle."""
+    await _tick()
 
 
 def start() -> None:

@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
-    description="The AI Operating System for companies: signals in, evidence-backed intelligence out, "
+    description="The AI Operating System Layer for companies: signals in, evidence-backed intelligence out, "
                 "humans approve — your tools stay the system of record.",
     lifespan=lifespan,
 )

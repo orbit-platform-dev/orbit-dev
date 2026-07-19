@@ -5,11 +5,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Orbit · the AI Operating System for companies",
+    default: "Orbit · the AI Operating System Layerfor companies",
     template: "%s · Orbit",
   },
   description:
-    "Orbit is the AI Operating System for companies: signals in, evidence-backed intelligence out. Humans approve; your tools stay the system of record.",
+    "Orbit is the AI Operating System Layer for companies: signals in, evidence-backed intelligence out. Humans approve; your tools stay the system of record.",
   icons: { icon: "/orbit-logo.svg" },
 };
 

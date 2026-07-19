@@ -10,23 +10,18 @@ class Settings(BaseSettings):
     app_name: str = "Orbit API"
     environment: str = "development"
 
-    # Zero-config dev default = SQLite. docker-compose overrides with PostgreSQL.
     database_url: str = "sqlite+aiosqlite:///./orbit.db"
     redis_url: str | None = None
 
-    # Seed the demo dataset on first boot. Set SEED_DEMO=false to start with an empty DB.
     seed_demo: bool = True
 
-    # CORS — the Next.js frontend origin(s).
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
-    # Auth (Clerk). When unset, auth is disabled and the API runs open (dev/demo).
     clerk_jwks_url: str | None = None
     clerk_issuer: str | None = None
 
 
     frontend_url: str = "http://localhost:3000"
-    # Public base URL of THIS API (for inbound webhooks); ngrok/prod domain.
     public_api_url: str | None = None
 
     google_client_id: str | None = None
@@ -71,9 +66,15 @@ class Settings(BaseSettings):
     # --- Heartbeat (the OS loop) ----------------------------------------------
     # Orbit scans for gaps and refreshes the brief on its own schedule; nothing
     # here EXECUTES actions — detection and briefs are read + insight writes only.
-    heartbeat_enabled: bool = True
+    # OFF by default: no automatic scanning (= no background LLM/embedding charges).
+    # Opt in explicitly — HEARTBEAT_ENABLED=true for the in-process loop, or drive
+    # POST /internal/heartbeat from Cloud Scheduler. Manual "Scan now" always works.
+    heartbeat_enabled: bool = False
     heartbeat_interval_minutes: int = 30
     brief_max_age_days: int = 7
+    # Shared secret for POST /internal/heartbeat. Set it to run the loop from Cloud
+    # Scheduler with HEARTBEAT_ENABLED=false (scale-to-zero, no always-on instance).
+    heartbeat_token: str | None = None
 
     @property
     def resolved_api_key(self) -> str | None:
