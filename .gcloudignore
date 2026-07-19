@@ -1,0 +1,27 @@
+# Keep the Cloud Build upload small and secret-free (.dockerignore controls the
+# image; this controls what gets uploaded to Cloud Build in the first place).
+.git
+.gitignore
+
+# Python
+**/.venv
+**/venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/*.db
+**/*.db-wal
+**/*.db-shm
+
+# Node / Next
+**/node_modules
+**/.next
+
+# Secrets — never upload
+**/.env
+**/.env.*
+!**/.env.example
+!**/prod.env.example
+
+# Local cruft
+**/.DS_Store

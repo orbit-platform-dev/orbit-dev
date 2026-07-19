@@ -32,10 +32,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 _TOP_K = 8
-_MAX_SCAN = 3000         # keyword-fallback window (whole recent history; the
-                         # vector path is index-backed and uncapped).
-_HISTORY_TURNS = 8       # sliding window of recent messages given to the model
-_HISTORY_CLIP = 600      # per-message char cap, to bound the token budget
+_MAX_SCAN = 3000         
+                         
+_HISTORY_TURNS = 8       
+_HISTORY_CLIP = 600      
+_CHAT_RELEVANCE = 0.78
+_CITE_RELEVANCE = 0.82
 
 
 class _Camel(BaseModel):
@@ -98,20 +100,18 @@ def _toks(s: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]{2,}", (s or "").lower()))
 
 
-async def _retrieve(db, ws: str, question: str, k: int = _TOP_K) -> list[Artifact]:
-    """Top-k artifacts for a question. STRICTLY READ-ONLY: artifacts are embedded
-    at ingest, so this never generates or writes vectors.
+async def _retrieve(db, ws: str, question: str, k: int = _TOP_K) -> list[tuple[Artifact, float]]:
+    """Top-k (artifact, relevance) for a question — relevance kept so citations can
+    show the MOST relevant sources, not random ones. STRICTLY READ-ONLY.
 
-    Semantic path (AI on): native pgvector similarity via services.model
-    .search_artifacts — index-accelerated on Postgres, uncapped over all history,
-    with a similarity floor. Fallback (AI off / no key): keyword overlap + recency
-    over a bounded recent window."""
+    Semantic path (AI on): native pgvector cosine similarity via search_artifacts.
+    Fallback (AI off / no key): keyword-overlap fraction + recency."""
     if embeddings.available():
         qv = await embeddings.embed_query(question)
         if qv is not None:
-            results = await search_artifacts(db, ws, qv, k=k)
+            results = await search_artifacts(db, ws, qv, k=k, max_distance=1.0 - _CHAT_RELEVANCE)
             if results:
-                return [art for art, _sim in results]
+                return results
 
     rows = (
         await db.execute(
@@ -121,8 +121,12 @@ async def _retrieve(db, ws: str, question: str, k: int = _TOP_K) -> list[Artifac
     if not rows:
         return []
     q = _toks(question) - _STOPWORDS
-    ranked = sorted(rows, key=lambda a: (len(q & _toks(f"{a.title} {a.content or ''}")), a.occurred_at), reverse=True)
-    return ranked[:k]
+
+    def _kw(a: Artifact) -> float:
+        return len(q & _toks(f"{a.title} {a.content or ''}")) / max(len(q), 1)
+
+    ranked = sorted(rows, key=lambda a: (_kw(a), a.occurred_at), reverse=True)
+    return [(a, _kw(a)) for a in ranked[:k]]
 
 
 def _format_history(messages: list[dict] | None) -> str:
@@ -218,11 +222,14 @@ def _fallback_text(stats: str, hits) -> str:
     return (((stats + "\n\n") if stats else "") + (f"Most relevant memory:\n{lines}" if lines else "")).strip()
 
 
-async def _build_context(db, ws: str, question: str, history: list[dict] | None) -> tuple[str, list[Artifact], str]:
+async def _build_context(db, ws: str, question: str, history: list[dict] | None) -> tuple[str, list[Artifact], str, dict[str, float]]:
     """Everything the reasoner sees for one question: retrieval (semantic +
     person-graph), live stats, snapshot (insights/goals), learned facts and the
-    conversation window. Returns (prompt, hits, stats)."""
-    hits = await _retrieve(db, ws, question)
+    conversation window. Returns (prompt, hits, stats, scores) — scores maps
+    artifact id → cosine relevance, so citations can show only relevant sources."""
+    retrieved = await _retrieve(db, ws, question)
+    scores = {a.id: s for a, s in retrieved}
+    hits = [a for a, _ in retrieved]
     person = await _person_issues(db, ws, question)
     if person:
         seen = {a.id for a in hits}
@@ -270,11 +277,11 @@ async def _build_context(db, ws: str, question: str, history: list[dict] | None)
                 )
     graph_block = await _graph_context(db, ws, question)
     convo = _format_history(history)
-    return f"{convo}QUESTION: {question}\n\n{snapshot}{graph_block}{mem_block}{evidence}", hits, stats
+    return f"{convo}QUESTION: {question}\n\n{snapshot}{graph_block}{mem_block}{evidence}", hits, stats, scores
 
 
 async def _answer(db, ws: str, question: str, history: list[dict] | None = None) -> tuple[str, list[Citation], bool]:
-    prompt, hits, stats = await _build_context(db, ws, question, history)
+    prompt, hits, stats, _scores = await _build_context(db, ws, question, history)
 
     if not settings.ai_enabled:
         return (_fallback_text(stats, hits), _make_cites(hits[:6]), bool(hits or stats))
@@ -380,17 +387,27 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
-def _cites_from_text(text: str, hits: list[Artifact], cap: int = 6) -> list[Artifact]:
-    """Citations for a streamed (plain-text) answer: the evidence items the text
-    actually references — by identifier (ENG-432) or title — else the top hits."""
+def _cites_from_text(text: str, hits: list[Artifact], scores: dict[str, float], cap: int = 6) -> list[Artifact]:
+    """Sources for a streamed answer: what the answer explicitly referenced (by
+    identifier or title) PLUS retrieved items that are strongly relevant to the
+    question (cosine ≥ _CITE_RELEVANCE). Never loosely-related noise — an item
+    below the bar and not referenced is dropped. `hits` are relevance-ordered, so
+    the shown sources stay in most-relevant-first order."""
     tl = (text or "").lower()
-    used = []
+    referenced, relevant = [], []
     for a in hits:
         ident = (a.external_ref or "").lower()
         title = a.title.split("·", 1)[-1].strip().lower()
         if (ident and ident in tl) or (len(title) >= 12 and title[:40] in tl):
-            used.append(a)
-    return (used or hits[:3])[:cap]
+            referenced.append(a)
+        elif scores.get(a.id, 0.0) >= _CITE_RELEVANCE:
+            relevant.append(a)
+    out, seen = [], set()
+    for a in referenced + relevant:
+        if a.id not in seen:
+            out.append(a)
+            seen.add(a.id)
+    return out[:cap]
 
 
 # --- Ticket drafting: the in-chat closed loop --------------------------------
@@ -628,9 +645,7 @@ async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_wor
                 citations, grounded = [], True
             else:
                 yield _sse({"type": "phase", "phase": "retrieving"})
-                prompt, hits, stats = await _build_context(db, ws, question, history)
-                # Self-decide-to-pull: nothing in memory → fetch fresh data from the
-                # tool most likely to have it, then re-retrieve and answer.
+                prompt, hits, stats, scores = await _build_context(db, ws, question, history)
                 if not hits and not stats:
                     pick = await _decide_pull(db, ws, question)
                     if pick:
@@ -639,7 +654,7 @@ async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_wor
                             await _run_pull(db, ws, pick)
                         except Exception:
                             logger.warning("chat-triggered pull failed", exc_info=True)
-                        prompt, hits, stats = await _build_context(db, ws, question, history)
+                        prompt, hits, stats, scores = await _build_context(db, ws, question, history)
                 grounded = bool(hits or stats)
 
                 if not settings.ai_enabled:
@@ -703,7 +718,7 @@ async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_wor
                     if not text:
                         text = _fallback_text(stats, hits)
                         yield _sse({"type": "delta", "text": text})
-                    citations = _make_cites(_cites_from_text(text, hits))
+                    citations = _make_cites(_cites_from_text(text, hits, scores))
 
             # Proactive: once the team has the ticket habit, offer to file one for a
             # trackable statement they didn't explicitly ask to track.

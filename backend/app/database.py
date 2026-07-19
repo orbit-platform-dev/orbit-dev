@@ -2,27 +2,31 @@
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import event
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from .config import settings
 
-_is_sqlite = settings.database_url.startswith("sqlite")
+_url = make_url(settings.database_url)
+_is_sqlite = _url.get_backend_name() == "sqlite"
 
-engine = create_async_engine(
-    settings.database_url,
-    echo=False,
-    future=True,
-    # SQLite serializes writers; a generous busy timeout makes a blocked writer
-    # wait for the lock instead of failing instantly.
-    connect_args={"timeout": 30} if _is_sqlite else {},
-)
+_connect_args: dict = {}
+if _is_sqlite:
+    _connect_args["timeout"] = 30
+elif _url.get_backend_name() == "postgresql":
+    _url = _url.set(drivername="postgresql+asyncpg")
+    _host = _url.host or _url.query.get("host") or ""
+    _url = _url.difference_update_query(["sslmode", "ssl", "channel_binding"])
+    if not str(_host).startswith("/"):
+        _connect_args["ssl"] = True
+    _connect_args["statement_cache_size"] = 0
+
+engine = create_async_engine(_url, echo=False, future=True, connect_args=_connect_args)
 
 if _is_sqlite:
     @event.listens_for(engine.sync_engine, "connect")
     def _sqlite_pragmas(dbapi_conn, _record):  # noqa: ANN001
-        # WAL + busy_timeout let the heartbeat and an immediate sync write
-        # concurrently on dev SQLite instead of hitting "database is locked".
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA busy_timeout=30000")
