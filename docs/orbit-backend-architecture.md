@@ -65,7 +65,7 @@ What happens when the heartbeat ticks (env `HEARTBEAT_INTERVAL_MINUTES`) or you 
 ```
  HEARTBEAT TICK (per workspace)
  │
- ├─▶ 1. pull_all() — FIRST connect: a 20-day backfill window (recent history, not
+ ├─▶ 1. pull_all() — FIRST connect: a 7-day backfill window (recent history, not
  │      years — the cursor grows it forward). Thereafter INCREMENTAL: each connector
  │      keeps a cursor (sync_state) and fetches only items changed since; a FULL pass
  │      every 24h reconciles deletions — Linear by complete-listing diff; GitHub/Drive
@@ -300,7 +300,7 @@ Everything below is function-level, with the exact constants and algorithms in t
 
 **GitHub (`services/github.py`)**
 - PAT paste or OAuth; both become `Bearer <token>`.
-- `fetch_work(auth, since)`: `_MAX_REPOS = 15` most-recently-pushed repos × `_PER_REPO = 100` PRs + 100 issues (`state=all`, sorted by `updated` desc; the issues endpoint interleaves PRs — filtered by the `pull_request` key). The page ceiling is high on purpose — the sync **time window** (20-day cold start, then cursor) is the real bound, not a count. PRs use a client-side cutoff on `updatedAt > since`; issues use the API-native `since` param. **Every item — issue OR PR — gets its full discussion** via `_fetch_comments` (paginated, ≤`_COMMENTS_MAX = 200`; a 0-comment item skips the call). Image links in comment bodies are OCR'd downstream. Open PRs additionally get `_enrich_pr` (detail stats: additions/deletions/changedFiles/commits · ≤10 reviews), capped `_ENRICH_PER_REPO = 20`. Top `_CONTRIBUTORS_PER_REPO = 10` contributors per repo, refreshed on FULL syncs only.
+- `fetch_work(auth, since)`: `_MAX_REPOS = 15` most-recently-pushed repos × `_PER_REPO = 30` PRs + 30 issues (`state=all`, sorted by `updated` desc; the issues endpoint interleaves PRs — filtered by the `pull_request` key). Caps are free-tier-sized so the FIRST sync completes — only a completed pull writes the cursor, and only then do later syncs turn incremental. PRs use a client-side cutoff on `updatedAt > since`; issues use the API-native `since` param. **Every item — issue OR PR — gets its discussion** via `_fetch_comments` (paginated, ≤`_COMMENTS_MAX = 50`; a 0-comment item skips the call). Image links in comment bodies are OCR'd downstream. Open PRs additionally get `_enrich_pr` (detail stats: additions/deletions/changedFiles/commits · ≤10 reviews), capped `_ENRICH_PER_REPO = 10`. Top `_CONTRIBUTORS_PER_REPO = 10` contributors per repo, refreshed on FULL syncs only.
 - `item_state(auth, "owner/repo#n", is_pr)` — the reconcile probe: GET `/repos/{repo}/{pulls|issues}/{n}`; status 301/404/410/451 ⇒ `None` (gone — 301 means the repo was renamed, so the old ref is dead and the new name syncs as new artifacts); 200 ⇒ `"merged"` (merged_at set) / `"closed"` / `"open"`; anything else raises (rate limit ≠ deletion).
 
 **Slack (`services/slack.py`)**
@@ -320,10 +320,10 @@ Everything below is function-level, with the exact constants and algorithms in t
 
 **Cursors & reconcile (`services/ingestion.py`)**
 - `Integration.sync_state = {"cursor": iso, "lastFull": iso}`. `_sync_plan`:
-  - **first connect (no cursor)** ⇒ `since = now − _INITIAL_BACKFILL_DAYS (20)` — a bounded cold start, so connecting doesn't ingest years of history in one tick; the cursor then grows the corpus forward.
+  - **first connect (no cursor)** ⇒ `since = now − _INITIAL_BACKFILL_DAYS (7)` — a deliberately light cold start; Orbit learns on the way as the customer uses it, the cursor growing the corpus forward.
   - **cursor set, `lastFull` older than `_FULL_SYNC_EVERY_HOURS = 24`** ⇒ `since = None` (a FULL reconcile that also catches deletions).
   - **otherwise** ⇒ the cursor (incremental).
-  `_advance_cursor` sets `cursor = now − _CURSOR_OVERLAP_MINUTES (5)` — the overlap re-reads a small window, and dedup makes overlap free. It also sets `lastFull` on the FIRST advance (not just full passes), so the tick right after the initial backfill stays incremental instead of immediately running a full reconcile. Net effect: a fast, recent cold start; steady incremental growth; a daily full reconcile that both catches deletions and fills in still-open work older than the 20-day window (Orbit accumulates more context over time).
+  `_advance_cursor` sets `cursor = now − _CURSOR_OVERLAP_MINUTES (5)` — the overlap re-reads a small window, and dedup makes overlap free. It also sets `lastFull` on the FIRST advance (not just full passes), so the tick right after the initial backfill stays incremental instead of immediately running a full reconcile. Net effect: a fast, recent cold start; steady incremental growth; a daily full reconcile that both catches deletions and fills in still-open work older than the 7-day window (Orbit accumulates more context over time).
 - **Reconcile runs only on FULL syncs**:
   - *Linear*: its open-issue fetch is complete, so any locally-open artifact missing from the fetched set (and not completed/canceled) → `status="stale"` directly.
   - *GitHub / Drive*: listings are capped, so absence proves nothing. Open artifacts missing from the listing are probed live (`item_state` / `file_exists`), shuffled, capped at `_RECONCILE_CHECKS = 50` per source per pass: gone → stale; GitHub merged/closed outside the window → `meta.stateType` corrected to completed; still-open/existing → untouched. Probe errors skip the item.

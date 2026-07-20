@@ -62,7 +62,7 @@ async def set_source_stale(db, workspace_id: str, integration_key: str, stale: b
 _FULL_SYNC_EVERY_HOURS = 24
 _CURSOR_OVERLAP_MINUTES = 5
 _RECONCILE_CHECKS = 50
-_INITIAL_BACKFILL_DAYS = 20   
+_INITIAL_BACKFILL_DAYS = 7  
 
 _IMAGE_MD = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
 _IMAGES_PER_SYNC = 5          # vision reads spend model quota — bounded per pull

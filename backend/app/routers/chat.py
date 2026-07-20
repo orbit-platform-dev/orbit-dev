@@ -464,7 +464,9 @@ async def _run_draft(system: str, question: str, history: list[dict] | None) -> 
     prompt = f"{convo}\n\nUser message: {question}" if convo else f"User message: {question}"
     try:
         from ..agents.definitions import build_agent
-        out = (await build_agent(system, _DraftIntent).run(prompt)).output
+        # Lite model on purpose: simple structured task, and it keeps drafting alive
+        # when the smart model's free-tier quota is exhausted (429).
+        out = (await build_agent(system, _DraftIntent, model=settings.extractor_model).run(prompt)).output
     except Exception:
         logger.warning("ticket draft failed", exc_info=True)
         return None
@@ -573,9 +575,9 @@ async def _decide_pull(db, ws: str, question: str) -> str | None:
     if hint:
         # Question is clearly about one tool: pull it iff connected, never another.
         return hint if hint in connected else None
-    try:  # ambiguous — let the model choose among connected tools
+    try:  # ambiguous — let the lite model choose among connected tools
         from ..agents.definitions import build_agent
-        pick = (await build_agent(_PULL_SYSTEM, _PullPick).run(
+        pick = (await build_agent(_PULL_SYSTEM, _PullPick, model=settings.extractor_model).run(
             f"Question: {question}\nConnected tools: {', '.join(connected)}")).output.connector
     except Exception:
         logger.warning("pull decision failed", exc_info=True)
