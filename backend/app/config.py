@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     database_url: str = "sqlite+aiosqlite:///./orbit.db"
+    db_password: str | None = None
     redis_url: str | None = None
 
     seed_demo: bool = True

@@ -1,4 +1,5 @@
 """Async SQLAlchemy engine + session factory."""
+import ssl
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import event
@@ -9,6 +10,8 @@ from sqlalchemy.orm import DeclarativeBase
 from .config import settings
 
 _url = make_url(settings.database_url)
+if settings.db_password:
+    _url = _url.set(password=settings.db_password)
 _is_sqlite = _url.get_backend_name() == "sqlite"
 
 _connect_args: dict = {}
@@ -19,7 +22,10 @@ elif _url.get_backend_name() == "postgresql":
     _host = _url.host or _url.query.get("host") or ""
     _url = _url.difference_update_query(["sslmode", "ssl", "channel_binding"])
     if not str(_host).startswith("/"):
-        _connect_args["ssl"] = True
+        _ctx = ssl.create_default_context()
+        _ctx.check_hostname = False
+        _ctx.verify_mode = ssl.CERT_NONE
+        _connect_args["ssl"] = _ctx
     _connect_args["statement_cache_size"] = 0
 
 engine = create_async_engine(_url, echo=False, future=True, connect_args=_connect_args)
