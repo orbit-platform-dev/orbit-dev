@@ -35,6 +35,32 @@ async def list_artifacts(limit: int = 100, db=Depends(get_db), ws: str = Depends
     )).scalars().all()
 
 
+@router.get("/counts")
+async def memory_counts(db=Depends(get_db), ws: str = Depends(get_workspace_id)):
+    """Real, live totals of what Orbit has analysed — cheap count queries the UI
+    polls during a sync so users watch memory grow instead of a frozen screen."""
+    from sqlalchemy import func
+
+    from ..models import Entity, Insight, Memory
+
+    by_source = dict((await db.execute(
+        select(Artifact.source, func.count()).where(Artifact.workspace_id == ws).group_by(Artifact.source)
+    )).all())
+
+    async def _count(model, *extra):
+        return (await db.execute(
+            select(func.count()).select_from(model).where(model.workspace_id == ws, *extra)
+        )).scalar_one()
+
+    return {
+        "artifacts": sum(by_source.values()),
+        "bySource": by_source,
+        "entities": await _count(Entity),
+        "facts": await _count(Memory),
+        "insights": await _count(Insight, Insight.kind != "brief"),
+    }
+
+
 @router.post("", response_model=ArtifactOut, status_code=201)
 async def ingest_call(body: IngestCallIn, db=Depends(get_db), ws: str = Depends(get_workspace_id)):
     content = (body.content or "").strip()

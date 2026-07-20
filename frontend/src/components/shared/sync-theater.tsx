@@ -4,6 +4,7 @@ import { Fragment } from "react";
 import { motion } from "framer-motion";
 import { OrbitMark } from "@/components/shared/logo";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
+import { LiveCounts } from "@/components/shared/live-counts";
 import { useIntegrations } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 import type { IntegrationKey, SyncProgress } from "@/lib/types";
@@ -98,7 +99,6 @@ export function SyncTheater({ sync }: { sync?: SyncProgress | null }) {
   const tools = connected.length ? connected : FALLBACK_TOOLS;
   const phase = sync?.phase ?? "reading";
   const stage = PHASE_STAGE[phase] ?? 0;
-  const issues = sync?.counts?.issues;
 
   return (
     <motion.div
@@ -151,8 +151,9 @@ export function SyncTheater({ sync }: { sync?: SyncProgress | null }) {
       </h2>
       <p className="mt-1 max-w-md text-center text-sm text-muted-foreground">
         {sync?.message ?? ""}
-        {issues ? ` · ${issues} items read so far` : ""}
       </p>
+
+      <LiveCounts active={!!sync?.active} className="mt-6" />
 
       <SyncStageTracker stage={stage} />
     </motion.div>

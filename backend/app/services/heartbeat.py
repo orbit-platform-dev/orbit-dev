@@ -96,7 +96,7 @@ async def run_now(workspace_id: str, trigger: str = "manual") -> None:
         return  # a sync is already in flight; don't stack
     _sync[workspace_id] = {
         "active": True, "phase": "reading", "trigger": trigger,
-        "message": "Reading everything from your connected tools…",
+        "message": "",
         "counts": {}, "startedAt": datetime.now(timezone.utc).isoformat(), "finishedAt": None,
     }
     try:

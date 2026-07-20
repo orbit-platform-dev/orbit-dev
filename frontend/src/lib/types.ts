@@ -135,6 +135,13 @@ export interface Integration {
   connectable?: boolean;
   oauthAvailable?: boolean;
 }
+export interface MemoryCounts {
+  artifacts: number;
+  bySource: Record<string, number>;
+  entities: number;
+  facts: number;
+  insights: number;
+}
 
 export interface SyncProgress {
   active: boolean;

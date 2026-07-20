@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { PHASE_STAGE, SyncStageTracker } from "@/components/shared/sync-theater";
+import { LiveCounts } from "@/components/shared/live-counts";
 import type { SyncProgress } from "@/lib/types";
 
 // Memory-tab sync visual: a knowledge graph GROWING — entities appear, edges
@@ -32,7 +33,6 @@ const PULSED: [number, number][] = [[0, 1], [5, 2], [4, 5]];
 export function MemoryTheater({ sync }: { sync?: SyncProgress | null }) {
   const phase = sync?.phase ?? "reading";
   const stage = PHASE_STAGE[phase] ?? 0;
-  const issues = sync?.counts?.issues;
 
   return (
     <motion.div
@@ -111,8 +111,9 @@ export function MemoryTheater({ sync }: { sync?: SyncProgress | null }) {
       </h2>
       <p className="mt-1 max-w-md text-center text-sm text-muted-foreground">
         {sync?.message ?? "Connecting people, commitments and work into one living graph…"}
-        {issues ? ` · ${issues} items read so far` : ""}
       </p>
+
+      <LiveCounts active={!!sync?.active} className="mt-6" />
 
       <SyncStageTracker stage={stage} />
     </motion.div>

@@ -20,10 +20,11 @@ _TOKEN = "https://github.com/login/oauth/access_token"
 _SCOPES = "repo read:org"
 
 _MAX_REPOS = 15
-_PER_REPO = 100          # page ceiling; the sync time window (not a count) bounds a pull
-_ENRICH_PER_REPO = 20    # open PRs per repo that get the stats+reviews deep read
+
+_PER_REPO = 30          
+_ENRICH_PER_REPO = 10    
 _CONTRIBUTORS_PER_REPO = 10
-_COMMENTS_MAX = 200      # comments read per item; the window bounds volume, this is the ceiling
+_COMMENTS_MAX = 50       
 
 
 def _auth_header(cred: dict[str, Any] | None) -> str | None:

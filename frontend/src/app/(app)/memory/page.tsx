@@ -39,7 +39,6 @@ import { entityMeta, CommitmentStatusChip } from "@/components/memory/entity-met
 import { IntegrationLogo } from "@/components/shared/integration-logo";
 import { MemoryTheater } from "@/components/shared/memory-theater";
 import { sourceKey } from "@/lib/sources";
-import { TimeFilter, withinRange, type TimeRange } from "@/components/shared/time-filter";
 
 const SOURCE_LABEL: Record<string, string> = {
   call: "Call",
@@ -98,17 +97,17 @@ function SourceRow({ artifact }: { artifact: Artifact }) {
   );
 }
 
-function SignalsView({ range }: { range: TimeRange }) {
+function SignalsView() {
   const { data, isLoading } = useArtifacts();
   if (isLoading) {
     return <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>;
   }
-  const items = (data ?? []).filter((a) => withinRange(a.occurredAt, range));
+  const items = data ?? [];
   if (items.length === 0) {
     return (
       <EmptyState
         icon={Database}
-        title={data && data.length ? "Nothing in this time range" : "Nothing here yet"}
+        title="Nothing here yet"
         description="The raw items Orbit has read from your calls and connected tools. Add a call or connect a tool and Orbit keeps this up to date on its own."
         action={<AddCallDialog />}
       />
@@ -156,23 +155,23 @@ function EntityRow({ entity }: { entity: Entity }) {
   );
 }
 
-function EntitiesView({ range }: { range: TimeRange }) {
+function EntitiesView() {
   const { data, isLoading } = useEntities();
   if (isLoading) {
     return <div className="space-y-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>;
   }
-  const filtered = (data ?? []).filter((e) => withinRange(e.updatedAt, range));
-  if (filtered.length === 0) {
+  const all = data ?? [];
+  if (all.length === 0) {
     return (
       <EmptyState
         icon={Database}
-        title={data && data.length ? "Nothing in this time range" : "Nothing here yet"}
+        title="Nothing here yet"
         description="What Orbit knows about your company. It resolves customers, commitments and requests from your calls and connected tools. Add a call or connect a tool to start."
         action={<AddCallDialog />}
       />
     );
   }
-  const groups = KIND_ORDER.map((kind) => ({ kind, items: filtered.filter((e) => e.kind === kind) })).filter((g) => g.items.length);
+  const groups = KIND_ORDER.map((kind) => ({ kind, items: all.filter((e) => e.kind === kind) })).filter((g) => g.items.length);
   return (
     <div className="space-y-8">
       {groups.map(({ kind, items }) => {
@@ -243,7 +242,6 @@ function AddCallDialog() {
 
 // --- Page -------------------------------------------------------------------
 export default function MemoryPage() {
-  const [range, setRange] = useState<TimeRange>("all");
   const { data: hb } = useHeartbeat();
   const sync = hb?.sync;
 
@@ -264,13 +262,12 @@ export default function MemoryPage() {
               <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
               <TabsTrigger value="sources">Sources</TabsTrigger>
             </TabsList>
-            <TimeFilter value={range} onChange={setRange} />
           </div>
           <TabsContent value="knowledge">
-            <EntitiesView range={range} />
+            <EntitiesView />
           </TabsContent>
           <TabsContent value="sources">
-            <SignalsView range={range} />
+            <SignalsView />
           </TabsContent>
         </Tabs>
       )}

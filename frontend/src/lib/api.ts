@@ -15,6 +15,7 @@ import type {
   Finding,
   HeartbeatStatus,
   Integration,
+  MemoryCounts,
   TicketTargets,
 } from "./types";
 
@@ -57,6 +58,7 @@ async function send<T>(path: string, method: "POST" | "PATCH" | "DELETE", body?:
 
 // --- Memory (Observe + Remember) -------------------------------------------
 export const getArtifacts = () => live<Artifact[]>("/artifacts");
+export const getMemoryCounts = () => live<MemoryCounts>("/artifacts/counts");
 export const getArtifact = (id: string) => live<Artifact>(`/artifacts/${id}`);
 export const ingestCall = (input: { title?: string; content: string; source?: string }) =>
   send<Artifact>("/artifacts", "POST", {
