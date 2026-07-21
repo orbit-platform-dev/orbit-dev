@@ -68,6 +68,7 @@ steps:
       - --min-instances=0
       - --max-instances=3
       - --memory=512Mi
+      - --set-secrets=CLERK_SECRET_KEY=CLERK_SECRET_KEY:latest
 
 options:
   logging: CLOUD_LOGGING_ONLY
