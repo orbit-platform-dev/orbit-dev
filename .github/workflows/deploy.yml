@@ -5,17 +5,15 @@ on:
     branches: [main]
   workflow_dispatch: {}
 
-
 concurrency:
   group: deploy-production
   cancel-in-progress: false
 
 permissions:
   contents: read
-  id-token: write         
+  id-token: write
 
 jobs:
-  # --- Gate: nothing deploys unless the code type-checks and imports cleanly ---
   verify:
     name: Verify
     runs-on: ubuntu-latest
@@ -48,25 +46,23 @@ jobs:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
         run: |
           pip install -q -r requirements.txt
-          python -c "import app.main; print('backend imports OK')"
+          python -c "import app.main"
 
   deploy:
     name: Build & deploy
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: production         
+    environment: production
     steps:
       - uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud (keyless)
-        uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOYER_SA }}
 
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v2
 
       - name: Build & deploy via Cloud Build
         run: |
@@ -75,14 +71,12 @@ jobs:
             --config cloudbuild.yaml \
             --substitutions=_TAG="${GITHUB_SHA::7}",_API_URL="${{ vars.API_URL }}",_WEB_URL="${{ vars.WEB_URL }}",_CLERK_PK="${{ vars.CLERK_PUBLISHABLE_KEY }}"
 
-      - name: Smoke test the API
+      - name: Smoke test
         run: |
-          if [ -z "${{ vars.API_URL }}" ]; then
-            echo "API_URL not set yet (first deploy) — skipping smoke test"; exit 0
-          fi
+          if [ -z "${{ vars.API_URL }}" ]; then echo "API_URL not set; skipping"; exit 0; fi
           for i in $(seq 1 10); do
             code=$(curl -s -o /dev/null -w "%{http_code}" "${{ vars.API_URL }}/health" || true)
-            if [ "$code" = "200" ]; then echo "API healthy ✅"; exit 0; fi
-            echo "waiting for API to come up (got $code)…"; sleep 6
+            [ "$code" = "200" ] && { echo "healthy"; exit 0; }
+            echo "waiting ($code)"; sleep 6
           done
-          echo "API did not return 200 from /health"; exit 1
+          echo "API not healthy"; exit 1
