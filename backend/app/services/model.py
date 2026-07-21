@@ -17,7 +17,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import cast, or_, select
 
 from ..database import engine
-from ..models import EMBEDDING_DIM, Artifact, Entity, Link
+from ..models import EMBEDDING_DIM, Artifact, ArtifactChunk, Entity, Link
 from . import embeddings
 
 _SEMANTIC_THRESHOLD = 0.75
@@ -79,48 +79,105 @@ async def search_artifacts(
 ) -> list[tuple[Artifact, float]]:
     """Nearest artifacts to a query vector — workspace-scoped and STRICTLY READ-ONLY.
 
-    Postgres: a native pgvector cosine-distance query (`<=>`) that the HNSW index
-    (``ix_artifacts_embedding``) accelerates — it scans all history, with no row
-    cap. SQLite (dev): a bounded in-Python cosine scan over the workspace's
-    embedded rows. Both drop anything beyond ``max_distance`` (default: cosine
-    similarity below 0.75). Returns ``(artifact, similarity)`` pairs, nearest
-    first.
+    Searches BOTH the artifact-level vector (its title + opening) AND per-chunk
+    vectors (passages deep inside long documents), then merges to the parent
+    artifact keeping its best similarity. A chunk match attaches the matched
+    passage to the returned artifact as ``_hit_snippet`` so callers can feed the
+    RELEVANT passage to the model, not just the opening. This is what makes a
+    point buried on page 7 of a spec findable.
+
+    Postgres: native pgvector cosine (`<=>`) over both tables, HNSW-accelerated,
+    scanning all history. SQLite (dev): a bounded in-Python cosine scan. Both drop
+    anything beyond ``max_distance`` (default: similarity below 0.75). Returns
+    ``(artifact, similarity)`` pairs, nearest first.
 
     This never generates or writes embeddings — vectors are produced eagerly at
-    ingest (``ingestion.ingest_artifact``) or by ``ingestion.backfill_embeddings``.
+    ingest (``ingestion.ingest_artifact`` / ``_write_chunks``) or by the
+    ``ingestion.backfill_*`` passes.
 
     NOTE: the column is ``JSON().with_variant(Vector, "postgresql")``, so its ORM
-    comparator is JSON's — ``Artifact.embedding.cosine_distance`` does not exist.
-    We ``cast(...)`` to ``Vector`` to reach pgvector's operator.
+    comparator is JSON's — ``.cosine_distance`` does not exist. We ``cast(...)`` to
+    ``Vector`` to reach pgvector's operator.
     """
     if not query_vector:
         return []
 
-    if _is_postgres():
-        distance = cast(Artifact.embedding, Vector(EMBEDDING_DIM)).cosine_distance(query_vector)
-        stmt = select(Artifact, distance.label("distance")).where(
-            Artifact.workspace_id == ws, Artifact.embedding.isnot(None)
-        )
-        if sources:
-            stmt = stmt.where(Artifact.source.in_(sources))
-        if exclude_ids:
-            stmt = stmt.where(Artifact.id.notin_(exclude_ids))
-        stmt = stmt.where(distance <= max_distance).order_by(distance).limit(k)
-        rows = (await db.execute(stmt)).all()
-        return [(art, 1.0 - float(dist)) for art, dist in rows]
+    best: dict[str, float] = {}       # artifact_id -> best similarity (across its own + chunk vectors)
+    arts: dict[str, Artifact] = {}    # loaded parent artifacts
+    snippet: dict[str, str] = {}      # artifact_id -> matched passage (only when a chunk won)
 
-    # SQLite: no vector index — score in Python over the workspace's embedded rows.
-    stmt = select(Artifact).where(Artifact.workspace_id == ws, Artifact.embedding.isnot(None))
-    if sources:
-        stmt = stmt.where(Artifact.source.in_(sources))
-    if exclude_ids:
-        stmt = stmt.where(Artifact.id.notin_(exclude_ids))
-    rows = (await db.execute(stmt)).scalars().all()
-    floor = 1.0 - max_distance
-    scored = [(a, embeddings.cosine(query_vector, a.embedding)) for a in rows if a.embedding]
-    scored = [(a, s) for a, s in scored if s >= floor]
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored[:k]
+    if _is_postgres():
+        adist = cast(Artifact.embedding, Vector(EMBEDDING_DIM)).cosine_distance(query_vector)
+        astmt = select(Artifact, adist.label("distance")).where(
+            Artifact.workspace_id == ws, Artifact.embedding.isnot(None))
+        if sources:
+            astmt = astmt.where(Artifact.source.in_(sources))
+        if exclude_ids:
+            astmt = astmt.where(Artifact.id.notin_(exclude_ids))
+        astmt = astmt.where(adist <= max_distance).order_by(adist).limit(k)
+        for art, dist in (await db.execute(astmt)).all():
+            arts[art.id] = art
+            best[art.id] = 1.0 - float(dist)
+
+        cdist = cast(ArtifactChunk.embedding, Vector(EMBEDDING_DIM)).cosine_distance(query_vector)
+        cstmt = select(ArtifactChunk.artifact_id, ArtifactChunk.text, cdist.label("distance")).where(
+            ArtifactChunk.workspace_id == ws, ArtifactChunk.embedding.isnot(None))
+        if sources:
+            cstmt = cstmt.where(ArtifactChunk.source.in_(sources))
+        if exclude_ids:
+            cstmt = cstmt.where(ArtifactChunk.artifact_id.notin_(exclude_ids))
+        # oversample chunks — many can share one parent, and we dedupe to k below.
+        cstmt = cstmt.where(cdist <= max_distance).order_by(cdist).limit(k * 5)
+        for aid, text_, dist in (await db.execute(cstmt)).all():
+            sim = 1.0 - float(dist)
+            if sim > best.get(aid, -1.0):
+                best[aid] = sim
+                snippet[aid] = text_
+    else:
+        # SQLite: no vector index — score in Python over the workspace's embedded rows.
+        floor = 1.0 - max_distance
+        astmt = select(Artifact).where(Artifact.workspace_id == ws, Artifact.embedding.isnot(None))
+        if sources:
+            astmt = astmt.where(Artifact.source.in_(sources))
+        if exclude_ids:
+            astmt = astmt.where(Artifact.id.notin_(exclude_ids))
+        for a in (await db.execute(astmt)).scalars().all():
+            arts[a.id] = a
+            if a.embedding:
+                s = embeddings.cosine(query_vector, a.embedding)
+                if s >= floor:
+                    best[a.id] = s
+        cstmt = select(ArtifactChunk).where(
+            ArtifactChunk.workspace_id == ws, ArtifactChunk.embedding.isnot(None))
+        if sources:
+            cstmt = cstmt.where(ArtifactChunk.source.in_(sources))
+        if exclude_ids:
+            cstmt = cstmt.where(ArtifactChunk.artifact_id.notin_(exclude_ids))
+        for c in (await db.execute(cstmt)).scalars().all():
+            if not c.embedding:
+                continue
+            s = embeddings.cosine(query_vector, c.embedding)
+            if s >= floor and s > best.get(c.artifact_id, -1.0):
+                best[c.artifact_id] = s
+                snippet[c.artifact_id] = c.text
+
+    missing = [aid for aid in best if aid not in arts]
+    if missing:  # parents surfaced only via a chunk — load them
+        for a in (await db.execute(select(Artifact).where(
+                Artifact.workspace_id == ws, Artifact.id.in_(missing)))).scalars().all():
+            arts[a.id] = a
+
+    out: list[tuple[Artifact, float]] = []
+    for aid, sim in sorted(best.items(), key=lambda x: x[1], reverse=True):
+        art = arts.get(aid)
+        if art is None:
+            continue
+        if aid in snippet:
+            art._hit_snippet = snippet[aid]  # transient: the passage that matched
+        out.append((art, sim))
+        if len(out) >= k:
+            break
+    return out
 
 
 async def resolve_entity(db, ws: str, kind: str, name: str, *, meta: dict | None = None) -> Entity | None:

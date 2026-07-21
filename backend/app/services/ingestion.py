@@ -10,26 +10,86 @@ The legacy Meeting pipeline is untouched; this is the new memory substrate.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import random
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, func, select, update
 
 from ..agents.extractor import extract
-from ..models import Artifact, Integration
+from ..models import Artifact, ArtifactChunk, Integration
 from . import embeddings, fireflies, github, google_drive, linear, slack, vision
 
 logger = logging.getLogger("orbit.ingestion")
 
 
+_EMBED_WINDOW = 6000 
+
+
 def _embed_input(title: str, content: str) -> str:
     """The exact text embedded for an artifact — title plus a bounded slice of
     content. Defined once so ingest and backfill embed identically (and match
-    what the query side expects)."""
-    return f"{title}\n{(content or '')[:2000]}"
+    what the query side expects). The slice is the model's real single-vector
+    capacity; content beyond it is made searchable by per-chunk embeddings
+    (see _write_chunks), not by a bigger single vector (which would just dilute)."""
+    return f"{title}\n{(content or '')[:_EMBED_WINDOW]}"
+
+
+# Passage-level retrieval for long documents. Only content beyond _EMBED_WINDOW
+# needs it (the artifact's own vector covers the opening), so short items make no
+# chunks. _MAX_EMBED_CHUNKS caps vectors per doc at ~10 pages of coverage; text
+# past that still lives in Artifact.content (readable once the doc is surfaced).
+_CHUNK_SIZE = 1500
+_CHUNK_OVERLAP = 200
+_MAX_EMBED_CHUNKS = 16
+
+
+def _split_chunks(text: str) -> list[str]:
+    """Overlapping windows over long content. Returns [] for content that fits in
+    the artifact-level embedding, so most items create zero chunk rows."""
+    t = (text or "").strip()
+    if len(t) <= _EMBED_WINDOW:
+        return []
+    step = _CHUNK_SIZE - _CHUNK_OVERLAP
+    out: list[str] = []
+    for start in range(0, len(t), step):
+        piece = t[start:start + _CHUNK_SIZE].strip()
+        if piece:
+            out.append(piece)
+        if len(out) >= _MAX_EMBED_CHUNKS:
+            break
+    return out
+
+
+async def _write_chunks(db, art: Artifact) -> None:
+    """(Re)build a long artifact's embedded chunk rows so any passage in it is
+    searchable, not just its opening. Hash-guarded: content unchanged since the
+    last chunking is a no-op, so calling it on every refresh never storms the
+    embedding API. Caller commits. Embedding-unavailable / short content ⇒ no rows."""
+    pieces = _split_chunks(art.content)
+    ch = hashlib.md5((art.content or "").encode()).hexdigest() if pieces else ""
+    meta = art.meta or {}
+    if pieces and meta.get("chunkHash") == ch:
+        return  # already chunked this exact content
+    await db.execute(delete(ArtifactChunk).where(ArtifactChunk.artifact_id == art.id))
+    if not pieces or not embeddings.available():
+        if not pieces and meta.get("chunkHash"):
+            art.meta = {**meta, "chunkHash": ""}  # shrank below threshold — forget old chunks
+        return
+    vecs = await embeddings.embed_many(pieces)
+    wrote = 0
+    for i, (piece, vec) in enumerate(zip(pieces, vecs)):
+        if not vec:
+            continue
+        db.add(ArtifactChunk(
+            id=f"ch_{uuid.uuid4().hex[:12]}", workspace_id=art.workspace_id,
+            artifact_id=art.id, source=art.source, chunk_index=i, text=piece, embedding=vec))
+        wrote += 1
+    if wrote:  # only claim the hash once vectors actually landed (else retry next tick)
+        art.meta = {**meta, "chunkHash": ch}
 
 
 SOURCE_BY_INTEGRATION: dict[str, list[str]] = {
@@ -240,6 +300,9 @@ async def ingest_artifact(
     # embeddings are unavailable (AI off / no key) — callers degrade to
     # keyword+recency, and backfill_embeddings fills the gap once AI is on.
     art.embedding = await embeddings.embed_text(_embed_input(art.title, art.content))
+    # Long content: also embed it in overlapping chunks so a passage deep inside
+    # is searchable, not just the opening the single vector above captures.
+    await _write_chunks(db, art)
 
     await db.commit()
     await db.refresh(art)
@@ -366,6 +429,7 @@ async def pull_linear(db, workspace_id: str) -> int:
             existing.meta = meta
             existing.occurred_at = _parse_ts(issue.get("updatedAt")) or existing.occurred_at
             await _reembed_if_images_changed(existing, content, imgs, prev_imgs)
+            await _write_chunks(db, existing)  # rebuild chunks if the discussion grew long
             # Enrich the ownership graph on every refresh (backfills existing issues).
             from .model import link_work_entities
             await link_work_entities(db, workspace_id, existing)
@@ -497,6 +561,7 @@ async def pull_github(db, workspace_id: str) -> int:
             existing.meta = meta
             existing.occurred_at = _parse_ts(item.get("updatedAt")) or existing.occurred_at
             await _reembed_if_images_changed(existing, content, imgs, prev_imgs)
+            await _write_chunks(db, existing)  # rebuild chunks if the discussion grew long
             from .model import link_work_entities
             await link_work_entities(db, workspace_id, existing)
             from .memory import derive_from_artifact
@@ -609,6 +674,13 @@ async def pull_gdrive(db, workspace_id: str) -> int:
                 existing.content = content
                 existing.meta = meta
                 existing.occurred_at = _parse_ts(d.get("modifiedAt")) or existing.occurred_at
+                # A doc's text actually changed — refresh its opening vector AND its
+                # chunks (both fire only on real change, so no per-sync storm).
+                if embeddings.available():
+                    vec = await embeddings.embed_text(_embed_input(existing.title, content))
+                    if vec:
+                        existing.embedding = vec
+                await _write_chunks(db, existing)
             continue
         await ingest_artifact(
             db, workspace_id,
@@ -901,6 +973,31 @@ async def backfill_embeddings(db, workspace_id: str, limit: int = 100) -> int:
     if filled:
         await db.commit()
     return filled
+
+
+async def backfill_chunks(db, workspace_id: str, limit: int = 50) -> int:
+    """Chunk-embed long artifacts that have no chunks yet — rows that predate
+    chunking (or were ingested while AI was off). Same background/write context
+    and bounded-per-tick contract as backfill_embeddings; converges over ticks.
+    Returns how many artifacts were chunked."""
+    if not embeddings.available():
+        return 0
+    chunked = select(ArtifactChunk.artifact_id).where(
+        ArtifactChunk.workspace_id == workspace_id).distinct()
+    rows = (await db.execute(
+        select(Artifact).where(
+            Artifact.workspace_id == workspace_id,
+            func.length(Artifact.content) > _EMBED_WINDOW,
+            Artifact.id.not_in(chunked),
+        ).limit(limit)
+    )).scalars().all()
+    done = 0
+    for a in rows:
+        await _write_chunks(db, a)
+        done += 1
+    if done:
+        await db.commit()
+    return done
 
 
 async def pull_all(db, workspace_id: str) -> dict[str, int]:

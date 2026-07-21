@@ -62,6 +62,19 @@ def _alembic_config(conn):
     return cfg
 
 
+def _ensure_vector_indexes(conn) -> None:
+    """HNSW cosine indexes for every embedded table (Postgres only). Raw DDL, not
+    model-declared, so it must run on both the fresh-create path and the drift
+    repair — without it native similarity search degrades to an unindexed scan.
+    Idempotent."""
+    from sqlalchemy import text
+
+    for table in ("artifacts", "artifact_chunks"):
+        conn.execute(text(
+            f"CREATE INDEX IF NOT EXISTS ix_{table}_embedding ON {table} "
+            "USING hnsw (embedding vector_cosine_ops)"))
+
+
 def _repair_pre_alembic_drift(conn) -> None:
     """Create any missing tables and ALTER in any missing columns after migrations.
 
@@ -74,6 +87,8 @@ def _repair_pre_alembic_drift(conn) -> None:
     from sqlalchemy import inspect, text
 
     Base.metadata.create_all(conn)  # creates missing tables only, never touches existing ones
+    if conn.dialect.name == "postgresql":
+        _ensure_vector_indexes(conn)  # new embedded tables (artifact_chunks) need their HNSW index
     insp = inspect(conn)
     existing_tables = set(insp.get_table_names())
     for table in Base.metadata.sorted_tables:
@@ -115,9 +130,7 @@ def _migrate(conn) -> None:
             # create_all only builds model-declared indexes; the HNSW vector index
             # is raw DDL (migration 0009), so the fresh path must add it too or
             # native similarity search falls back to an unindexed scan.
-            conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_artifacts_embedding ON artifacts "
-                "USING hnsw (embedding vector_cosine_ops)"))
+            _ensure_vector_indexes(conn)
         command.stamp(cfg, "head")
     elif not insp.has_table("alembic_version"):
         command.stamp(cfg, "0001_baseline")

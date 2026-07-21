@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from ..config import settings
 from ..database import SessionLocal
 from ..models import ActivityEvent, Artifact, Entity, Insight, Integration, Workspace
-from .ingestion import backfill_embeddings, pull_all
+from .ingestion import backfill_chunks, backfill_embeddings, pull_all
 from .memory import backfill_embeddings as backfill_memory_embeddings, decay as decay_memories
 from .proposals import dispatch_for_workspace
 from .reasoning import detect_findings, generate_brief
@@ -107,6 +107,7 @@ async def run_now(workspace_id: str, trigger: str = "manual") -> None:
                 message="Building your company model and reasoning across it…",
                 counts={"issues": counts.get("linear", 0)})
             await backfill_embeddings(db, workspace_id, limit=300)  # embed anything not yet vectorized
+            await backfill_chunks(db, workspace_id)  # chunk-embed long docs so deep passages are searchable
             await backfill_memory_embeddings(db, workspace_id)
             await decay_memories(db, workspace_id)       # age-out facts not seen this sync
             await detect_findings(db, workspace_id)
@@ -174,6 +175,7 @@ async def _tick() -> None:
                 logger.warning("auto-pull failed; reasoning on existing memory", exc_info=True)
             try:
                 await backfill_embeddings(db, ws, limit=300)  # keep the vector index populated
+                await backfill_chunks(db, ws)  # chunk-embed long docs so deep passages are searchable
                 await backfill_memory_embeddings(db, ws)
                 await decay_memories(db, ws)        # age-out unverified facts
             except Exception:

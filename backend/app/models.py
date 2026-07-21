@@ -68,6 +68,24 @@ class Artifact(Base):
     embedding: Mapped[list[float] | None] = _embedding_column()
 
 
+class ArtifactChunk(Base):
+    """One embedded slice of a long artifact's content, so semantic search can
+    match a passage buried deep in a document — not just its opening. Short
+    artifacts get NO chunks (their own embedding covers them), so most items
+    (issues, PRs, threads) create zero rows. `source` mirrors the parent so a
+    source-filtered search needs no join; the parent link cascades on delete.
+    Rows are rebuilt whenever the parent's content changes (see _write_chunks)."""
+
+    __tablename__ = "artifact_chunks"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default", index=True)
+    artifact_id: Mapped[str] = mapped_column(String, ForeignKey("artifacts.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, default=0)
+    text: Mapped[str] = mapped_column(Text, default="")
+    embedding: Mapped[list[float] | None] = _embedding_column()
+
+
 class Entity(Base):
     """A node in the company model (Understand) — customer, commitment, feature
     request, person or goal — resolved from artifacts. `state` tracks lifecycle

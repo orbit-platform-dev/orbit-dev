@@ -251,8 +251,11 @@ async def _build_context(db, ws: str, question: str, history: list[dict] | None)
         snapshot += "GOALS:\n" + "\n".join(f"- {g.title}" for g in goals) + "\n\n"
     if insights:
         snapshot += "OPEN SIGNALS:\n" + "\n".join(f"- [{i.kind}] {i.title}" for i in insights) + "\n\n"
+
     evidence = (
-        "EVIDENCE:\n" + "\n\n".join(f"[id: {a.id}] ({a.source}) {a.title}\n{(a.content or '')[:800]}" for a in hits)
+        "EVIDENCE:\n" + "\n\n".join(
+            f"[id: {a.id}] ({a.source}) {a.title}\n{(getattr(a, '_hit_snippet', None) or a.content or '')[:900]}"
+            for a in hits)
         if hits
         else "EVIDENCE: (nothing relevant found in memory)"
     )
