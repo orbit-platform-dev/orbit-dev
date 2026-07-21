@@ -2,20 +2,21 @@
 
 substitutions:
   _REGION: asia-northeast1
-  _AR: orbit                                   # Artifact Registry repo name
-  _API_URL: https://api.your-domain.com        # also the frontend's build-time API URL
+  _AR: orbit                                   
+  _API_URL: https://api.your-domain.com        
   _WEB_URL: https://app.your-domain.com
-  _CLERK_PK: pk_live_replace_me                # frontend Clerk publishable key (build arg)
+  _CLERK_PK: pk_live_replace_me               
+  _TAG: latest                                 
 
 images:
-  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-api:$SHORT_SHA
-  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-web:$SHORT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-api:${_TAG}
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-web:${_TAG}
 
 steps:
   # 1) Build backend image
   - id: build-api
     name: gcr.io/cloud-builders/docker
-    args: ["build", "-t", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-api:$SHORT_SHA", "backend"]
+    args: ["build", "-t", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-api:${_TAG}", "backend"]
 
   # 2) Build frontend image (NEXT_PUBLIC_* are inlined at build time)
   - id: build-web
@@ -23,7 +24,7 @@ steps:
     args:
       - build
       - -t
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-web:$SHORT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-web:${_TAG}
       - --build-arg
       - NEXT_PUBLIC_API_URL=${_API_URL}
       - --build-arg
@@ -33,14 +34,11 @@ steps:
   # 3) Push both
   - id: push-api
     name: gcr.io/cloud-builders/docker
-    args: ["push", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-api:$SHORT_SHA"]
+    args: ["push", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-api:${_TAG}"]
   - id: push-web
     name: gcr.io/cloud-builders/docker
-    args: ["push", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-web:$SHORT_SHA"]
+    args: ["push", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-web:${_TAG}"]
 
-  # 4) Deploy backend — scale-to-zero, heartbeat OFF (Cloud Scheduler drives it),
-  #    secrets pulled from Secret Manager. Add --add-cloudsql-instances only if you
-  #    use Cloud SQL (skip it for Neon/Supabase).
   - id: deploy-api
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
@@ -48,7 +46,7 @@ steps:
       - run
       - deploy
       - orbit-api
-      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-api:$SHORT_SHA
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-api:${_TAG}
       - --region=${_REGION}
       - --platform=managed
       - --allow-unauthenticated
@@ -56,7 +54,7 @@ steps:
       - --max-instances=2
       - --cpu=1
       - --memory=512Mi
-      - --set-env-vars=ENABLE_AI=true,SEED_DEMO=false,HEARTBEAT_ENABLED=false,DEFAULT_MODEL=google-gla:gemini-3-flash-preview,EXTRACTOR_MODEL=google-gla:gemini-flash-latest,FRONTEND_URL=${_WEB_URL},PUBLIC_API_URL=${_API_URL},CORS_ORIGINS=["${_WEB_URL}"]
+      - --set-env-vars=ENABLE_AI=true,SEED_DEMO=false,HEARTBEAT_ENABLED=false,DEFAULT_MODEL=google-gla:gemini-flash-latest,EXTRACTOR_MODEL=google-gla:gemini-flash-lite-latest,FRONTEND_URL=${_WEB_URL},PUBLIC_API_URL=${_API_URL},CORS_ORIGINS=["${_WEB_URL}"]
       - --set-secrets=DATABASE_URL=DATABASE_URL:latest,CLERK_JWKS_URL=CLERK_JWKS_URL:latest,CLERK_ISSUER=CLERK_ISSUER:latest,LLM_API_KEY=LLM_API_KEY:latest,HEARTBEAT_TOKEN=HEARTBEAT_TOKEN:latest,LINEAR_CLIENT_ID=LINEAR_CLIENT_ID:latest,LINEAR_CLIENT_SECRET=LINEAR_CLIENT_SECRET:latest,GITHUB_CLIENT_ID=GITHUB_CLIENT_ID:latest,GITHUB_CLIENT_SECRET=GITHUB_CLIENT_SECRET:latest,SLACK_CLIENT_ID=SLACK_CLIENT_ID:latest,SLACK_CLIENT_SECRET=SLACK_CLIENT_SECRET:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest
 
   # 5) Deploy frontend
@@ -67,7 +65,7 @@ steps:
       - run
       - deploy
       - orbit-web
-      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-web:$SHORT_SHA
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orbit-web:${_TAG}
       - --region=${_REGION}
       - --platform=managed
       - --allow-unauthenticated
