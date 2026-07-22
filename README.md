@@ -1,4 +1,4 @@
 # Orbit
 ## what is orbit ?
 
-The intelligence layer that makes your company AI-native
+AI OS for teams that ship fast 
