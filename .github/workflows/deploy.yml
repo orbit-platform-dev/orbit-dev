@@ -18,7 +18,7 @@ env:
   GCP_DEPLOYER_SA: github-deployer@orbit-501314.iam.gserviceaccount.com
   GCP_WIF_PROVIDER: projects/566106241142/locations/global/workloadIdentityPools/github-pool/providers/github-provider
   API_URL: https://orbit-api-566106241142.asia-northeast1.run.app
-  WEB_URL: https://orbit-web-566106241142.asia-northeast1.run.app
+  WEB_URL: https://app.tryorbit.pro
   CLERK_PK: pk_test_Y2xvc2luZy1kb2Jlcm1hbi05MC5jbGVyay5hY2NvdW50cy5kZXYk
 
 jobs:
