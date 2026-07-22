@@ -4,7 +4,7 @@ substitutions:
   _REGION: asia-northeast1
   _AR: orbit                                   
   _API_URL: https://orbit-api-566106241142.asia-northeast1.run.app        
-  _WEB_URL: https://orbit-web-566106241142.asia-northeast1.run.app
+  _WEB_URL: https://app.tryorbit.pro
   _CLERK_PK: pk_live_replace_me               
   _TAG: latest                                 
 
@@ -59,7 +59,7 @@ steps:
       - --max-instances=2
       - --cpu=1
       - --memory=512Mi
-      - --set-env-vars=ENABLE_AI=true,SEED_DEMO=false,HEARTBEAT_ENABLED=false,DEFAULT_MODEL=google-gla:gemini-flash-lite-latest,EXTRACTOR_MODEL=google-gla:gemini-flash-lite-latest,FRONTEND_URL=${_WEB_URL},PUBLIC_API_URL=${_API_URL},CORS_ORIGINS=["${_WEB_URL}"],CORS_ORIGIN_REGEX=https://orbit-web-.*\.run\.app,SLACK_REDIRECT_URI=${_API_URL}/integrations/slack/oauth/callback,GITHUB_REDIRECT_URI=${_API_URL}/integrations/github/oauth/callback,LINEAR_REDIRECT_URI=${_API_URL}/integrations/linear/oauth/callback,GDRIVE_REDIRECT_URI=${_API_URL}/integrations/google-drive/oauth/callback
+      - --set-env-vars=ENABLE_AI=true,SEED_DEMO=false,HEARTBEAT_ENABLED=false,DEFAULT_MODEL=google-gla:gemini-flash-lite-latest,EXTRACTOR_MODEL=google-gla:gemini-flash-lite-latest,FRONTEND_URL=${_WEB_URL},PUBLIC_API_URL=${_API_URL},CORS_ORIGINS=["${_WEB_URL}"],CORS_ORIGIN_REGEX=https://(orbit-web-.*\.run\.app|([a-z0-9-]+\.)?tryorbit\.pro),SLACK_REDIRECT_URI=${_API_URL}/integrations/slack/oauth/callback,GITHUB_REDIRECT_URI=${_API_URL}/integrations/github/oauth/callback,LINEAR_REDIRECT_URI=${_API_URL}/integrations/linear/oauth/callback,GDRIVE_REDIRECT_URI=${_API_URL}/integrations/google-drive/oauth/callback,GOOGLE_REDIRECT_URI=${_API_URL}/calendar/oauth/callback,MEET_REDIRECT_URI=${_API_URL}/meet/oauth/callback
       - --set-secrets=DATABASE_URL=DATABASE_URL:latest,CLERK_JWKS_URL=CLERK_JWKS_URL:latest,CLERK_ISSUER=CLERK_ISSUER:latest,LLM_API_KEY=LLM_API_KEY:latest,HEARTBEAT_TOKEN=HEARTBEAT_TOKEN:latest,LINEAR_CLIENT_ID=LINEAR_CLIENT_ID:latest,LINEAR_CLIENT_SECRET=LINEAR_CLIENT_SECRET:latest,GITHUB_CLIENT_ID=GITHUB_CLIENT_ID:latest,GITHUB_CLIENT_SECRET=GITHUB_CLIENT_SECRET:latest,SLACK_CLIENT_ID=SLACK_CLIENT_ID:latest,SLACK_CLIENT_SECRET=SLACK_CLIENT_SECRET:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest
 
   - id: deploy-web
