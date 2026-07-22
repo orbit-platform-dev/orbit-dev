@@ -50,7 +50,7 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
         if key is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown signing key")
         claims = jwt.decode(
-            token, key, algorithms=[header.get("alg", "RS256")],
+            token, key, algorithms=["RS256"],  
             issuer=settings.clerk_issuer, options={"verify_aud": False},
         )
         return claims
