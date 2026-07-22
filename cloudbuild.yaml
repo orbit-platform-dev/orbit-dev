@@ -3,8 +3,8 @@
 substitutions:
   _REGION: asia-northeast1
   _AR: orbit                                   
-  _API_URL: https://api.your-domain.com        
-  _WEB_URL: https://app.your-domain.com
+  _API_URL: https://orbit-api-566106241142.asia-northeast1.run.app        
+  _WEB_URL: https://orbit-web-566106241142.asia-northeast1.run.app
   _CLERK_PK: pk_live_replace_me               
   _TAG: latest                                 
 
