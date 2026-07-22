@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=(".env", ".env.local"), env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "Orbit API"
     environment: str = "development"
@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     seed_demo: bool = True
 
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+    cors_origin_regex: str | None = None
 
     clerk_jwks_url: str | None = None
     clerk_issuer: str | None = None
@@ -55,6 +57,7 @@ class Settings(BaseSettings):
     # High-volume structured extraction runs on a cheap, high-quota model so bulk
     # syncs never exhaust the reasoning model's quota. None = use default_model.
     extractor_model: str | None = None
+    agent_model: str | None = None
     llm_api_key: str | None = None
     # Embedding model for the Context Engine's semantic retrieval (uses the
     # same LLM_API_KEY). Output is requested at models.EMBEDDING_DIM dimensions.
@@ -81,6 +84,19 @@ class Settings(BaseSettings):
     def resolved_api_key(self) -> str | None:
         """The API key handed to the configured provider (None for local/Ollama)."""
         return self.llm_api_key or self.anthropic_api_key
+
+    @property
+    def resolved_agent_model(self) -> str:
+        return self.agent_model or self.default_model
+
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        """Configured origins plus the deployed frontend URL, so a correct
+        FRONTEND_URL alone unblocks CORS in production (no double-config)."""
+        origins = list(self.cors_origins)
+        if self.frontend_url and self.frontend_url not in origins:
+            origins.append(self.frontend_url.rstrip("/"))
+        return origins
 
     @property
     def ai_enabled(self) -> bool:

@@ -22,6 +22,14 @@ yarn-error.log*
 **/.env.local
 **/.env.*.local
 !**/.env.example
+# Cloud Run env-vars files hold real DB URLs / API keys — local only.
+**/env-api.yaml
+**/env-*.yaml
+!**/env-*.example.yaml
+# SQLite side files
+*.db-shm
+*.db-wal
+*.db-journal
 
 # Generated / dependency dirs (belt-and-suspenders)
 **/__pycache__/

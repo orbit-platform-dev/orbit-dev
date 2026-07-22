@@ -32,6 +32,12 @@ _MAX_CHARS = 6000  # embedding models truncate anyway; keep requests lean
 _QUOTA_COOLDOWN_S = 60.0
 _paused_until = 0.0
 
+# Same text → same vector (deterministic), so a bounded cache lets one question
+# be embedded once even though recall, per-team + per-user directives and the
+# agent's first search all ask for it — cutting 3-4 identical round-trips a turn.
+_CACHE_MAX = 512
+_vec_cache: dict[tuple[str, str], list[float]] = {}
+
 
 def _paused() -> bool:
     return time.monotonic() < _paused_until
@@ -50,6 +56,10 @@ async def embed_text(text: str, *, task: str = "RETRIEVAL_DOCUMENT") -> list[flo
     """One text → one vector, or None when embeddings can't be produced."""
     if not available() or not (text or "").strip():
         return None
+    key = (task, text[:_MAX_CHARS])
+    cached = _vec_cache.get(key)
+    if cached is not None:
+        return cached
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             res = await client.post(
@@ -65,7 +75,12 @@ async def embed_text(text: str, *, task: str = "RETRIEVAL_DOCUMENT") -> list[flo
             logger.warning("embedding request failed (%s): %s", res.status_code, res.text[:150])
             return None
         values = res.json().get("embedding", {}).get("values")
-        return values if values and len(values) == EMBEDDING_DIM else None
+        if not (values and len(values) == EMBEDDING_DIM):
+            return None
+        if len(_vec_cache) >= _CACHE_MAX:
+            _vec_cache.pop(next(iter(_vec_cache)), None)
+        _vec_cache[key] = values
+        return values
     except Exception:
         logger.warning("embedding request errored", exc_info=True)
         return None

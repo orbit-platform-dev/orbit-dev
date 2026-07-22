@@ -44,6 +44,7 @@ const PHASE_COPY: Record<string, string> = {
   retrieving: "Searching company memory…",
   reasoning: "Reasoning over the evidence…",
   drafting: "Drafting a ticket…",
+  remembering: "Committing that to memory…",
 };
 
 function phaseLabel(phase: string | null): string {

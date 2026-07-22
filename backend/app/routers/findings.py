@@ -81,7 +81,7 @@ async def get_feed(db=Depends(get_db), ws: str = Depends(get_workspace_id)):
 
 
 @router.get("/learning", response_model=list[CorrectionOut])
-async def learning(limit: int = 20, db=Depends(get_db), ws: str = Depends(get_workspace_id)):
+async def list_learning(limit: int = 20, db=Depends(get_db), ws: str = Depends(get_workspace_id)):
     """What Orbit has learned: the recent human corrections (edits + dismissals)
     that now shape future extraction and recommendations."""
     return (await db.execute(select(Feedback).where(Feedback.workspace_id == ws)
