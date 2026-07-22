@@ -1,0 +1,18 @@
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - NEXT_PUBLIC_API_URL=${_API_URL}
+      - --build-arg
+      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${_CLERK_PK}
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}
+substitutions:
+  _API_URL: http://localhost:8000
+  _CLERK_PK: ""
+  _IMAGE: us-central1-docker.pkg.dev/${PROJECT_ID}/orbit/web:latest
