@@ -3,20 +3,23 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useSignIn } from "@clerk/nextjs";
+import { useTranslation } from "react-i18next";
 import { ArrowRight } from "lucide-react";
 import { AuthShell } from "./auth-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-function clerkError(err: unknown): string {
+type T = (key: string, opts?: Record<string, unknown>) => string;
+
+function clerkError(err: unknown, t: T): string {
   const e = err as { errors?: { longMessage?: string; message?: string; code?: string }[] };
   const first = e?.errors?.[0];
   // Invite-only: an unknown identifier means no account exists.
   if (first?.code === "form_identifier_not_found") {
-    return "No Orbit account found for that email. Orbit is invite-only — ask your workspace admin for access.";
+    return t("auth.errorNoAccount");
   }
-  return first?.longMessage || first?.message || "Something went wrong. Please try again.";
+  return first?.longMessage || first?.message || t("auth.errorGeneric");
 }
 
 /**
@@ -26,6 +29,7 @@ function clerkError(err: unknown): string {
  */
 export function AuthScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const { isLoaded, signIn, setActive } = useSignIn();
   const [step, setStep] = React.useState<"email" | "code">("email");
   const [email, setEmail] = React.useState("");
@@ -45,13 +49,13 @@ export function AuthScreen() {
         (f): f is Extract<typeof f, { strategy: "email_code" }> => f.strategy === "email_code",
       );
       if (!factor) {
-        setError("This account can't sign in with an email code. Try Google, or contact your admin.");
+        setError(t("auth.errorNoEmailCode"));
         return;
       }
       await signIn.prepareFirstFactor({ strategy: "email_code", emailAddressId: factor.emailAddressId });
       setStep("code");
     } catch (err) {
-      setError(clerkError(err));
+      setError(clerkError(err, t));
     } finally {
       setBusy(false);
     }
@@ -69,10 +73,10 @@ export function AuthScreen() {
         await setActive({ session: res.createdSessionId });
         router.push("/feed");
       } else {
-        setError(`Sign-in couldn't complete (status: ${res.status}).`);
+        setError(t("auth.errorIncomplete", { status: res.status }));
       }
     } catch (err) {
-      setError(clerkError(err));
+      setError(clerkError(err, t));
     } finally {
       setBusy(false);
     }
@@ -88,26 +92,26 @@ export function AuthScreen() {
         redirectUrlComplete: "/feed",
       });
     } catch (err) {
-      setError(clerkError(err));
+      setError(clerkError(err, t));
     }
   };
 
   return (
     <AuthShell>
-      <h2 className="text-2xl font-semibold tracking-tight">Sign in to Orbit</h2>
+      <h2 className="text-2xl font-semibold tracking-tight">{t("auth.title")}</h2>
       <p className="mt-1.5 text-sm text-muted-foreground">
-        {step === "email" ? "Use your work email or Google." : `Enter the 6-digit code we emailed to ${email}.`}
+        {step === "email" ? t("auth.subtitleEmail") : t("auth.subtitleCode", { email })}
       </p>
 
       {step === "email" ? (
         <>
           <form className="mt-6 space-y-4" onSubmit={sendCode}>
             <div className="space-y-1.5">
-              <Label htmlFor="email">Work email</Label>
+              <Label htmlFor="email">{t("auth.workEmail")}</Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="you@company.com"
+                placeholder={t("auth.emailPlaceholder")}
                 autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -116,23 +120,23 @@ export function AuthScreen() {
             </div>
             {error && <ErrorNote>{error}</ErrorNote>}
             <Button type="submit" className="w-full gap-2" disabled={!isLoaded || busy}>
-              {busy ? "Sending code…" : "Continue with email"}
+              {busy ? t("auth.sending") : t("auth.continueEmail")}
               {!busy && <ArrowRight className="h-4 w-4" />}
             </Button>
           </form>
 
           <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
-            <div className="h-px flex-1 bg-border" /> OR <div className="h-px flex-1 bg-border" />
+            <div className="h-px flex-1 bg-border" /> {t("auth.or")} <div className="h-px flex-1 bg-border" />
           </div>
 
           <Button variant="outline" className="w-full gap-2" onClick={signInWithGoogle} disabled={!isLoaded}>
-            <GoogleMark /> Continue with Google
+            <GoogleMark /> {t("auth.continueGoogle")}
           </Button>
         </>
       ) : (
         <form className="mt-6 space-y-4" onSubmit={verifyCode}>
           <div className="space-y-1.5">
-            <Label htmlFor="code">Sign-in code</Label>
+            <Label htmlFor="code">{t("auth.signInCode")}</Label>
             <Input
               id="code"
               inputMode="numeric"
@@ -146,7 +150,7 @@ export function AuthScreen() {
           </div>
           {error && <ErrorNote>{error}</ErrorNote>}
           <Button type="submit" className="w-full gap-2" disabled={!isLoaded || busy}>
-            {busy ? "Verifying…" : "Verify & sign in"}
+            {busy ? t("auth.verifying") : t("auth.verify")}
             {!busy && <ArrowRight className="h-4 w-4" />}
           </Button>
           <button
@@ -154,13 +158,13 @@ export function AuthScreen() {
             onClick={() => { setStep("email"); setCode(""); setError(null); }}
             className="w-full text-center text-sm text-muted-foreground hover:text-foreground"
           >
-            Use a different email
+            {t("auth.differentEmail")}
           </button>
         </form>
       )}
 
       <p className="mt-6 text-center text-xs text-muted-foreground">
-        Orbit is invite-only. Ask your workspace admin for access.
+        {t("auth.inviteOnly")}
       </p>
       {/* Bot-protection mount point (harmless when disabled). */}
       <div id="clerk-captcha" />

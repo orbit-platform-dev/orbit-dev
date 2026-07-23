@@ -1,0 +1,68 @@
+{
+  "nav": {
+    "feed": "フィード",
+    "chat": "Orbitに質問",
+    "memory": "メモリ",
+    "integrations": "連携",
+    "settings": "設定"
+  },
+  "topbar": {
+    "search": "検索…",
+    "workspace": "ワークスペース",
+    "profile": "プロフィール",
+    "settings": "設定",
+    "signOut": "サインアウト",
+    "language": "言語",
+    "toggleTheme": "テーマを切り替え"
+  },
+  "command": {
+    "placeholder": "移動先…",
+    "empty": "結果が見つかりません。",
+    "navigate": "移動",
+    "toSelect": "選択",
+    "title": "Orbit コマンド"
+  },
+  "feedback": {
+    "open": "フィードバックを送る",
+    "title": "フィードバックを送る",
+    "subtitle": "不具合やご要望はありますか？すべて拝見しています。",
+    "bug": "不具合",
+    "feature": "機能リクエスト",
+    "other": "その他",
+    "descPlaceholder": "何が起きましたか？またはご要望をお聞かせください。",
+    "addScreenshot": "スクリーンショットを追加（任意）",
+    "remove": "削除",
+    "imageOnly": "画像ファイルを選択してください。",
+    "imageTooBig": "画像が大きすぎます（最大8MB）。",
+    "sendingAs": "送信元: {{email}}",
+    "cancel": "キャンセル",
+    "send": "送信",
+    "sending": "送信中…",
+    "success": "ありがとうございます！レポートを送信しました。",
+    "error": "送信できませんでした。もう一度お試しください。",
+    "hintTitle": "ヒント",
+    "hintBody": "不具合やアイデアがあれば、いつでも + ボタンからお知らせください。",
+    "hintCta": "フィードバックを送る",
+    "dismissHint": "閉じる"
+  },
+  "auth": {
+    "title": "Orbitにサインイン",
+    "subtitleEmail": "仕事用メールまたはGoogleでサインインしてください。",
+    "subtitleCode": "{{email}} に送信した6桁のコードを入力してください。",
+    "workEmail": "仕事用メール",
+    "emailPlaceholder": "you@company.com",
+    "sending": "コードを送信中…",
+    "continueEmail": "メールで続行",
+    "or": "または",
+    "continueGoogle": "Googleで続行",
+    "signInCode": "サインインコード",
+    "verifying": "確認中…",
+    "verify": "確認してサインイン",
+    "differentEmail": "別のメールを使用",
+    "inviteOnly": "Orbitは招待制です。アクセスはワークスペース管理者にお問い合わせください。",
+    "errorNoAccount": "そのメールアドレスのOrbitアカウントが見つかりません。Orbitは招待制です。ワークスペース管理者にアクセスを依頼してください。",
+    "errorGeneric": "問題が発生しました。もう一度お試しください。",
+    "errorNoEmailCode": "このアカウントはメールコードでサインインできません。Googleをお試しになるか、管理者にお問い合わせください。",
+    "errorIncomplete": "サインインを完了できませんでした（ステータス: {{status}}）。"
+  }
+}

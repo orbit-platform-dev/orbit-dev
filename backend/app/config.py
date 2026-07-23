@@ -52,19 +52,20 @@ class Settings(BaseSettings):
     github_client_secret: str | None = None
     github_redirect_uri: str = "http://localhost:8000/integrations/github/oauth/callback"
 
+    orbit_linear_api_key: str | None = None
+    orbit_linear_team_id: str | None = None          
+    orbit_linear_label: str = "MVP Requests"
+
     enable_ai: bool = False
     default_model: str = "google-gla:gemini-2.0-flash"
-    # High-volume structured extraction runs on a cheap, high-quota model so bulk
-    # syncs never exhaust the reasoning model's quota. None = use default_model.
+
     extractor_model: str | None = None
     agent_model: str | None = None
     llm_api_key: str | None = None
-    # Embedding model for the Context Engine's semantic retrieval (uses the
-    # same LLM_API_KEY). Output is requested at models.EMBEDDING_DIM dimensions.
-    embedding_model: str = "gemini-embedding-001"
-    ollama_base_url: str | None = None  # defaults to http://localhost:11434/v1
 
-    # Back-compat: a bare ANTHROPIC_API_KEY is still accepted as the LLM key.
+    embedding_model: str = "gemini-embedding-001"
+    ollama_base_url: str | None = None  
+
     anthropic_api_key: str | None = None
 
     # --- Heartbeat (the OS loop) ----------------------------------------------
@@ -76,8 +77,7 @@ class Settings(BaseSettings):
     heartbeat_enabled: bool = False
     heartbeat_interval_minutes: int = 30
     brief_max_age_days: int = 7
-    # Shared secret for POST /internal/heartbeat. Set it to run the loop from Cloud
-    # Scheduler with HEARTBEAT_ENABLED=false (scale-to-zero, no always-on instance).
+
     heartbeat_token: str | None = None
 
     @property

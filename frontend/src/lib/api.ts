@@ -74,11 +74,19 @@ export const getEntities = (kind?: string) =>
   live<Entity[]>(`/entities${kind ? `?kind=${kind}` : ""}`);
 export const getEntity = (id: string) => live<EntityDetail>(`/entities/${id}`);
 
-// --- Ask Orbit (reasoning layer over company memory; private per-user chats) --
 export const sendChat = (body: { message: string; conversationId?: string | null }) =>
   send<ChatAnswer>("/chat", "POST", body);
 
-// In-chat ticket drafts: where they can go, and edit / approve-to-create.
+export interface FeedbackInput {
+  category: "bug" | "feature" | "other";
+  description: string;
+  email?: string;
+  image?: string | null;      
+  imageName?: string | null;
+}
+export const submitFeedback = (body: FeedbackInput) =>
+  send<{ identifier: string; url: string }>("/feedback", "POST", body);
+
 export const getTicketTargets = () => live<TicketTargets>("/chat/ticket-targets");
 export const editChatAction = (
   cid: string,

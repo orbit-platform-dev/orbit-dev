@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 
 export interface NavItem {
-  label: string;
+  key: string;
   href: string;
   icon: LucideIcon;
 }
@@ -25,15 +25,15 @@ export interface NavSection {
 export const navSections: NavSection[] = [
   {
     items: [
-      { label: "Feed", href: "/feed", icon: Sparkles },
-      { label: "Ask Orbit", href: "/chat", icon: MessagesSquare },
-      { label: "Memory", href: "/memory", icon: Database },
+      { key: "nav.feed", href: "/feed", icon: Sparkles },
+      { key: "nav.chat", href: "/chat", icon: MessagesSquare },
+      { key: "nav.memory", href: "/memory", icon: Database },
     ],
   },
   {
     items: [
-      { label: "Integrations", href: "/integrations", icon: Plug },
-      { label: "Settings", href: "/settings", icon: Settings },
+      { key: "nav.integrations", href: "/integrations", icon: Plug },
+      { key: "nav.settings", href: "/settings", icon: Settings },
     ],
   },
 ];

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
+import { useTranslation } from "react-i18next";
 import { ArrowRight, CornerDownLeft, Search } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { allNavItems } from "@/lib/nav";
@@ -12,6 +13,7 @@ export const OPEN_COMMAND_EVENT = "orbit:command-open";
 export function CommandMenu() {
   const [open, setOpen] = React.useState(false);
   const router = useRouter();
+  const { t } = useTranslation();
 
   React.useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -42,26 +44,26 @@ export function CommandMenu() {
           <div className="flex items-center gap-2 border-b border-border px-3">
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             <Command.Input
-              placeholder="Jump to…"
+              placeholder={t("command.placeholder")}
               className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             />
             <kbd className="hidden rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">ESC</kbd>
           </div>
           <Command.List className="max-h-[60vh] overflow-y-auto p-2">
-            <Command.Empty className="py-8 text-center text-sm text-muted-foreground">No results found.</Command.Empty>
-            <Command.Group heading="Navigate">
+            <Command.Empty className="py-8 text-center text-sm text-muted-foreground">{t("command.empty")}</Command.Empty>
+            <Command.Group heading={t("command.navigate")}>
               {allNavItems.map((item) => (
                 <Item key={item.href} onSelect={() => go(item.href)} icon={<item.icon className="h-4 w-4" />}>
-                  {item.label}
+                  {t(item.key)}
                 </Item>
               ))}
             </Command.Group>
           </Command.List>
           <div className="flex items-center justify-between border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1">
-              <CornerDownLeft className="h-3 w-3" /> to select
+              <CornerDownLeft className="h-3 w-3" /> {t("command.toSelect")}
             </span>
-            <span>Orbit Command</span>
+            <span>{t("command.title")}</span>
           </div>
         </Command>
       </DialogContent>

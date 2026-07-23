@@ -4,11 +4,13 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
+import { useTranslation } from "react-i18next";
 import { LogOut, Menu, Moon, Search, Settings, Sun, User } from "lucide-react";
 import { useUser, useClerk, useOrganization } from "@clerk/nextjs";
 import { allNavItems } from "@/lib/nav";
 import { Button } from "@/components/ui/button";
 import { UserAvatar } from "@/components/ui/avatar";
+import { LanguageSwitcher } from "@/components/shared/language-switcher";
 import { OrbitWordmark } from "@/components/shared/logo";
 import {
   DropdownMenu,
@@ -26,13 +28,15 @@ function useBreadcrumb() {
   const pathname = usePathname();
   const seg = pathname.split("/").filter(Boolean)[0] ?? "feed";
   const item = allNavItems.find((i) => i.href === `/${seg}`);
-  return item?.label ?? seg.charAt(0).toUpperCase() + seg.slice(1);
+  return { key: item?.key, seg };
 }
 
 export function Topbar() {
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const { theme, setTheme } = useTheme();
-  const crumb = useBreadcrumb();
+  const { t } = useTranslation();
+  const { key: crumbKey, seg } = useBreadcrumb();
+  const crumb = crumbKey ? t(crumbKey) : seg.charAt(0).toUpperCase() + seg.slice(1);
   const { user } = useUser();
   const { signOut } = useClerk();
   const { organization } = useOrganization();
@@ -41,7 +45,7 @@ export function Topbar() {
   const email = user?.primaryEmailAddress?.emailAddress ?? "";
   // Everyone belongs to exactly one workspace (Orbit for the team, their own for
   // a customer). There is no switching, so we just show its name.
-  const workspaceName = organization?.name ?? "Workspace";
+  const workspaceName = organization?.name ?? t("topbar.workspace");
 
   const openCommand = () => window.dispatchEvent(new Event(OPEN_COMMAND_EVENT));
 
@@ -69,14 +73,15 @@ export function Topbar() {
         className="ml-auto flex h-9 w-full max-w-xs items-center gap-2 rounded-lg border border-border bg-card/40 px-3 text-sm text-muted-foreground transition-colors hover:border-border hover:bg-card/70 lg:ml-4 lg:mr-auto lg:max-w-sm"
       >
         <Search className="h-4 w-4" />
-        <span className="flex-1 text-left">Search…</span>
+        <span className="flex-1 text-left">{t("topbar.search")}</span>
         <kbd className="hidden rounded border border-border px-1.5 py-0.5 text-[10px] sm:inline">⌘K</kbd>
       </button>
 
       <div className="flex items-center gap-1">
         <SyncControl />
         <div className="mx-1 hidden h-5 w-px bg-border md:block" />
-        <Button variant="ghost" size="icon-sm" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">
+        <LanguageSwitcher />
+        <Button variant="ghost" size="icon-sm" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={t("topbar.toggleTheme")}>
           <Sun className="hidden h-4 w-4 dark:block" />
           <Moon className="block h-4 w-4 dark:hidden" />
         </Button>
@@ -99,14 +104,14 @@ export function Topbar() {
 
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <Link href="/settings"><User className="h-4 w-4" />Profile</Link>
+              <Link href="/settings"><User className="h-4 w-4" />{t("topbar.profile")}</Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
-              <Link href="/settings"><Settings className="h-4 w-4" />Settings</Link>
+              <Link href="/settings"><Settings className="h-4 w-4" />{t("topbar.settings")}</Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => signOut({ redirectUrl: "/sign-in" })}>
-              <LogOut className="h-4 w-4" />Sign out
+              <LogOut className="h-4 w-4" />{t("topbar.signOut")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

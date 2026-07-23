@@ -4,6 +4,7 @@ import { CommandMenu } from "@/components/layout/command-menu";
 import { AppAmbient } from "@/components/layout/ambient";
 import { RequireWorkspace } from "@/components/layout/require-workspace";
 import { SyncEffects } from "@/components/shared/sync-effects";
+import { FeedbackWidget } from "@/components/shared/feedback-widget";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -22,6 +23,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <CommandMenu />
+      <FeedbackWidget />
     </div>
   );
 }

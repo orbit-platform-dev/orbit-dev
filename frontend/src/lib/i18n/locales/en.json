@@ -1,0 +1,68 @@
+{
+  "nav": {
+    "feed": "Feed",
+    "chat": "Ask Orbit",
+    "memory": "Memory",
+    "integrations": "Integrations",
+    "settings": "Settings"
+  },
+  "topbar": {
+    "search": "Search…",
+    "workspace": "Workspace",
+    "profile": "Profile",
+    "settings": "Settings",
+    "signOut": "Sign out",
+    "language": "Language",
+    "toggleTheme": "Toggle theme"
+  },
+  "command": {
+    "placeholder": "Jump to…",
+    "empty": "No results found.",
+    "navigate": "Navigate",
+    "toSelect": "to select",
+    "title": "Orbit Command"
+  },
+  "feedback": {
+    "open": "Send feedback",
+    "title": "Send feedback",
+    "subtitle": "Found a bug or have an idea? We read every report.",
+    "bug": "Bug",
+    "feature": "Feature request",
+    "other": "Other",
+    "descPlaceholder": "What happened, or what would you like to see?",
+    "addScreenshot": "Add a screenshot (optional)",
+    "remove": "Remove",
+    "imageOnly": "Please choose an image file.",
+    "imageTooBig": "That image is too large (max 8MB).",
+    "sendingAs": "Sending as {{email}}",
+    "cancel": "Cancel",
+    "send": "Send report",
+    "sending": "Sending…",
+    "success": "Thanks! Your report was sent.",
+    "error": "Couldn't send your report. Please try again.",
+    "hintTitle": "Quick tip",
+    "hintBody": "Found a bug or have an idea? Tap the + button any time to tell us.",
+    "hintCta": "Send feedback",
+    "dismissHint": "Dismiss"
+  },
+  "auth": {
+    "title": "Sign in to Orbit",
+    "subtitleEmail": "Use your work email or Google.",
+    "subtitleCode": "Enter the 6-digit code we emailed to {{email}}.",
+    "workEmail": "Work email",
+    "emailPlaceholder": "you@company.com",
+    "sending": "Sending code…",
+    "continueEmail": "Continue with email",
+    "or": "OR",
+    "continueGoogle": "Continue with Google",
+    "signInCode": "Sign-in code",
+    "verifying": "Verifying…",
+    "verify": "Verify & sign in",
+    "differentEmail": "Use a different email",
+    "inviteOnly": "Orbit is invite-only. Ask your workspace admin for access.",
+    "errorNoAccount": "No Orbit account found for that email. Orbit is invite-only — ask your workspace admin for access.",
+    "errorGeneric": "Something went wrong. Please try again.",
+    "errorNoEmailCode": "This account can't sign in with an email code. Try Google, or contact your admin.",
+    "errorIncomplete": "Sign-in couldn't complete (status: {{status}})."
+  }
+}

@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
+import { useTranslation } from "react-i18next";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { navSections } from "@/lib/nav";
 import { cn } from "@/lib/utils";
@@ -14,6 +15,7 @@ const COLLAPSE_KEY = "orbit-sidebar-collapsed";
 
 export function Sidebar({ onNavigate, collapsible = true }: { onNavigate?: () => void; collapsible?: boolean }) {
   const pathname = usePathname();
+  const { t } = useTranslation();
   const [collapsed, setCollapsed] = React.useState(false);
 
   React.useEffect(() => {
@@ -83,7 +85,7 @@ export function Sidebar({ onNavigate, collapsible = true }: { onNavigate?: () =>
                   key={item.href}
                   href={item.href}
                   onClick={onNavigate}
-                  title={collapsed ? item.label : undefined}
+                  title={collapsed ? t(item.key) : undefined}
                   className={cn(
                     "group relative flex items-center rounded-lg py-2 text-sm font-medium transition-colors",
                     collapsed ? "justify-center px-0" : "gap-2.5 px-2",
@@ -98,7 +100,7 @@ export function Sidebar({ onNavigate, collapsible = true }: { onNavigate?: () =>
                     />
                   )}
                   <item.icon className={cn("h-4 w-4 shrink-0", active && "text-primary")} />
-                  {!collapsed && <span className="flex-1">{item.label}</span>}
+                  {!collapsed && <span className="flex-1">{t(item.key)}</span>}
                 </Link>
               );
             })}

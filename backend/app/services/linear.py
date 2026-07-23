@@ -235,14 +235,59 @@ async def list_teams(auth: str) -> list[dict[str, str]]:
     return [{"id": t["id"], "name": t["name"], "key": t.get("key", "")} for t in data["teams"]["nodes"]]
 
 
-async def create_issue(auth: str, title: str, description: str, team_id: str | None = None) -> dict[str, str]:
+async def create_issue(auth: str, title: str, description: str, team_id: str | None = None,
+                       label_ids: list[str] | None = None) -> dict[str, str]:
     """Really creates the issue (in team_id, or the first team). Returns identifier + URL."""
     team_id = team_id or await _first_team_id(auth)
+    issue_input: dict[str, Any] = {"teamId": team_id, "title": title[:255], "description": description}
+    if label_ids:
+        issue_input["labelIds"] = label_ids
     data = await _gql(auth, """
       mutation($input: IssueCreateInput!) {
         issueCreate(input: $input) { success issue { identifier url } }
-      }""", {"input": {"teamId": team_id, "title": title[:255], "description": description}})
+      }""", {"input": issue_input})
     created = data["issueCreate"]
     if not created["success"]:
         raise RuntimeError("Linear refused to create the issue")
     return {"identifier": created["issue"]["identifier"], "url": created["issue"]["url"]}
+
+
+async def find_or_create_label(auth: str, team_id: str, name: str) -> str | None:
+    """Label id for `name` (case-insensitive), creating it on the team if absent.
+    Returns None on failure so the caller can still file the issue unlabeled."""
+    try:
+        data = await _gql(auth, "{ issueLabels(first: 250) { nodes { id name } } }")
+        for n in data["issueLabels"]["nodes"]:
+            if (n.get("name") or "").strip().lower() == name.strip().lower():
+                return n["id"]
+        created = await _gql(auth, """
+          mutation($input: IssueLabelCreateInput!) {
+            issueLabelCreate(input: $input) { success issueLabel { id } }
+          }""", {"input": {"name": name, "teamId": team_id}})
+        lbl = created["issueLabelCreate"]
+        return lbl["issueLabel"]["id"] if lbl.get("success") else None
+    except Exception:
+        return None
+
+
+async def upload_file(auth: str, filename: str, content_type: str, data: bytes) -> str | None:
+    """Upload bytes to Linear's asset store (2-step: reserve URL → PUT), returning
+    the asset URL to embed as `![](url)` in an issue. None on any failure."""
+    try:
+        res = await _gql(auth, """
+          mutation($contentType: String!, $filename: String!, $size: Int!) {
+            fileUpload(contentType: $contentType, filename: $filename, size: $size) {
+              success uploadFile { uploadUrl assetUrl headers { key value } }
+            }
+          }""", {"contentType": content_type, "filename": filename, "size": len(data)})
+        up = res.get("fileUpload") or {}
+        if not up.get("success"):
+            return None
+        uf = up["uploadFile"]
+        headers = {h["key"]: h["value"] for h in (uf.get("headers") or [])}
+        headers["Content-Type"] = content_type
+        async with httpx.AsyncClient(timeout=30) as client:
+            put = await client.put(uf["uploadUrl"], content=data, headers=headers)
+        return uf["assetUrl"] if put.status_code in (200, 201, 204) else None
+    except Exception:
+        return None
