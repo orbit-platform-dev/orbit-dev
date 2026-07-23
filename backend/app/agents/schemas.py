@@ -53,6 +53,29 @@ class DraftedProposal(_Camel):
     title: str = Field(description="a short, specific title for the proposal")
     body: str = Field(description="the proposal as markdown a human can review, edit and approve")
 
+class GeneratedSpec(_Camel):
+    """Orbit's recommended response to a finding. The agent first DECIDES what the
+    finding actually needs (action_type) — not everything is code — then shapes the
+    detail accordingly. Grounded in retrieved company context."""
+
+    action_type: str = Field(
+        description="the response Orbit decided this finding needs: 'code' (a code change) | 'investigate' "
+        "(root-cause unclear, look into it first) | 'coordinate' (a process/ownership action: assign, "
+        "prioritize, unblock, split, close) | 'communicate' (tell a customer or team) | 'decision' (a human "
+        "must make a call)")
+    title: str = Field(description="concise, specific title for the recommended action")
+    why: str = Field(description="1-2 sentences: the promise/gap/drift/finding this came from")
+    what: str = Field(description="1-3 sentences on the recommended response")
+    done_when: list[str] = Field(default_factory=list, description="acceptance criteria, each a checkable outcome")
+    context: list[str] = Field(default_factory=list,
+                               description="relevant identifiers, PRs, docs, people and constraints from company memory")
+    agent_spec: str = Field(
+        description="the FULL recommended action as markdown, shaped by action_type. When action_type='code': "
+        "a prompt to paste into Cursor/Claude Code — '# Task', '## Objective', '## Investigate first' (tell it "
+        "to explore the repo and locate the code; never fabricate file paths), '## Requirements', "
+        "'## Acceptance criteria', '## Constraints & out of scope'. Otherwise: the concrete plan, drafted "
+        "message, or framed decision (with options + a recommendation) — clear headings and numbered steps")
+
 
 class IntelligenceBrief(_Camel):
     """The periodic company brief — what leadership should know right now."""

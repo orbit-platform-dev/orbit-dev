@@ -87,6 +87,19 @@ export interface FeedbackInput {
 export const submitFeedback = (body: FeedbackInput) =>
   send<{ identifier: string; url: string }>("/feedback", "POST", body);
 
+export interface GeneratedSpec {
+  actionType: "code" | "investigate" | "coordinate" | "communicate" | "decision";
+  title: string;
+  why: string;
+  what: string;
+  doneWhen: string[];
+  context: string[];
+  agentSpec: string;
+}
+
+export const generateSpec = (body: { title: string; description?: string; findingId?: string }) =>
+  send<GeneratedSpec>("/spec", "POST", body);
+
 export const getTicketTargets = () => live<TicketTargets>("/chat/ticket-targets");
 export const editChatAction = (
   cid: string,
@@ -110,8 +123,6 @@ export interface ChatStreamHandlers {
   onError: (message: string) => void;
 }
 
-// Token-streamed answer (SSE over fetch). Abort via `signal` stops generation;
-// an aborted stream is not persisted server-side.
 export async function streamChat(
   body: { message: string; conversationId?: string | null },
   h: ChatStreamHandlers,

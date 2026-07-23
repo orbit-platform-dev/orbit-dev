@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -14,8 +15,10 @@ import {
   RefreshCw,
   Sparkles,
   TrendingUp,
+  Wand2,
   type LucideIcon,
 } from "lucide-react";
+import { SpecDrawer } from "@/components/shared/spec-drawer";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Card } from "@/components/ui/card";
@@ -127,9 +130,11 @@ function EvidenceChips({ finding }: { finding: Finding }) {
 
 function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => void }) {
   const qc = useQueryClient();
+  const { t } = useTranslation();
   const action = finding.action;
   const [title, setTitle] = useState(action?.title ?? "");
   const [description, setDescription] = useState(action?.description ?? "");
+  const [specOpen, setSpecOpen] = useState(false);
   const approved = finding.status === "approved";
   const hasAction = action?.type === "create-linear-issue";
 
@@ -156,8 +161,13 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
   });
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl">
+    <>
+    <Dialog open modal={!specOpen} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent
+        className="max-w-2xl"
+        onInteractOutside={(e) => { if (specOpen) e.preventDefault(); }}
+        onPointerDownOutside={(e) => { if (specOpen) e.preventDefault(); }}
+      >
         <DialogHeader>
           <div className="flex items-center gap-2"><KindChip kind={finding.kind} /></div>
           <DialogTitle className="pt-1 text-[17px] leading-snug">{finding.title}</DialogTitle>
@@ -233,6 +243,9 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
         )}
 
         <DialogFooter>
+          <Button variant="ghost" className="mr-auto gap-2" onClick={() => setSpecOpen(true)}>
+            <Wand2 className="h-4 w-4" /> {t("spec.generate")}
+          </Button>
           {!approved && <Button variant="ghost" onClick={() => dismiss.mutate()} disabled={dismiss.isPending}>Dismiss</Button>}
           {hasAction && !approved && (
             <Button onClick={() => approve.mutate()} disabled={approve.isPending || !title.trim()}>
@@ -243,6 +256,12 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <SpecDrawer
+      open={specOpen}
+      onOpenChange={setSpecOpen}
+      source={{ title: title || finding.title, description: description || finding.detail, findingId: finding.id }}
+    />
+    </>
   );
 }
 

@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useTranslation } from "react-i18next";
 import {
   ArrowUp,
   ArrowUpRight,
@@ -19,9 +20,11 @@ import {
   ThumbsUp,
   Ticket,
   Trash2,
+  Wand2,
   X,
 } from "lucide-react";
 import * as api from "@/lib/api";
+import { SpecDrawer } from "@/components/shared/spec-drawer";
 import type { ChatCitation, ChatDraft, ChatMessage } from "@/lib/types";
 import { rankFinding, sourceKey } from "@/lib/sources";
 import { useFeed } from "@/lib/hooks";
@@ -92,6 +95,8 @@ function DraftCard({ draft, conversationId }: { draft: ChatDraft; conversationId
   const [d, setD] = React.useState<ChatDraft>(draft);
   const [creating, setCreating] = React.useState(false);
   const [dismissed, setDismissed] = React.useState(false);
+  const [specOpen, setSpecOpen] = React.useState(false);
+  const { t } = useTranslation();
   const saved = React.useRef({ title: draft.title, description: draft.description });
 
   const editable = d.status === "pending";
@@ -147,6 +152,7 @@ function DraftCard({ draft, conversationId }: { draft: ChatDraft; conversationId
   const created = d.status === "created" && d.result?.url;
 
   return (
+    <>
     <div className="mt-3 overflow-hidden rounded-xl border border-border bg-card shadow-sm animate-in fade-in slide-in-from-bottom-1 duration-300">
       <div className="flex items-center gap-2 border-b border-border/70 bg-muted/40 px-3 py-2">
         <IntegrationLogo k={d.connector} className="h-4 w-4 rounded-[4px] border-0" />
@@ -240,6 +246,9 @@ function DraftCard({ draft, conversationId }: { draft: ChatDraft; conversationId
               {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
               {creating ? "Creating…" : "Approve & create"}
             </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSpecOpen(true)}>
+              <Wand2 className="h-3.5 w-3.5" /> {t("spec.generate")}
+            </Button>
             <Button size="sm" variant="ghost" onClick={dismiss} disabled={creating}>
               <X className="h-3.5 w-3.5" /> Dismiss
             </Button>
@@ -247,6 +256,8 @@ function DraftCard({ draft, conversationId }: { draft: ChatDraft; conversationId
         )}
       </div>
     </div>
+    <SpecDrawer open={specOpen} onOpenChange={setSpecOpen} source={{ title: d.title, description: d.description }} />
+    </>
   );
 }
 
