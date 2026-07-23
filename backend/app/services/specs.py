@@ -17,8 +17,8 @@ from .model import search_artifacts
 
 logger = logging.getLogger("orbit.specs")
 
-_CONTEXT_RELEVANCE = 0.68   # a bit looser than chat — we want nearby files/PRs, not just exact hits
-_CONTEXT_K = 6
+_CONTEXT_RELEVANCE = 0.60   
+_CONTEXT_K = 10
 
 
 async def _retrieve_context(db, ws: str, query: str) -> list[dict]:
@@ -31,7 +31,7 @@ async def _retrieve_context(db, ws: str, query: str) -> list[dict]:
     hits = await search_artifacts(db, ws, qv, k=_CONTEXT_K, max_distance=1.0 - _CONTEXT_RELEVANCE)
     out: list[dict] = []
     for art, _score in hits:
-        snippet = getattr(art, "_hit_snippet", None) or (art.content or "")[:400]
+        snippet = getattr(art, "_hit_snippet", None) or (art.content or "")[:1200]
         out.append({"source": art.source, "title": art.title, "ref": art.external_ref,
                     "url": art.url, "snippet": snippet.strip()})
     return out
@@ -45,7 +45,7 @@ def _context_block(ctx: list[dict]) -> str:
         head = f"- [{c['source']}] {c['title']}" + (f" ({c['ref']})" if c.get("ref") else "")
         if c.get("url"):
             head += f" {c['url']}"
-        lines.append(head + (f"\n  {c['snippet'][:300]}" if c.get("snippet") else ""))
+        lines.append(head + (f"\n  {c['snippet'][:800]}" if c.get("snippet") else ""))
     return "\n".join(lines)
 
 

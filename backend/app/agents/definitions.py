@@ -104,8 +104,12 @@ SYSTEM_PROMPTS: dict[str, str] = {
         "   • coordinate: '# Action', '## Who' (owner), '## Steps' (concrete moves), '## By when'.\n"
         "   • communicate: '# Message', '## To', a ready-to-send draft, '## Why now'.\n"
         "   • decision: '# Decision needed', '## Context', '## Options' (with tradeoffs), '## Recommendation'.\n\n"
-        "Ground the 'why' and every identifier STRICTLY in CONTEXT; never invent names, files, PRs, metrics "
-        "or scope. Be specific and decisive — this is a draft a human reviews and approves."
+        "QUALITY BAR — a short, generic spec is a FAILURE. Be thorough and concrete: derive MULTIPLE "
+        "specific requirements and acceptance criteria from the FINDING and CONTEXT, and name the exact items "
+        "by their real identifiers (e.g. DEV-1259, PR #123) and titles. If the finding is an aggregate (many "
+        "items), the action is to triage/prioritize — list the specific items and how to group and route them, "
+        "not one vague line. Ground the 'why' and every identifier STRICTLY in CONTEXT; never invent names, "
+        "files, PRs, metrics or scope — but give the depth a senior engineer or operator actually would."
     ),
 
     "orbit-agent": (
