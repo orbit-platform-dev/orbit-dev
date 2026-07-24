@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
+import { McpCard } from "@/components/integrations/mcp-card";
 import { useIntegrations, qk } from "@/lib/hooks";
 import * as api from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -293,6 +294,8 @@ export default function IntegrationsPage() {
           {filtered.map((i) => <IntegrationRow key={i.key} integration={i} onConnect={onConnect} />)}
         </div>
       )}
+
+      <McpCard />
 
       <KeyConnectDialog
         provider={dialogProvider}

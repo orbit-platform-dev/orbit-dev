@@ -219,3 +219,11 @@ export const getOAuthUrl = (key: string) =>
 // push-based connectors like Circleback, which deliver meetings to this URL.
 export const getWebhookUrl = (key: string) =>
   live<{ url: string; note: string }>(`/integrations/${key}/webhook`);
+
+// --- MCP (external AI agents) -----------------------------------------------
+export type McpStatus = { configured: boolean; endpoint: string };
+export type McpKeyIssued = { key: string; endpoint: string; command: string };
+export const getMcpStatus = () => live<McpStatus>("/integrations/mcp");
+// The plaintext key is returned ONCE; only its hash is stored server-side.
+export const generateMcpKey = () => send<McpKeyIssued>("/integrations/mcp/key", "POST");
+export const revokeMcpKey = () => send<McpStatus>("/integrations/mcp/key", "DELETE");

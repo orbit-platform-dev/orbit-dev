@@ -14,32 +14,31 @@ The MCP surface follows the OS loop like the product does:
   approval — no agent ever writes company memory directly. Everything else is
   read-only; approvals stay in the product.
 
-Auth (v1, honest about its limits):
-- MCP_API_KEY set  → every request needs `Authorization: Bearer <key>`; the
-  workspace defaults to ws_default and can be chosen per client with an
-  `X-Orbit-Workspace` header. One shared key means any key-holder can name any
-  workspace — fine for a single-company deployment, NOT for shared SaaS.
-  Per-workspace keys are the v2 step.
-- MCP_API_KEY unset → served only when Clerk auth is ALSO off (local dev). On
-  a Clerk-protected deployment the endpoint refuses instead of exposing
-  company memory unauthenticated.
+Auth — the bearer key IS the tenant credential:
+- Per-workspace keys (generated in Integrations, stored as SHA-256): the
+  workspace is resolved FROM the key; client headers are never trusted, so a
+  customer's key can only ever open that customer's workspace.
+- MCP_API_KEY (operator-held ops key, Secret Manager): may select a workspace
+  via X-Orbit-Workspace — never distribute it.
+- Both unset + Clerk off (local dev): open access to ws_default.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
+import secrets
 import uuid
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from mcp.server.fastmcp import FastMCP
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from .config import settings
 from .database import SessionLocal
-from .models import Insight, McpQuery
+from .models import Insight, McpQuery, Workspace
 
 logger = logging.getLogger("orbit.mcp")
 
@@ -53,8 +52,9 @@ mcp = FastMCP(
         "(Linear, GitHub, Slack, Google Drive, customer calls) plus facts it has learned. "
         "Use search_memory for anything about the company, its customers, decisions, or work "
         "in flight; learned_facts for ownership/decisions/policies; open_findings for what "
-        "currently needs attention. Cite the [id: …] items you actually used. If you learn a "
-        "durable company fact during your session, propose_fact stages it for human approval."
+        "currently needs attention. Cite the [id: …] items you actually used. If memory can't "
+        "answer or the user needs current state, pull_connector fetches fresh data — then search "
+        "again. If you learn a durable company fact, propose_fact stages it for human approval."
     ),
     stateless_http=True,   
     json_response=True,    
@@ -154,18 +154,39 @@ async def learned_facts(query: str) -> str:
 
 
 @mcp.tool()
+async def pull_connector(name: str) -> str:
+    """Fetch FRESH data from a connected tool when memory can't answer or the
+    user needs current state. `name` is one of linear | github | slack |
+    google-drive. After it succeeds, call search_memory again. A big pull keeps
+    syncing in the background — answer from current memory and retry shortly."""
+    from .agents import orbit_agent
+
+    async with SessionLocal() as db:
+        return await orbit_agent.pull_connector(_ctx(db), name)
+
+
+_MAX_OPEN_PROPOSALS = 20  # flood guard: agents can't bury the feed in proposals
+
+
+@mcp.tool()
 async def propose_fact(fact: str, subject: str = "", why: str = "") -> str:
     """Propose a durable company fact you learned this session — ownership, a
     decision, a policy, a deadline. This only STAGES the fact on Orbit's feed for
     a human to approve; nothing is written to memory until then. `subject` is the
     slot the fact is about (e.g. 'billing owner' or 'ENG-231'); `why` is one line
     of context on where the fact came from."""
-    fact = (fact or "").strip()
+    fact = (fact or "").strip()[:1000]
     if not fact:
         return "Nothing to propose."
     dedupe = f"agent-fact:{hashlib.md5(fact.lower().encode()).hexdigest()[:12]}"
     async with SessionLocal() as db:
         ws = _workspace.get()
+        open_props = (await db.execute(select(func.count()).select_from(Insight).where(
+            Insight.workspace_id == ws, Insight.kind == "note",
+            Insight.status == "open"))).scalar_one()
+        if open_props >= _MAX_OPEN_PROPOSALS:
+            return ("Too many proposals are already awaiting review — "
+                    "ask a human to triage the Orbit feed first.")
         existing = (await db.execute(select(Insight).where(
             Insight.workspace_id == ws, Insight.dedupe_key == dedupe,
             Insight.status.in_(("open", "approved", "dismissed"))))).scalars().first()
@@ -177,11 +198,11 @@ async def propose_fact(fact: str, subject: str = "", why: str = "") -> str:
         db.add(Insight(
             id=f"in_{uuid.uuid4().hex[:10]}", workspace_id=ws, origin="model", kind="note",
             title=f"An agent proposed remembering: {fact[:150]}",
-            detail=(why or "").strip(),
+            detail=(why or "").strip()[:500],
             entity_ids=[], artifact_ids=[], evidence={}, status="open",
             created_at=datetime.now(timezone.utc), dedupe_key=dedupe,
             action={"type": "remember-fact", "title": fact,
-                    "description": (why or "").strip(), "subject": (subject or "").strip()},
+                    "description": (why or "").strip()[:500], "subject": (subject or "").strip()[:200]},
         ))
         await db.commit()
     return "Staged for human approval on the Orbit feed. It becomes memory only if approved."
@@ -231,8 +252,31 @@ def _denied(status: int, message: str):
     return app
 
 
+def hash_key(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+async def _resolve_workspace(headers: dict[str, str]) -> str | None:
+    """The bearer key IS the tenant credential: a per-workspace key opens ONLY
+    its own workspace (client headers are never trusted). The ops key
+    (MCP_API_KEY, operator-held) may select one via X-Orbit-Workspace; with
+    auth fully off (local dev) everything lands on ws_default. None = reject."""
+    supplied = headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if supplied:
+        if settings.mcp_api_key and secrets.compare_digest(supplied, settings.mcp_api_key):
+            return headers.get("x-orbit-workspace", "ws_default")
+        async with SessionLocal() as db:
+            ws = (await db.execute(select(Workspace.id).where(
+                Workspace.mcp_key_hash == hash_key(supplied)))).scalar_one_or_none()
+        if ws:
+            return ws
+    if not settings.mcp_api_key and not settings.clerk_jwks_url:
+        return "ws_default"
+    return None
+
+
 def build_asgi_app():
-    """The mountable ASGI app: bearer-key gate + workspace header → MCP server."""
+    """The mountable ASGI app: resolve the tenant from the bearer key → MCP server."""
     inner = mcp.streamable_http_app()
 
     async def guarded(scope, receive, send):
@@ -241,16 +285,12 @@ def build_asgi_app():
             return
         headers = {k.decode("latin-1").lower(): v.decode("latin-1")
                    for k, v in scope.get("headers", [])}
-        key = settings.mcp_api_key
-        if key:
-            supplied = headers.get("authorization", "")
-            if supplied.removeprefix("Bearer ").strip() != key:
-                await _denied(401, "Missing or invalid Authorization bearer key.")(scope, receive, send)
-                return
-        elif settings.clerk_jwks_url:
-            await _denied(503, "MCP is not configured: set MCP_API_KEY on the server.")(scope, receive, send)
+        ws = await _resolve_workspace(headers)
+        if ws is None:
+            await _denied(401, "Missing or invalid Authorization bearer key. "
+                               "Generate a workspace key in Orbit → Integrations.")(scope, receive, send)
             return
-        _workspace.set(headers.get("x-orbit-workspace", "ws_default"))
+        _workspace.set(ws)
         await inner(scope, receive, send)
 
     return guarded
@@ -275,7 +315,7 @@ class MCPDispatch:
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http" and (scope["path"] == "/mcp" or scope["path"].startswith("/mcp/")):
             scope = dict(scope)
-            scope["path"] = "/"  # the inner server serves its single endpoint at "/"
+            scope["path"] = "/"  
             await asgi_app(scope, receive, send)
             return
         await self.app(scope, receive, send)

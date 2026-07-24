@@ -45,6 +45,9 @@ class Workspace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     auto_sync: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
     embedding_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    # SHA-256 of this workspace's MCP key. The key IS the tenant credential:
+    # /mcp resolves the workspace from it and trusts no client-supplied header.
+    mcp_key_hash: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
 
 class Artifact(Base):

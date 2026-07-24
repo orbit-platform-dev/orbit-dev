@@ -14,6 +14,7 @@ export const qk = {
   entity: (id: string) => ["entity", id] as const,
   integrations: ["integrations"] as const,
   heartbeat: ["heartbeat"] as const,
+  mcp: ["mcp"] as const,
 };
 
 export const useFeed = () => useQuery({ queryKey: qk.feed, queryFn: api.getFeed, refetchInterval: 20000 });
@@ -25,6 +26,8 @@ export const useEntity = (id: string) =>
   useQuery({ queryKey: qk.entity(id), queryFn: () => api.getEntity(id), enabled: !!id });
 export const useIntegrations = () =>
   useQuery({ queryKey: qk.integrations, queryFn: api.getIntegrations });
+export const useMcpStatus = () =>
+  useQuery({ queryKey: qk.mcp, queryFn: api.getMcpStatus });
 export const useHeartbeat = () =>
   useQuery({
     queryKey: qk.heartbeat,

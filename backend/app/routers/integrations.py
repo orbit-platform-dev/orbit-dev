@@ -6,9 +6,10 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from .. import mcp_server
 from ..config import settings
 from ..deps import Depends, get_current_user, get_db
-from ..models import Integration
+from ..models import Integration, Workspace
 from ..schemas import IntegrationOut
 from ..seed import ensure_integrations
 from ..services import circleback, fireflies, github, google_drive, heartbeat, ingestion, linear, slack
@@ -190,3 +191,45 @@ async def disconnect(key: str, db=Depends(get_db), ws: str = Depends(get_workspa
     await db.commit()
     await db.refresh(integ)
     return integ
+
+
+# --- MCP: this workspace's key for external AI agents (Claude Code, Cursor) --
+def _mcp_endpoint() -> str:
+    return f"{(settings.public_api_url or 'http://localhost:8000').rstrip('/')}/mcp"
+
+
+@router.get("/mcp")
+async def mcp_status(db=Depends(get_db), ws: str = Depends(get_workspace_id),
+                     _=Depends(get_current_user)):
+    row = await db.get(Workspace, ws)
+    return {"configured": bool(row and row.mcp_key_hash), "endpoint": _mcp_endpoint()}
+
+
+@router.post("/mcp/key")
+async def mcp_generate_key(db=Depends(get_db), ws: str = Depends(get_workspace_id),
+                           _=Depends(get_current_user)):
+    """Generate (or rotate) this workspace's MCP key. The key is the tenant
+    credential — /mcp resolves the workspace from it. Stored hashed; the
+    plaintext is returned ONCE and cannot be recovered, only rotated."""
+    row = await db.get(Workspace, ws)
+    if not row:
+        raise HTTPException(404, "Workspace not found")
+    key = f"orbit_mcp_{secrets.token_hex(20)}"
+    row.mcp_key_hash = mcp_server.hash_key(key)
+    await db.commit()
+    return {
+        "key": key,
+        "endpoint": _mcp_endpoint(),
+        "command": (f'claude mcp add --transport http orbit {_mcp_endpoint()} '
+                    f'--header "Authorization: Bearer {key}"'),
+    }
+
+
+@router.delete("/mcp/key")
+async def mcp_revoke_key(db=Depends(get_db), ws: str = Depends(get_workspace_id),
+                         _=Depends(get_current_user)):
+    row = await db.get(Workspace, ws)
+    if row:
+        row.mcp_key_hash = None
+        await db.commit()
+    return {"configured": False, "endpoint": _mcp_endpoint()}
