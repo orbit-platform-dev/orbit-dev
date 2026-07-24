@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import func, select
 
 from .config import settings
@@ -56,9 +57,10 @@ mcp = FastMCP(
         "answer or the user needs current state, pull_connector fetches fresh data — then search "
         "again. If you learn a durable company fact, propose_fact stages it for human approval."
     ),
-    stateless_http=True,   
-    json_response=True,    
-    streamable_http_path="/", 
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 
