@@ -131,7 +131,8 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
   const [title, setTitle] = useState(action?.title ?? "");
   const [description, setDescription] = useState(action?.description ?? "");
   const approved = finding.status === "approved";
-  const hasAction = action?.type === "create-linear-issue";
+  const isMemory = action?.type === "remember-fact"; // agent-proposed fact: approve = write to company memory
+  const hasAction = action?.type === "create-linear-issue" || isMemory;
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: qk.feed });
@@ -146,8 +147,12 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
       }
       return api.approveFinding(finding.id);
     },
-    onSuccess: (f) => { invalidate(); toast.success(`Created ${f.action?.result?.identifier ?? "the Linear issue"}`); onClose(); },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not create the issue"),
+    onSuccess: (f) => {
+      invalidate();
+      toast.success(isMemory ? "Saved to company memory" : `Created ${f.action?.result?.identifier ?? "the Linear issue"}`);
+      onClose();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : (isMemory ? "Could not save the fact" : "Could not create the issue")),
   });
   const dismiss = useMutation({
     mutationFn: () => api.dismissFinding(finding.id),
@@ -209,15 +214,23 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
 
         {hasAction && !approved && (
           <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/[0.04] p-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-primary">Recommended action · Create Linear issue</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-primary">
+              {isMemory ? "Proposed memory · Remember this fact" : "Recommended action · Create Linear issue"}
+            </div>
             <div className="space-y-1.5">
-              <Label htmlFor="act-title">Title</Label>
+              <Label htmlFor="act-title">{isMemory ? "Fact" : "Title"}</Label>
               <Input id="act-title" value={title} onChange={(e) => setTitle(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="act-desc">Description</Label>
+              <Label htmlFor="act-desc">{isMemory ? "Context" : "Description"}</Label>
               <Textarea id="act-desc" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} />
             </div>
+          </div>
+        )}
+
+        {approved && isMemory && (
+          <div className="rounded-lg border border-success/20 bg-success/[0.06] p-3 text-sm text-success">
+            Approved · saved to company memory
           </div>
         )}
 
@@ -236,7 +249,7 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
           {!approved && <Button variant="ghost" onClick={() => dismiss.mutate()} disabled={dismiss.isPending}>Dismiss</Button>}
           {hasAction && !approved && (
             <Button onClick={() => approve.mutate()} disabled={approve.isPending || !title.trim()}>
-              {approve.isPending ? "Creating…" : "Approve & create"}
+              {approve.isPending ? (isMemory ? "Saving…" : "Creating…") : (isMemory ? "Approve & remember" : "Approve & create")}
             </Button>
           )}
           {(approved || !hasAction) && <Button variant="outline" onClick={onClose}>Close</Button>}

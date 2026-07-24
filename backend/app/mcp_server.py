@@ -6,8 +6,13 @@ agent uses — semantic search, learned facts, the entity graph, live stats, and
 open findings — so coding agents work with real company context, not just the
 repo in front of them.
 
-v1 is strictly READ-ONLY: no ticket drafting, no fact writes, no approvals.
-Humans approve things in the product; agents only get eyes.
+The MCP surface follows the OS loop like the product does:
+- Observe: every agent question is logged (query text + hit count, never the
+  results), so unanswerable questions become a memory-gap signal the reasoner
+  turns into findings ("agents keep asking about X; memory has nothing").
+- Propose, never force: `propose_fact` STAGES a fact as a feed item for human
+  approval — no agent ever writes company memory directly. Everything else is
+  read-only; approvals stay in the product.
 
 Auth (v1, honest about its limits):
 - MCP_API_KEY set  → every request needs `Authorization: Bearer <key>`; the
@@ -21,9 +26,12 @@ Auth (v1, honest about its limits):
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import uuid
 from contextvars import ContextVar
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from mcp.server.fastmcp import FastMCP
@@ -31,7 +39,7 @@ from sqlalchemy import select
 
 from .config import settings
 from .database import SessionLocal
-from .models import Insight
+from .models import Insight, McpQuery
 
 logger = logging.getLogger("orbit.mcp")
 
@@ -45,7 +53,8 @@ mcp = FastMCP(
         "(Linear, GitHub, Slack, Google Drive, customer calls) plus facts it has learned. "
         "Use search_memory for anything about the company, its customers, decisions, or work "
         "in flight; learned_facts for ownership/decisions/policies; open_findings for what "
-        "currently needs attention. Cite the [id: …] items you actually used."
+        "currently needs attention. Cite the [id: …] items you actually used. If you learn a "
+        "durable company fact during your session, propose_fact stages it for human approval."
     ),
     stateless_http=True,   
     json_response=True,    
@@ -62,6 +71,23 @@ def _ctx(db) -> SimpleNamespace:
     return SimpleNamespace(deps=ChatDeps(db=db, ws=_workspace.get(), uid="mcp"))
 
 
+async def _observed(tool: str, query: str, call) -> str:
+    """Run one of the chat agent's tools and log the interaction (Observe): the
+    query and how much memory answered it — never the results. hits==0 rows feed
+    the reasoner's memory-gap detector."""
+    async with SessionLocal() as db:
+        ctx = _ctx(db)
+        out = await call(ctx)
+        # Ledger = items a search actually returned; tools that don't use it
+        # (graph, facts) signal a miss with a "No …" reply.
+        hits = len(ctx.deps.ledger) or (0 if out.startswith("No ") else 1)
+        db.add(McpQuery(id=f"mq_{uuid.uuid4().hex[:10]}", workspace_id=_workspace.get(),
+                        tool=tool, query=query[:2000], hits=hits,
+                        created_at=datetime.now(timezone.utc)))
+        await db.commit()
+        return out
+
+
 @mcp.tool()
 async def search_memory(query: str, sources: list[str] | None = None, k: int = 8) -> str:
     """Semantic search over the company's unified memory — calls, documents, Linear
@@ -70,8 +96,8 @@ async def search_memory(query: str, sources: list[str] | None = None, k: int = 8
     with [id: …] and a snippet."""
     from .agents import orbit_agent
 
-    async with SessionLocal() as db:
-        return await orbit_agent.search_memory(_ctx(db), query, sources, k)
+    return await _observed("search_memory", query,
+                           lambda ctx: orbit_agent.search_memory(ctx, query, sources, k))
 
 
 @mcp.tool()
@@ -90,8 +116,8 @@ async def person_work(name: str) -> str:
     created — the reliable answer to 'what is X working on'."""
     from .agents import orbit_agent
 
-    async with SessionLocal() as db:
-        return await orbit_agent.person_work(_ctx(db), name)
+    return await _observed("person_work", name,
+                           lambda ctx: orbit_agent.person_work(ctx, name))
 
 
 @mcp.tool()
@@ -101,8 +127,8 @@ async def graph_neighbors(entity: str) -> str:
     which commitment."""
     from .agents import orbit_agent
 
-    async with SessionLocal() as db:
-        return await orbit_agent.graph_neighbors(_ctx(db), entity)
+    return await _observed("graph_neighbors", entity,
+                           lambda ctx: orbit_agent.graph_neighbors(ctx, entity))
 
 
 @mcp.tool()
@@ -123,8 +149,42 @@ async def learned_facts(query: str) -> str:
     who-owns / who-decided / how-things-were questions."""
     from .agents import orbit_agent
 
+    return await _observed("learned_facts", query,
+                           lambda ctx: orbit_agent.learned_facts(ctx, query))
+
+
+@mcp.tool()
+async def propose_fact(fact: str, subject: str = "", why: str = "") -> str:
+    """Propose a durable company fact you learned this session — ownership, a
+    decision, a policy, a deadline. This only STAGES the fact on Orbit's feed for
+    a human to approve; nothing is written to memory until then. `subject` is the
+    slot the fact is about (e.g. 'billing owner' or 'ENG-231'); `why` is one line
+    of context on where the fact came from."""
+    fact = (fact or "").strip()
+    if not fact:
+        return "Nothing to propose."
+    dedupe = f"agent-fact:{hashlib.md5(fact.lower().encode()).hexdigest()[:12]}"
     async with SessionLocal() as db:
-        return await orbit_agent.learned_facts(_ctx(db), query)
+        ws = _workspace.get()
+        existing = (await db.execute(select(Insight).where(
+            Insight.workspace_id == ws, Insight.dedupe_key == dedupe,
+            Insight.status.in_(("open", "approved", "dismissed"))))).scalars().first()
+        if existing:
+            return {"open": "Already proposed — awaiting human review on the feed.",
+                    "approved": "Already approved and remembered.",
+                    "dismissed": "A human already dismissed this exact proposal; do not re-propose it."
+                    }[existing.status]
+        db.add(Insight(
+            id=f"in_{uuid.uuid4().hex[:10]}", workspace_id=ws, origin="model", kind="note",
+            title=f"An agent proposed remembering: {fact[:150]}",
+            detail=(why or "").strip(),
+            entity_ids=[], artifact_ids=[], evidence={}, status="open",
+            created_at=datetime.now(timezone.utc), dedupe_key=dedupe,
+            action={"type": "remember-fact", "title": fact,
+                    "description": (why or "").strip(), "subject": (subject or "").strip()},
+        ))
+        await db.commit()
+    return "Staged for human approval on the Orbit feed. It becomes memory only if approved."
 
 
 @mcp.tool()

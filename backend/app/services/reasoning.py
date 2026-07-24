@@ -11,6 +11,7 @@ commitment delivered) | brief (the Reasoner narrative).
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -24,8 +25,10 @@ from .model import text_match
 
 logger = logging.getLogger("orbit.reasoning")
 
-_UNREQUESTED_THRESHOLD = 3  # only flag unlinked work once it's a real cluster
-_STALE_PR_DAYS = 7          # open non-draft PR older than this = review bottleneck
+_UNREQUESTED_THRESHOLD = 3  
+_STALE_PR_DAYS = 7          
+_MCP_GAP_REPEATS = 2        
+_MCP_GAP_WINDOW_DAYS = 14
 
 
 def _now() -> datetime:
@@ -229,6 +232,35 @@ async def detect_findings(db, ws: str) -> int:
             "artifact_ids": [art.id], "action": None,
         })
 
+    # 8) OBSERVE the observers: questions external agents asked over MCP that
+    #    memory could not answer are a mapped knowledge gap — repeated ⇒ surface.
+    from ..agents.orbit_agent import _STOPWORDS, _toks
+    from ..models import McpQuery
+    window_start = _now() - timedelta(days=_MCP_GAP_WINDOW_DAYS)
+    misses = (await db.execute(select(McpQuery).where(
+        McpQuery.workspace_id == ws, McpQuery.hits == 0))).scalars().all()
+    by_question: dict[str, list[McpQuery]] = {}
+    for q in misses:
+        at = q.created_at
+        if at and at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        toks = sorted(_toks(q.query) - _STOPWORDS)
+        if not toks or not at or at < window_start:
+            continue
+        by_question.setdefault(" ".join(toks), []).append(q)
+    for key, qs in by_question.items():
+        if len(qs) < _MCP_GAP_REPEATS:
+            continue
+        latest = max(qs, key=lambda q: q.created_at)
+        desired.append({
+            "dedupe_key": f"mcp-gap:{hashlib.md5(key.encode()).hexdigest()[:12]}", "kind": "gap",
+            "title": f'Agents keep asking: "{_clip(latest.query, 70)}" — memory has no answer',
+            "detail": (f"Asked {len(qs)} times over MCP in the last {_MCP_GAP_WINDOW_DAYS} days "
+                       "with zero matching memory. Connect the tool or add the call/document "
+                       "that answers it."),
+            "entity_ids": [], "artifact_ids": [], "action": None,
+        })
+
     corrections = await render_corrections(db, ws)
     await _upsert(db, ws, desired, corrections)
     open_count = (await db.execute(select(Insight).where(
@@ -263,7 +295,7 @@ async def _upsert(db, ws: str, desired: list[dict], corrections: str = "") -> No
     and a human-edited action is preserved across scans."""
     existing = (await db.execute(select(Insight).where(
         Insight.workspace_id == ws, Insight.origin == "model",
-        Insight.kind != "brief",  # the brief is not a detector finding — never resolve it here
+        Insight.kind.notin_(("brief", "note")),
         Insight.status.in_(("open", "dismissed", "approved"))))).scalars().all()
     by_open = {i.dedupe_key: i for i in existing if i.dedupe_key and i.status == "open"}
     blocked = {i.dedupe_key for i in existing if i.dedupe_key and i.status in ("dismissed", "approved")}

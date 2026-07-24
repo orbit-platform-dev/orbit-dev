@@ -18,7 +18,7 @@ from sqlalchemy import select
 from ..deps import Depends, get_current_user, get_db
 from ..models import ActivityEvent, Artifact, Entity, Feedback, Insight, Workspace
 from ..schemas import ArtifactOut, BriefOut, CorrectionOut, EntityOut, FeedOut, FindingOut
-from ..services import heartbeat, learning, tickets
+from ..services import heartbeat, learning, memory, tickets
 from ..services.workspace import get_workspace_id
 
 router = APIRouter(tags=["feed"])
@@ -129,11 +129,32 @@ async def _get_finding(db, ws: str, finding_id: str) -> Insight:
 async def approve_finding(finding_id: str, db=Depends(get_db), ws: str = Depends(get_workspace_id),
                           user=Depends(get_current_user)):
     """Approve a recommendation: perform its prepared action, then record it.
-    Today the only real action is creating a Linear issue."""
+    Actions: create a Linear issue, or remember an agent-proposed fact."""
     f = await _get_finding(db, ws, finding_id)
     if f.status != "open":
         raise HTTPException(409, "This finding has already been actioned")
     action = f.action or {}
+
+    if action.get("type") == "remember-fact":
+        # An MCP agent proposed this fact; approval is the moment it becomes memory.
+        mem = await memory.record(
+            db, ws, fact=action.get("title", ""), kind="note",
+            subject=action.get("subject", ""),
+            source_ref=f"MCP agent · approved by {user.get('name', 'a human')}",
+            importance=0.7, base_confidence=0.85)
+        if mem is None:
+            raise HTTPException(422, "The proposed fact is empty")
+        f.action = {**action, "result": {"memoryId": mem.id}}
+        f.status = "approved"
+        db.add(ActivityEvent(
+            id=f"ac_{uuid.uuid4().hex[:8]}",
+            actor={"name": user.get("name", "You"), "isAgent": False}, action="approved",
+            target=f"Remembered: {action.get('title', '')[:80]}",
+            target_type="finding", at=datetime.now(timezone.utc),
+        ))
+        await db.commit()
+        return await _to_finding_out(db, f)
+
     if action.get("type") != "create-linear-issue":
         raise HTTPException(422, "This finding has no action to approve")
 
@@ -174,7 +195,7 @@ async def edit_finding(finding_id: str, body: EditFindingIn, db=Depends(get_db),
     if f.status != "open":
         raise HTTPException(409, "This finding has already been actioned")
     action = dict(f.action or {})
-    if action.get("type") != "create-linear-issue":
+    if action.get("type") not in ("create-linear-issue", "remember-fact"):
         raise HTTPException(422, "This finding has no editable action")
     for field, key in (("title", "title"), ("description", "description")):
         value = getattr(body, field)

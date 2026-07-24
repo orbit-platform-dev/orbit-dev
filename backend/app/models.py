@@ -231,6 +231,21 @@ class ChatConversation(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class McpQuery(Base):
+    """One external-agent question asked through the MCP surface (Observe).
+    Logged so the reasoner can spot repeated questions memory could NOT answer
+    (hits == 0) — every MCP consumer becomes a sensor for what the company's
+    memory is missing. Query text only; no results are stored."""
+
+    __tablename__ = "mcp_queries"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="ws_default", server_default="ws_default", index=True)
+    tool: Mapped[str] = mapped_column(String)
+    query: Mapped[str] = mapped_column(Text, default="")
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class Memory(Base):
     """A distilled company FACT with confidence + lifecycle (Phase 3). Facts are
     derived from artifacts (their extraction + structured meta), deduplicated by
