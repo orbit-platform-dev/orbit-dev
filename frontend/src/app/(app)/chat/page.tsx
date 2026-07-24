@@ -49,8 +49,20 @@ const PHASE_COPY: Record<string, string> = {
 
 function phaseLabel(phase: string | null): string {
   if (!phase) return "Thinking…";
-  if (phase.startsWith("pulling:")) return `Checking ${phase.slice(8)} for the latest…`;
+  if (phase.startsWith("pulling:")) return `Pulling fresh data from ${phase.slice(8)} — big syncs can take a minute…`;
   return PHASE_COPY[phase] ?? "Thinking…";
+}
+
+function PhaseStatus({ phase, className }: { phase: string | null; className?: string }) {
+  return (
+    <div className={cn("flex h-7 items-center gap-2 text-sm text-muted-foreground", className)}>
+      <span className="relative flex h-2 w-2">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+      </span>
+      <span className="animate-pulse">{phaseLabel(phase)}</span>
+    </div>
+  );
 }
 
 type Msg = ChatMessage & {
@@ -381,19 +393,18 @@ function AssistantMessage({
       <OrbitAvatar thinking={m.streaming} />
       <div className="min-w-0 flex-1 pt-0.5">
         {waiting ? (
-          <div className="flex h-7 items-center gap-2 text-sm text-muted-foreground">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-            </span>
-            {phaseLabel(phase)}
-          </div>
+          <PhaseStatus phase={phase} />
         ) : (
           <>
             {m.thinking ? (
               <ThinkingBlock text={m.thinking} active={!!m.streaming && !m.content} seconds={m.thoughtFor} />
             ) : null}
-            <Prose>{m.streaming ? m.content + " ▍" : m.content}</Prose>
+            {m.streaming && !m.content ? (
+              // Long tool steps happen AFTER thinking streams — keep the live
+              // status visible until the first answer token, never a bare cursor.
+              <PhaseStatus phase={phase} className="mt-2 animate-in fade-in duration-300" />
+            ) : null}
+            {m.content ? <Prose>{m.streaming ? m.content + " ▍" : m.content}</Prose> : null}
             {m.stopped ? (
               <div className="mt-2 text-xs text-muted-foreground">Stopped — this answer wasn&apos;t saved to history.</div>
             ) : null}

@@ -286,10 +286,7 @@ async def learned_facts(ctx: RunContext[ChatDeps], query: str) -> str:
         for m, _ in mems)
 
 
-# A chat turn can't wait minutes for a heavy pull (Drive exports, vision) —
-# beyond this, the pull keeps running in the background and the agent answers
-# from current memory, saying fresher data is on its way.
-_PULL_WAIT_S = 45
+_PULL_WAIT_S = 240
 
 
 async def _pull_own_session(ws: str, connector: str) -> int:
