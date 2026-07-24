@@ -286,9 +286,11 @@ async def learned_facts(ctx: RunContext[ChatDeps], query: str) -> str:
 
 
 async def pull_connector(ctx: RunContext[ChatDeps], name: str) -> str:
-    """Fetch FRESH data from a connected tool when memory can't answer the question.
-    `name` is one of linear | github | slack | google-drive. After it succeeds, call
-    search_memory again to use the newly-ingested data."""
+    """Fetch FRESH data from a connected tool when memory can't answer the question,
+    or whenever the user explicitly asks to pull / refresh / re-check / re-sync —
+    their instruction always wins over tool-economy rules. `name` is one of
+    linear | github | slack | google-drive. After it succeeds, call search_memory
+    again to use the newly-ingested data."""
     name = (name or "").strip().lower()
     connected = await _connected_pullable(ctx.deps.db, ctx.deps.ws)
     if name not in connected:
