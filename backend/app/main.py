@@ -18,9 +18,16 @@ async def lifespan(app: FastAPI):
     from .database import SessionLocal
     from .services import embeddings
     from .services.workspace import ensure_workspace_rows
-    async with SessionLocal() as db:
-        await ensure_workspace_rows(db)
-        await embeddings.ensure_vector_space(db)
+    # Best-effort: these self-heal on the next boot; a busy DB (locks held by a
+    # long sync) must never prevent the app from starting and serving.
+    try:
+        async with SessionLocal() as db:
+            await ensure_workspace_rows(db)
+            await embeddings.ensure_vector_space(db)
+    except Exception:
+        import logging
+        logging.getLogger("orbit.startup").warning(
+            "workspace/vector-space startup guard skipped; will retry next boot", exc_info=True)
     # The OS loop: scheduled scans + brief refresh. Reads + insight writes only;
     # it never executes actions or approves anything.
     heartbeat.start()

@@ -56,7 +56,11 @@ steps:
       - --platform=managed
       - --allow-unauthenticated
       - --min-instances=0
-      - --max-instances=2
+      # One instance + always-on CPU: sync progress/heartbeat state is in-memory
+      # (split across instances otherwise), and Cloud Run throttles CPU to ~0
+      # after a response, which starves fire-and-forget syncs forever.
+      - --max-instances=1
+      - --no-cpu-throttling
       - --cpu=1
       - --memory=512Mi
       - --set-env-vars=ENABLE_AI=true,SEED_DEMO=false,HEARTBEAT_ENABLED=false,ENVIRONMENT=production,FRONTEND_URL=${_WEB_URL},PUBLIC_API_URL=${_API_URL},CORS_ORIGINS=["${_WEB_URL}"],CORS_ORIGIN_REGEX=https://(orbit-web-cuy5mdcpka-an\.a\.run\.app|([a-z0-9-]+\.)?tryorbit\.pro),SLACK_REDIRECT_URI=${_API_URL}/integrations/slack/oauth/callback,GITHUB_REDIRECT_URI=${_API_URL}/integrations/github/oauth/callback,LINEAR_REDIRECT_URI=${_API_URL}/integrations/linear/oauth/callback,GDRIVE_REDIRECT_URI=${_API_URL}/integrations/google-drive/oauth/callback,GOOGLE_REDIRECT_URI=${_API_URL}/calendar/oauth/callback,MEET_REDIRECT_URI=${_API_URL}/meet/oauth/callback

@@ -66,13 +66,27 @@ def _ensure_vector_indexes(conn) -> None:
     """HNSW cosine indexes for every embedded table (Postgres only). Raw DDL, not
     model-declared, so it must run on both the fresh-create path and the drift
     repair — without it native similarity search degrades to an unindexed scan.
-    Idempotent."""
+    Idempotent, and BEST-EFFORT: CREATE INDEX needs a table lock, so a busy table
+    (e.g. a long sync transaction) must fail fast and skip — waiting here has
+    wedged prod boots against Supabase's 2-minute statement timeout. A skipped
+    index is retried on the next boot; queries degrade to a scan meanwhile."""
+    import logging
+
     from sqlalchemy import text
 
     for table in ("artifacts", "artifact_chunks"):
-        conn.execute(text(
-            f"CREATE INDEX IF NOT EXISTS ix_{table}_embedding ON {table} "
-            "USING hnsw (embedding vector_cosine_ops)"))
+        try:
+            conn.execute(text("SAVEPOINT vec_idx"))
+            conn.execute(text("SET LOCAL lock_timeout = '5s'"))
+            conn.execute(text(
+                f"CREATE INDEX IF NOT EXISTS ix_{table}_embedding ON {table} "
+                "USING hnsw (embedding vector_cosine_ops)"))
+            conn.execute(text("RELEASE SAVEPOINT vec_idx"))
+        except Exception:
+            conn.execute(text("ROLLBACK TO SAVEPOINT vec_idx"))
+            logging.getLogger("orbit.db").warning(
+                "vector index on %s skipped (table busy); retrying next boot", table)
+    conn.execute(text("SET LOCAL lock_timeout = DEFAULT"))
 
 
 def _repair_pre_alembic_drift(conn) -> None:
