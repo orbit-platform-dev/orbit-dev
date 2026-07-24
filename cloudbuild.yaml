@@ -56,9 +56,6 @@ steps:
       - --platform=managed
       - --allow-unauthenticated
       - --min-instances=0
-      # One instance + always-on CPU: sync progress/heartbeat state is in-memory
-      # (split across instances otherwise), and Cloud Run throttles CPU to ~0
-      # after a response, which starves fire-and-forget syncs forever.
       - --max-instances=1
       - --no-cpu-throttling
       - --cpu=1

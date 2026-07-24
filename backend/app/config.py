@@ -87,6 +87,8 @@ class Settings(BaseSettings):
 
     heartbeat_token: str | None = None
 
+    agent_request_limit: int | None = None
+
     @model_validator(mode="after")
     def _environment_model_defaults(self) -> "Settings":
         """Dev runs free-tier models, production runs the refined ones — same
@@ -95,6 +97,8 @@ class Settings(BaseSettings):
             self.default_model = _PROD_DEFAULT_MODEL if self.is_production else _DEV_DEFAULT_MODEL
         if not self.embedding_model:
             self.embedding_model = _PROD_EMBEDDING_MODEL if self.is_production else _DEV_EMBEDDING_MODEL
+        if self.agent_request_limit is None:
+            self.agent_request_limit = 12 if self.is_production else 5
         return self
 
     @property

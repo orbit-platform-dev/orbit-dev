@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 _TOP_K = 8
 _MAX_SCAN = 3000
 _SNIPPET = 900
-_REQUEST_LIMIT = 5
 _HISTORY_TURNS = 8
 _HISTORY_CLIP = 600
 _STOPWORDS = frozenset(
@@ -435,7 +434,7 @@ async def stream_events(deps: ChatDeps, question: str, history: list[dict] | Non
     final_parts: list[str] = []
     async with agent.iter(_prompt(question, history, recall, deps.language), deps=deps, instructions=directives or None,
                           model_settings=_thinking_settings(),
-                          usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT)) as run:
+                          usage_limits=UsageLimits(request_limit=settings.agent_request_limit)) as run:
         async for node in run:
             if Agent.is_call_tools_node(node):
                 async with node.stream(run.ctx) as ts:
@@ -477,7 +476,7 @@ async def answer(deps: ChatDeps, question: str, history: list[dict] | None = Non
     recall = await _recall(deps, question)
     agent = _build()
     result = await agent.run(_prompt(question, history, recall, deps.language), deps=deps, instructions=directives or None,
-                             usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT))
+                             usage_limits=UsageLimits(request_limit=settings.agent_request_limit))
     text = (result.output or "").strip()
     deps.final_text = text
     return text
