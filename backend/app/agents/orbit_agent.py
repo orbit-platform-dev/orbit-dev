@@ -1,6 +1,7 @@
 """Ask Orbit — the company brain as a tool-calling agent."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import uuid
@@ -285,6 +286,21 @@ async def learned_facts(ctx: RunContext[ChatDeps], query: str) -> str:
         for m, _ in mems)
 
 
+# A chat turn can't wait minutes for a heavy pull (Drive exports, vision) —
+# beyond this, the pull keeps running in the background and the agent answers
+# from current memory, saying fresher data is on its way.
+_PULL_WAIT_S = 45
+
+
+async def _pull_own_session(ws: str, connector: str) -> int:
+    """Run a pull on its OWN session so it can outlive the chat request without
+    sharing (or blocking on) the request's transaction."""
+    from ..database import SessionLocal
+
+    async with SessionLocal() as db:
+        return await _run_pull(db, ws, connector)
+
+
 async def pull_connector(ctx: RunContext[ChatDeps], name: str) -> str:
     """Fetch FRESH data from a connected tool when memory can't answer the question,
     or whenever the user explicitly asks to pull / refresh / re-check / re-sync —
@@ -295,12 +311,18 @@ async def pull_connector(ctx: RunContext[ChatDeps], name: str) -> str:
     connected = await _connected_pullable(ctx.deps.db, ctx.deps.ws)
     if name not in connected:
         return f"'{name}' isn't connected. Pullable & connected right now: {', '.join(connected) or 'none'}."
+    label = _PULL_LABEL.get(name, name)
+    task = asyncio.ensure_future(_pull_own_session(ctx.deps.ws, name))
     try:
-        n = await _run_pull(ctx.deps.db, ctx.deps.ws, name)
+        n = await asyncio.wait_for(asyncio.shield(task), timeout=_PULL_WAIT_S)
+    except asyncio.TimeoutError:
+        return (f"{label} is a big pull and is still syncing in the background; new items will land "
+                "in memory over the next minutes. Answer from current memory NOW, tell the user the "
+                f"{label} sync is still running, and suggest asking again shortly.")
     except Exception:
         logger.warning("chat-triggered pull failed", exc_info=True)
-        return f"Could not pull fresh data from {_PULL_LABEL.get(name, name)} right now."
-    return f"Pulled {n} item(s) from {_PULL_LABEL.get(name, name)}. Call search_memory again to use them."
+        return f"Could not pull fresh data from {label} right now."
+    return f"Pulled {n} item(s) from {label}. Call search_memory again to use them."
 
 
 async def draft_ticket(ctx: RunContext[ChatDeps], connector: str, title: str, description: str) -> str:
