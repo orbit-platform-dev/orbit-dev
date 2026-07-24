@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plug, Search } from "lucide-react";
+import { Bot, Plug, Search } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -246,9 +246,10 @@ export default function IntegrationsPage() {
     else if (key in KEY_CONNECT) setDialogProvider(key);
   };
 
+  // MCP is not a connector category: it is the workspace's own agent-access tab.
   const categories = useMemo(() => {
     const set = Array.from(new Set((data ?? []).map((i) => i.category)));
-    return ["All", ...set];
+    return ["All", ...set, "MCP"];
   }, [data]);
 
   const filtered = (data ?? [])
@@ -279,13 +280,15 @@ export default function IntegrationsPage() {
                 category === c ? "border-primary/30 bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground",
               )}
             >
-              {c === "All" ? "All" : catLabel(c)}
+              {c === "MCP" ? <span className="inline-flex items-center gap-1"><Bot className="h-3 w-3" /> MCP</span> : c === "All" ? "All" : catLabel(c)}
             </button>
           ))}
         </div>
       </div>
 
-      {isLoading ? (
+      {category === "MCP" ? (
+        <McpCard />
+      ) : isLoading ? (
         <div className="grid gap-3 sm:grid-cols-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}</div>
       ) : filtered.length === 0 ? (
         <p className="py-10 text-center text-sm text-muted-foreground">No integrations in this category.</p>
@@ -294,8 +297,6 @@ export default function IntegrationsPage() {
           {filtered.map((i) => <IntegrationRow key={i.key} integration={i} onConnect={onConnect} />)}
         </div>
       )}
-
-      <McpCard />
 
       <KeyConnectDialog
         provider={dialogProvider}

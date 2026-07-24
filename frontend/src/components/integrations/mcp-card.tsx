@@ -33,9 +33,7 @@ function CopyField({ label, value, mono = true }: { label: string; value: string
   );
 }
 
-/** One key per WORKSPACE: every member's agents share it, and it can only open
- *  this workspace (the server resolves the tenant from the key). The plaintext
- *  exists only in the generate response — render it once, never fetch it. */
+// The plaintext key exists only in the generate response: render it once, never fetch it.
 export function McpCard() {
   const qc = useQueryClient();
   const { data } = useMcpStatus();
@@ -51,7 +49,7 @@ export function McpCard() {
   });
 
   return (
-    <Card className="mt-6 p-4">
+    <Card className="p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <div className="rounded-lg border border-border bg-muted/50 p-2"><Bot className="h-5 w-5" /></div>
@@ -65,7 +63,7 @@ export function McpCard() {
             </div>
             <p className="mt-1 max-w-xl text-sm text-muted-foreground">
               Give Claude Code, Cursor or any MCP client read access to this workspace&apos;s memory.
-              One key for the whole workspace — rotating or revoking it disconnects every agent using the old one.
+              One key for the whole workspace. Rotating or revoking it disconnects every agent using the old one.
             </p>
           </div>
         </div>
@@ -83,7 +81,7 @@ export function McpCard() {
       {issued && (
         <div className="mt-4 space-y-3 rounded-lg border border-primary/20 bg-primary/[0.04] p-3">
           <p className="text-xs font-medium text-primary">
-            Shown once — copy it now. Orbit stores only a hash and cannot recover it.
+            Shown once, copy it now. Orbit stores only a hash and cannot recover it.
           </p>
           <CopyField label="Workspace key" value={issued.key} />
           <CopyField label="Claude Code" value={issued.command} />
