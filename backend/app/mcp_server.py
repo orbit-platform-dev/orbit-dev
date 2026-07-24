@@ -76,7 +76,10 @@ def _ctx(db) -> SimpleNamespace:
 async def _observed(tool: str, query: str, call) -> str:
     """Run one of the chat agent's tools and log the interaction (Observe): the
     query and how much memory answered it — never the results. hits==0 rows feed
-    the reasoner's memory-gap detector."""
+    the reasoner's memory-gap detector. Results carry a SOURCES block built by
+    the same citation machinery as the in-app chat, so agents can link evidence."""
+    from .agents.orbit_agent import cite_dicts
+
     async with SessionLocal() as db:
         ctx = _ctx(db)
         out = await call(ctx)
@@ -87,6 +90,11 @@ async def _observed(tool: str, query: str, call) -> str:
                         tool=tool, query=query[:2000], hits=hits,
                         created_at=datetime.now(timezone.utc)))
         await db.commit()
+        cites = cite_dicts(ctx.deps, cap=8)
+        if cites:
+            out += "\n\nSOURCES (cite these links in your answer):\n" + "\n".join(
+                f"- {c['title']} ({c['source']})" + (f": {c['url']}" if c.get("url") else "")
+                for c in cites)
         return out
 
 
@@ -216,6 +224,8 @@ async def open_findings() -> str:
     commitments (gap), promises at risk of slipping (drift), repeated customer
     demand (trend), delivered promises (win), plus the latest company brief.
     Check this before planning work — it is what needs attention right now."""
+    from .models import Artifact
+
     async with SessionLocal() as db:
         ws = _workspace.get()
         rows = (await db.execute(
@@ -223,6 +233,13 @@ async def open_findings() -> str:
                 Insight.workspace_id == ws, Insight.origin == "model",
                 Insight.status == "open")
             .order_by(Insight.created_at.desc()).limit(30))).scalars().all()
+        # Evidence artifacts for every finding in one query, so each finding
+        # can cite its sources (title + link) like the in-app feed does.
+        evidence_ids = [aid for r in rows for aid in (r.artifact_ids or [])[:4]]
+        arts = {}
+        if evidence_ids:
+            arts = {a.id: a for a in (await db.execute(select(Artifact).where(
+                Artifact.id.in_(evidence_ids)))).scalars().all()}
     brief = next((r for r in rows if r.kind == "brief"), None)
     findings = [r for r in rows if r.kind != "brief"]
     if not brief and not findings:
@@ -234,6 +251,9 @@ async def open_findings() -> str:
         line = f"[{f.kind}] {f.title}"
         if f.detail:
             line += f"\n  {f.detail}"
+        for a in (arts.get(aid) for aid in (f.artifact_ids or [])[:4]):
+            if a:
+                line += f"\n  source: {a.title} ({a.source})" + (f" — {a.url}" if a.url else "")
         if f.action:
             line += "\n  (Orbit has a prepared fix awaiting human approval in the product.)"
         out.append(line)
