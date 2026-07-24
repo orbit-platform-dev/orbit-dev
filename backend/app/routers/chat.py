@@ -45,6 +45,7 @@ class Citation(_Camel):
 class ChatIn(_Camel):
     message: str
     conversation_id: str | None = None
+    language: str | None = None
 
 
 class ChatOut(_Camel):
@@ -167,7 +168,8 @@ async def ask(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_workspace_
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Message is required.")
     conv = await _get_or_create(db, ws, uid, body.conversation_id, question)
     history = list(conv.messages or [])
-    deps = orbit_agent.ChatDeps(db=db, ws=ws, uid=uid, who=user.get("name") or uid)
+    deps = orbit_agent.ChatDeps(db=db, ws=ws, uid=uid, who=user.get("name") or uid,
+                                language=(body.language or "").strip())
 
     citations: list[dict] = []
     draft: dict | None = None
@@ -203,7 +205,8 @@ async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_wor
     history = list(conv.messages or [])
 
     async def gen():
-        deps = orbit_agent.ChatDeps(db=db, ws=ws, uid=uid, who=user.get("name") or uid)
+        deps = orbit_agent.ChatDeps(db=db, ws=ws, uid=uid, who=user.get("name") or uid,
+                                language=(body.language or "").strip())
         try:
             sync = heartbeat.status(ws).get("sync") or {}
             citations: list[dict] = []

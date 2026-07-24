@@ -2,6 +2,7 @@
 // API layer (MVP). Talks to the FastAPI backend at NEXT_PUBLIC_API_URL.
 // Response shapes match src/lib/types.ts exactly.
 // ============================================================================
+import { LOCALE_COOKIE } from "./i18n/config";
 import type {
   Artifact,
   ChatAnswer,
@@ -21,6 +22,14 @@ import type {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 const NEEDS_BACKEND = "This needs the backend — set NEXT_PUBLIC_API_URL.";
+
+// The navbar language choice (cookie-persisted by LanguageSwitcher). Sent with
+// chat requests so Orbit answers in the user's language by default.
+function uiLanguage(): string | undefined {
+  if (typeof document === "undefined") return undefined;
+  const m = document.cookie.match(new RegExp(`(?:^|; )${LOCALE_COOKIE}=([^;]+)`));
+  return m?.[1];
+}
 
 async function authHeaders(): Promise<Record<string, string>> {
   if (typeof window === "undefined") return {};
@@ -75,7 +84,7 @@ export const getEntities = (kind?: string) =>
 export const getEntity = (id: string) => live<EntityDetail>(`/entities/${id}`);
 
 export const sendChat = (body: { message: string; conversationId?: string | null }) =>
-  send<ChatAnswer>("/chat", "POST", body);
+  send<ChatAnswer>("/chat", "POST", { ...body, language: uiLanguage() });
 
 export interface FeedbackInput {
   category: "bug" | "feature" | "other";
@@ -126,7 +135,7 @@ export async function streamChat(
     res = await fetch(`${API_URL}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, language: uiLanguage() }),
       signal,
     });
   } catch (e) {

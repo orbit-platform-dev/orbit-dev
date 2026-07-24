@@ -52,6 +52,23 @@ def available() -> bool:
     return settings.ai_enabled and bool(settings.llm_api_key) and not _paused()
 
 
+def _request_body(text: str, task: str) -> dict:
+    """gemini-embedding-001 takes a taskType parameter; gemini-embedding-2 (and
+    later) rejects it — the task is encoded as a prompt prefix instead, and the
+    prefix style must match between stored documents and queries. Vectors from
+    different models are NOT comparable: changing EMBEDDING_MODEL requires
+    re-embedding everything (fresh DB, or null the embedding columns and let the
+    startup backfill rebuild them)."""
+    model = settings.embedding_model or ""
+    if model.startswith("gemini-embedding-") and model != "gemini-embedding-001":
+        prefix = ("task: search result | query: " if task == "RETRIEVAL_QUERY"
+                  else "title: none | text: ")
+        return {"content": {"parts": [{"text": prefix + text}]},
+                "outputDimensionality": EMBEDDING_DIM}
+    return {"content": {"parts": [{"text": text}]}, "taskType": task,
+            "outputDimensionality": EMBEDDING_DIM}
+
+
 async def embed_text(text: str, *, task: str = "RETRIEVAL_DOCUMENT") -> list[float] | None:
     """One text → one vector, or None when embeddings can't be produced."""
     if not available() or not (text or "").strip():
@@ -64,8 +81,7 @@ async def embed_text(text: str, *, task: str = "RETRIEVAL_DOCUMENT") -> list[flo
         async with httpx.AsyncClient(timeout=20) as client:
             res = await client.post(
                 _GEMINI_URL.format(model=settings.embedding_model, key=settings.llm_api_key),
-                json={"content": {"parts": [{"text": text[:_MAX_CHARS]}]}, "taskType": task,
-                      "outputDimensionality": EMBEDDING_DIM},
+                json=_request_body(text[:_MAX_CHARS], task),
             )
         if res.status_code == 429:
             _trip_breaker()  # quota/rate limited — stop hammering for a cooldown
@@ -101,3 +117,37 @@ def cosine(a: list[float], b: list[float]) -> float:
     na = sum(x * x for x in a) ** 0.5
     nb = sum(y * y for y in b) ** 0.5
     return dot / (na * nb) if na and nb else 0.0
+
+
+_LEGACY_MODEL = "gemini-embedding-001"
+
+
+async def ensure_vector_space(db) -> None:
+    """Startup guard: vectors from different embedding models are incompatible,
+    so if the configured EMBEDDING_MODEL differs from the one a workspace's
+    stored vectors were made with, null them all — the regular backfills then
+    re-embed with the new model. Makes model switches (e.g. the dev→prod
+    embedding upgrade) safe with zero manual DB surgery."""
+    from sqlalchemy import null, select, update
+
+    from ..models import Artifact, ArtifactChunk, Feedback, Memory, Workspace
+
+    configured = settings.embedding_model or _LEGACY_MODEL
+    for ws in (await db.execute(select(Workspace))).scalars().all():
+        marker = ws.embedding_model
+        if marker is None:
+            has_vectors = (await db.execute(
+                select(Artifact.id).where(Artifact.workspace_id == ws.id,
+                                          Artifact.embedding.is_not(None)).limit(1))).scalar_one_or_none()
+            marker = _LEGACY_MODEL if has_vectors else configured
+        if marker != configured:
+            logger.warning("workspace %s: embedding model %s → %s; clearing stored vectors for re-embed",
+                           ws.id, marker, configured)
+            # sa.null(), not None: a Python None through the JSON column type can
+            # land as the JSON text 'null', which "IS NULL" queries (backfill,
+            # retrieval) would miss. null() always emits SQL NULL.
+            for table in (Artifact, ArtifactChunk, Feedback, Memory):
+                await db.execute(update(table).where(table.workspace_id == ws.id)
+                                 .values(embedding=null()))
+        ws.embedding_model = configured
+    await db.commit()

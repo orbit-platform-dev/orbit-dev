@@ -76,6 +76,25 @@ async def record_feedback(
     return fb
 
 
+async def backfill_embeddings(db, workspace_id: str, limit: int = 100) -> int:
+    """Embed corrections whose vector is missing — written with AI off, or
+    cleared by an embedding-model switch — so learned rules stay semantically
+    retrievable. Caller commits."""
+    if not embeddings.available():
+        return 0
+    rows = (await db.execute(select(Feedback).where(
+        Feedback.workspace_id == workspace_id, Feedback.embedding.is_(None))
+        .order_by(Feedback.created_at.desc()).limit(limit))).scalars().all()
+    done = 0
+    for r in rows:
+        vec = await embeddings.embed_text(rule_text(r.section, r.field, r.before, r.after))
+        if vec is None:
+            break  # embeddings just became unavailable (quota breaker) — retry next tick
+        r.embedding = vec
+        done += 1
+    return done
+
+
 async def render_corrections(db, workspace_id: str) -> str:
     """The most recent human corrections as a compact prompt block, or '' when
     there's nothing learned yet. (Recency-based; used where there's no query.)"""

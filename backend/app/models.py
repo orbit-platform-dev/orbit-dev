@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text  
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -43,6 +43,8 @@ class Workspace(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    auto_sync: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
+    embedding_model: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Artifact(Base):

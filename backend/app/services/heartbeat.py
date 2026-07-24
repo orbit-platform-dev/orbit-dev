@@ -19,6 +19,7 @@ from ..config import settings
 from ..database import SessionLocal
 from ..models import ActivityEvent, Artifact, Entity, Insight, Integration, Workspace
 from .ingestion import backfill_chunks, backfill_embeddings, pull_all
+from .learning import backfill_embeddings as backfill_feedback_embeddings
 from .memory import backfill_embeddings as backfill_memory_embeddings, decay as decay_memories
 from .proposals import dispatch_for_workspace
 from .reasoning import detect_findings, generate_brief
@@ -28,7 +29,6 @@ logger = logging.getLogger("orbit.heartbeat")
 _STARTUP_DELAY_S = 20  # let migrations/seed settle before the first tick
 
 _state: dict = {
-    "enabled": settings.heartbeat_enabled,
     "interval_minutes": settings.heartbeat_interval_minutes,
     "last_run_at": None,
     "last_found": 0,
@@ -43,10 +43,11 @@ _task: asyncio.Task | None = None
 _sync: dict[str, dict] = {}
 
 
-def status(ws: str | None = None) -> dict:
-    # camelCase to match the API's serialization convention.
+def status(ws: str | None = None, enabled: bool | None = None) -> dict:
+    # camelCase to match the API's serialization convention. `enabled` is the
+    # workspace's persisted auto_sync flag — routers that have a db pass it in.
     return {
-        "enabled": _state["enabled"],
+        "enabled": enabled,
         "intervalMinutes": _state["interval_minutes"],
         "lastRunAt": _state["last_run_at"],
         "lastFound": _state["last_found"],
@@ -54,12 +55,6 @@ def status(ws: str | None = None) -> dict:
         "ticks": _state["ticks"],
         "sync": _sync.get(ws) if ws else None,
     }
-
-
-def set_enabled(enabled: bool) -> None:
-    """Toggle auto-sync at runtime (session-level; resets to HEARTBEAT_ENABLED on
-    restart). Manual 'Pull now' still works when auto is off."""
-    _state["enabled"] = enabled
 
 
 async def _summarize(db, ws: str) -> dict:
@@ -109,6 +104,7 @@ async def run_now(workspace_id: str, trigger: str = "manual") -> None:
             await backfill_embeddings(db, workspace_id, limit=300)  # embed anything not yet vectorized
             await backfill_chunks(db, workspace_id)  # chunk-embed long docs so deep passages are searchable
             await backfill_memory_embeddings(db, workspace_id)
+            await backfill_feedback_embeddings(db, workspace_id)
             await decay_memories(db, workspace_id)       # age-out facts not seen this sync
             await detect_findings(db, workspace_id)
             signal_count = (await db.execute(select(func.count()).select_from(Artifact)
@@ -158,11 +154,14 @@ async def _has_live_connector(db, ws: str) -> bool:
 
 async def _tick() -> None:
     async with SessionLocal() as db:
-        workspaces = (await db.execute(select(Workspace.id))).scalars().all() or ["ws_default"]
+        rows = (await db.execute(select(Workspace.id, Workspace.auto_sync))).all()
+        workspaces = [(r[0], r[1]) for r in rows] or [("ws_default", True)]
         total_found = 0
-        for ws in workspaces:
-            # An immediate sync (connect / "Scan now") is already doing this work;
-            # skip to avoid double work and write contention.
+        for ws, auto_sync in workspaces:
+
+            if not auto_sync:
+                continue
+
             if _sync.get(ws, {}).get("active"):
                 continue
             # No connected tool → nothing new to pull or reason about → skip (no charge).
@@ -177,6 +176,7 @@ async def _tick() -> None:
                 await backfill_embeddings(db, ws, limit=300)  # keep the vector index populated
                 await backfill_chunks(db, ws)  # chunk-embed long docs so deep passages are searchable
                 await backfill_memory_embeddings(db, ws)
+                await backfill_feedback_embeddings(db, ws)
                 await decay_memories(db, ws)        # age-out unverified facts
             except Exception:
                 logger.warning("embedding backfill / decay failed; continuing", exc_info=True)
@@ -216,8 +216,7 @@ async def _run_forever() -> None:
     await asyncio.sleep(_STARTUP_DELAY_S)
     while True:
         try:
-            if _state["enabled"]:  # auto-sync toggle (manual pulls bypass this)
-                await _tick()
+            await _tick()
         except Exception:
             logger.exception("heartbeat tick failed; continuing")
         await asyncio.sleep(max(60, settings.heartbeat_interval_minutes * 60))
@@ -226,7 +225,8 @@ async def _run_forever() -> None:
 async def run_tick() -> None:
     """One tick across all workspaces, driven externally (Cloud Scheduler). Used
     when the in-process loop is off (HEARTBEAT_ENABLED=false) so the app can scale
-    to zero — the schedule is the cadence, so this ignores the runtime pause toggle."""
+    to zero. The scheduler fires on its cadence; each workspace's persisted
+    auto_sync flag decides inside _tick whether that workspace participates."""
     await _tick()
 
 

@@ -50,6 +50,7 @@ class ChatDeps:
     ws: str
     uid: str
     who: str = ""
+    language: str = ""
     ledger: dict[str, tuple[Artifact, float]] = field(default_factory=dict)
     staged_drafts: list[dict] = field(default_factory=list)
     final_text: str = ""
@@ -402,9 +403,10 @@ async def _recall(deps: ChatDeps, question: str) -> str:
             "confidence and verify against current evidence, not absolute truth):\n" + lines + "\n\n")
 
 
-def _prompt(question: str, history: list[dict] | None, recall: str = "") -> str:
+def _prompt(question: str, history: list[dict] | None, recall: str = "", language: str = "") -> str:
     hist = _format_history(history)
-    return f"{recall}{hist}QUESTION: {question}"
+    lang = f"APP LANGUAGE: {language}\n" if language else ""
+    return f"{recall}{hist}{lang}QUESTION: {question}"
 
 
 def _phase_for(part: ToolCallPart) -> dict | None:
@@ -431,7 +433,7 @@ async def stream_events(deps: ChatDeps, question: str, history: list[dict] | Non
     agent = _build()
     yield {"type": "phase", "phase": "reasoning"}
     final_parts: list[str] = []
-    async with agent.iter(_prompt(question, history, recall), deps=deps, instructions=directives or None,
+    async with agent.iter(_prompt(question, history, recall, deps.language), deps=deps, instructions=directives or None,
                           model_settings=_thinking_settings(),
                           usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT)) as run:
         async for node in run:
@@ -474,7 +476,7 @@ async def answer(deps: ChatDeps, question: str, history: list[dict] | None = Non
     directives = await _directives(deps, question)
     recall = await _recall(deps, question)
     agent = _build()
-    result = await agent.run(_prompt(question, history, recall), deps=deps, instructions=directives or None,
+    result = await agent.run(_prompt(question, history, recall, deps.language), deps=deps, instructions=directives or None,
                              usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT))
     text = (result.output or "").strip()
     deps.final_text = text

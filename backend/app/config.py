@@ -1,7 +1,13 @@
 """Application settings, loaded from environment / .env."""
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEV_DEFAULT_MODEL = "google-gla:gemini-3.5-flash-lite"
+_PROD_DEFAULT_MODEL = "google-gla:gemini-3.6-flash"
+_DEV_EMBEDDING_MODEL = "gemini-embedding-001"
+_PROD_EMBEDDING_MODEL = "gemini-embedding-2"
 
 
 class Settings(BaseSettings):
@@ -57,13 +63,14 @@ class Settings(BaseSettings):
     orbit_linear_label: str = "MVP Requests"
 
     enable_ai: bool = False
-    default_model: str = "google-gla:gemini-2.0-flash"
+    # None → filled by _environment_model_defaults below (dev vs production).
+    default_model: str | None = None
 
     extractor_model: str | None = None
     agent_model: str | None = None
     llm_api_key: str | None = None
 
-    embedding_model: str = "gemini-embedding-001"
+    embedding_model: str | None = None
     ollama_base_url: str | None = None  
 
     anthropic_api_key: str | None = None
@@ -79,6 +86,20 @@ class Settings(BaseSettings):
     brief_max_age_days: int = 7
 
     heartbeat_token: str | None = None
+
+    @model_validator(mode="after")
+    def _environment_model_defaults(self) -> "Settings":
+        """Dev runs free-tier models, production runs the refined ones — same
+        code, switched by ENVIRONMENT=production. Explicit env vars still win."""
+        if not self.default_model:
+            self.default_model = _PROD_DEFAULT_MODEL if self.is_production else _DEV_DEFAULT_MODEL
+        if not self.embedding_model:
+            self.embedding_model = _PROD_EMBEDDING_MODEL if self.is_production else _DEV_EMBEDDING_MODEL
+        return self
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.strip().lower() in ("production", "prod")
 
     @property
     def resolved_api_key(self) -> str | None:

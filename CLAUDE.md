@@ -26,6 +26,10 @@ of record. (This killed the own-the-call concept — see Current state.)
 (`services/heartbeat.py`, started in the FastAPI lifespan, `HEARTBEAT_*` env)
 scans every workspace on a schedule and refreshes the brief when stale — it
 only reads and writes insights, NEVER executes actions or approves anything.
+The UI **auto-sync toggle is persisted** (`workspaces.auto_sync`, migration
+0015) and gates scheduled ticks per workspace: the in-process loop AND Cloud
+Scheduler's `POST /internal/heartbeat` both flow through `_tick`, which skips
+disabled workspaces. Manual "Pull now"/scan bypasses the toggle.
 The **comparator** (`services/insights.py`) matches by meaning (token overlap →
 difflib → embedding cosine ≥ 0.75 via `SEMANTIC_SIMILARITY`), detects
 cross-customer demand, closes the loop from Linear (completed issue →
@@ -153,7 +157,9 @@ returns ONE structured `ContextPackage`: customer profile, relevant meetings,
 approved plans, open commitments, recent knowledge — every string clipped, caps per
 source (`wide=True` for chat retrieves ~3x more). Retrieval is **hybrid**:
 structured facts are indexed SQL; meeting/knowledge recall is **semantic** —
-embeddings (`services/embeddings.py`, Gemini `gemini-embedding-001`, 768-dim,
+embeddings (`services/embeddings.py`, Gemini — `gemini-embedding-001` in dev,
+`gemini-embedding-2` in production (`EMBEDDING_MODEL` overrides; models' vectors
+are incompatible, switching requires a re-embed), 768-dim,
 written at analysis/approval time + startup backfill) ranked by **pgvector**
 cosine search in-database on Postgres (HNSW indexes, migration 0003; compose db
 image is `pgvector/pgvector:pg16`). On dev SQLite the same embeddings are JSON
@@ -344,7 +350,8 @@ Everything degrades gracefully — the app runs with **none** of these set.
 | Var | Effect |
 |---|---|
 | `ENABLE_AI` | `true` to make real model calls; else deterministic fallbacks |
-| `DEFAULT_MODEL` | `provider:name`, e.g. `google-gla:gemini-flash-lite-latest` (free dev), `ollama:llama3.1` (local), `anthropic:claude-opus-4-8` (prod) |
+| `ENVIRONMENT` | `production` → refined models (`gemini-3.6-flash` + `gemini-embedding-2`); else dev free-tier defaults (`gemini-3.5-flash-lite` + `gemini-embedding-001`). Explicit model vars always win |
+| `DEFAULT_MODEL` | `provider:name`; unset it and `ENVIRONMENT` picks the default — dev `google-gla:gemini-3.5-flash-lite` (free tier), production `google-gla:gemini-3.6-flash`. Other providers: `ollama:llama3.1` (local), `anthropic:claude-opus-4-8` |
 | `LLM_API_KEY` | key for the chosen provider (none for Ollama) |
 | `DATABASE_URL` | SQLite by default; Compose sets Postgres |
 | `REDIS_URL` | optional — enables the event stream |
@@ -360,6 +367,21 @@ Everything degrades gracefully — the app runs with **none** of these set.
 
 ## Current state
 
+- **Models / language / auto-sync (2026-07-24):** models are environment-keyed
+  in `config.py` (gemini-2.0-flash is DEAD — shut down 2026-06-01). Chat answers
+  follow the navbar language (cookie → `ChatIn.language` → "APP LANGUAGE" prompt
+  line); an explicit ask or the question's own language outranks it; ids/names
+  stay verbatim. Embedding models' vectors are INCOMPATIBLE across models —
+  switching `EMBEDDING_MODEL` is now SELF-HEALING: `workspaces.embedding_model`
+  (migration 0016) tracks each workspace's vector space and the startup guard
+  (`embeddings.ensure_vector_space`, called in the lifespan) clears mismatched
+  vectors for re-embed — never null vectors by hand. `get_workspace_id` now
+  materializes the tenant's Workspace row on first sight (and
+  `workspace.ensure_workspace_rows` heals older DBs at startup) — before this,
+  org/user tenants had NO row, so scheduled heartbeat ticks never scanned them
+  and per-workspace state silently no-opped. The auto-sync toggle persists in
+  `workspaces.auto_sync` (migration 0015) and gates scheduled ticks (incl. Cloud
+  Scheduler). `learning.backfill_embeddings` re-embeds cleared corrections.
 - **Done:** the MVP flow **upload → (background) analysis with live per-stage progress
   → editable review → approve → publish**. The Execution Review screen
   (`meetings/[id]/review`) is the centerpiece: **every** section is an editable draft

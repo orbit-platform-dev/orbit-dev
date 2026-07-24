@@ -15,6 +15,12 @@ from .services import heartbeat
 async def lifespan(app: FastAPI):
     # Create tables + seed on startup (idempotent).
     await init_db()
+    from .database import SessionLocal
+    from .services import embeddings
+    from .services.workspace import ensure_workspace_rows
+    async with SessionLocal() as db:
+        await ensure_workspace_rows(db)
+        await embeddings.ensure_vector_space(db)
     # The OS loop: scheduled scans + brief refresh. Reads + insight writes only;
     # it never executes actions or approves anything.
     heartbeat.start()

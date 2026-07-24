@@ -16,7 +16,7 @@ from pydantic.alias_generators import to_camel
 from sqlalchemy import select
 
 from ..deps import Depends, get_current_user, get_db
-from ..models import ActivityEvent, Artifact, Entity, Feedback, Insight
+from ..models import ActivityEvent, Artifact, Entity, Feedback, Insight, Workspace
 from ..schemas import ArtifactOut, BriefOut, CorrectionOut, EntityOut, FeedOut, FindingOut
 from ..services import heartbeat, learning, tickets
 from ..services.workspace import get_workspace_id
@@ -24,11 +24,16 @@ from ..services.workspace import get_workspace_id
 router = APIRouter(tags=["feed"])
 
 
+async def _auto_sync_enabled(db, ws: str) -> bool:
+    row = await db.get(Workspace, ws)
+    return bool(row.auto_sync) if row else True
+
+
 @router.get("/heartbeat")
-async def heartbeat_status(ws: str = Depends(get_workspace_id)):
+async def heartbeat_status(db=Depends(get_db), ws: str = Depends(get_workspace_id)):
     """Auto-sync status: whether Orbit is watching, the interval, last run, and
     any immediate sync currently in progress (so the UI can show live progress)."""
-    return heartbeat.status(ws)
+    return heartbeat.status(ws, enabled=await _auto_sync_enabled(db, ws))
 
 
 class AutoSyncIn(BaseModel):
@@ -36,10 +41,15 @@ class AutoSyncIn(BaseModel):
 
 
 @router.post("/heartbeat/auto")
-async def set_auto_sync(body: AutoSyncIn, ws: str = Depends(get_workspace_id), _=Depends(get_current_user)):
-    """Toggle auto-sync (the heartbeat) on/off. Manual 'Pull now' works either way."""
-    heartbeat.set_enabled(body.enabled)
-    return heartbeat.status(ws)
+async def set_auto_sync(body: AutoSyncIn, db=Depends(get_db), ws: str = Depends(get_workspace_id),
+                        _=Depends(get_current_user)):
+    """Toggle auto-sync for this workspace. Persisted — gates the in-process loop
+    AND Cloud Scheduler ticks. Manual 'Pull now' works either way."""
+    row = await db.get(Workspace, ws)
+    if row:
+        row.auto_sync = body.enabled
+        await db.commit()
+    return heartbeat.status(ws, enabled=body.enabled)
 
 _RANK = {"gap": 0, "drift": 1, "win": 2, "trend": 3}
 
@@ -89,12 +99,12 @@ async def list_learning(limit: int = 20, db=Depends(get_db), ws: str = Depends(g
 
 
 @router.post("/feed/scan")
-async def scan(ws: str = Depends(get_workspace_id)):
+async def scan(db=Depends(get_db), ws: str = Depends(get_workspace_id)):
     """Kick off an immediate read + reason now (idempotent). Progress streams via
     GET /heartbeat `sync`, which the Feed renders in place of its empty state.
     No-ops if a scan is already in flight."""
     heartbeat.start_sync(ws, "scan")
-    return heartbeat.status(ws)
+    return heartbeat.status(ws, enabled=await _auto_sync_enabled(db, ws))
 
 
 class EditFindingIn(BaseModel):
