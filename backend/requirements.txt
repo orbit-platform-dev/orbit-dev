@@ -11,6 +11,7 @@ pgvector>=0.3            # semantic retrieval for the Context Engine (Postgres e
 redis>=5.2
 httpx>=0.27
 python-jose[cryptography]>=3.3   # Clerk JWT verification
+mcp>=1.10                # Model Context Protocol server, mounted at /mcp
 
 # --- AI orchestration (optional at runtime; the API degrades gracefully) ---
 # Provider-agnostic via PydanticAI. The base install supports Anthropic, Google

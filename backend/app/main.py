@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import __version__
+from . import __version__, mcp_server
 from .config import settings
 from .database import init_db
 from .routers import api_router
@@ -31,7 +31,10 @@ async def lifespan(app: FastAPI):
     # The OS loop: scheduled scans + brief refresh. Reads + insight writes only;
     # it never executes actions or approves anything.
     heartbeat.start()
-    yield
+    # Mounted sub-apps get no lifespan of their own — the MCP transport's
+    # session manager must be entered here or every /mcp request 500s.
+    async with mcp_server.session_manager():
+        yield
     await heartbeat.stop()
 
 
@@ -53,6 +56,10 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
+# Company memory for external AI agents (Claude Code, Cursor, …) — read-only
+# MCP tools over Streamable HTTP at /mcp. Auth model documented in mcp_server.py.
+app.add_middleware(mcp_server.MCPDispatch)
 
 
 @app.get("/health", tags=["meta"])

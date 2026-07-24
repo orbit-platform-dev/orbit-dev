@@ -87,6 +87,8 @@ class Settings(BaseSettings):
 
     heartbeat_token: str | None = None
 
+    mcp_api_key: str | None = None
+
     agent_request_limit: int | None = None
 
     @model_validator(mode="after")
