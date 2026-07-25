@@ -5,6 +5,7 @@ returns "" on any failure so callers skip honestly instead of ingesting noise.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
 from urllib.parse import urljoin, urlparse
@@ -23,13 +24,15 @@ _AUTHED_HOSTS = ("uploads.linear.app", ".slack.com", ".githubusercontent.com", "
 _MAX_REDIRECTS = 3
 
 
-def _public_host(host: str) -> bool:
+async def _public_host(host: str) -> bool:
     """SSRF guard: reject hosts that resolve to a private/loopback/link-local IP —
-    e.g. the cloud metadata server 169.254.169.254, which hands out SA tokens."""
+    e.g. the cloud metadata server 169.254.169.254, which hands out SA tokens.
+    DNS resolution runs in a thread — a slow resolver must never stall the event
+    loop (it froze every in-flight request during image-heavy syncs)."""
     if not host:
         return False
     try:
-        infos = socket.getaddrinfo(host, None)
+        infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
     except OSError:
         return False
     for info in infos:
@@ -86,7 +89,7 @@ async def fetch_image(url: str, auth: str | None = None) -> tuple[bytes, str] | 
     res = None
     for _ in range(_MAX_REDIRECTS + 1):
         host = (urlparse(url).hostname or "").lower()
-        if not _public_host(host):
+        if not await _public_host(host):
             return None
         headers = {"Authorization": auth} if (auth and _may_send_auth(host)) else {}
         try:
