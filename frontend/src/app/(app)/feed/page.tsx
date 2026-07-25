@@ -30,13 +30,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
+import { PageLoader } from "@/components/shared/page-loader";
 import { useFeed, useLearning, useHeartbeat, qk } from "@/lib/hooks";
 import * as api from "@/lib/api";
 import { timeAgo, cn } from "@/lib/utils";
 import { findingSources, rankFinding, SEVERITY, sourceKey } from "@/lib/sources";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
-import { SyncTheater } from "@/components/shared/sync-theater";
+import { SyncBanner, SyncTheater } from "@/components/shared/sync-theater";
 import type { Finding, Brief, Correction } from "@/lib/types";
 
 const KIND: Record<string, { label: string; icon: LucideIcon; chip: string }> = {
@@ -484,6 +484,8 @@ export default function FeedPage() {
 
   const sync = hb?.sync;
   const scanning = !!sync?.active || scan.isPending;
+  const hasData =
+    (data?.findings.length ?? 0) > 0 || !!(data?.brief && (data.brief.detail || data.brief.title));
 
   // On first load with an empty feed, scan once so the page is never dead.
   useEffect(() => {
@@ -505,23 +507,21 @@ export default function FeedPage() {
   const attentionIds = new Set(attention.map((f) => f.id));
   const rest = ranked.filter((f) => !attentionIds.has(f.id));
 
-  const freshness = hb?.lastRunAt ? `Orbit last looked ${timeAgo(hb.lastRunAt)}` : undefined;
-
   return (
     <div>
-      <PageHeader title="Feed" description={freshness} />
-
       {isLoading ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-44 rounded-xl" />
-          ))}
-        </div>
-      ) : scanning ? (
-        // While Orbit reads the tools, the sync IS the page — no half-built data.
+        <PageLoader label="Loading your feed…" />
+      ) : scanning && !hasData ? (
+        // Theater only when there is nothing to show; syncs over data render as SyncBanner.
         <SyncTheater sync={sync} />
       ) : (
         <>
+          {scanning && hasData ? (
+            <SyncBanner
+              sync={sync}
+              openFindings={findings.filter((f) => f.status === "open").length}
+            />
+          ) : null}
           {findings.length > 0 && data?.brief && (data.brief.detail || data.brief.title) ? (
             <BriefCard brief={data.brief} findings={findings} />
           ) : null}

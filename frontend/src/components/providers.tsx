@@ -24,7 +24,9 @@ export function Providers({
           queries: {
             staleTime: 30_000,
             refetchOnWindowFocus: false,
-            retry: 1,
+            // 401s after login are a Clerk-hydration race — let them recover.
+            retry: (failureCount, error) =>
+              String(error).includes("401") ? failureCount < 3 : failureCount < 1,
           },
         },
       }),

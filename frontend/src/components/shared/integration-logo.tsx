@@ -100,7 +100,15 @@ const SLACK_MARK: { d: string; fill: string }[] = [
   },
 ];
 
-export function IntegrationLogo({ k, className }: { k: IntegrationKey; className?: string }) {
+export function IntegrationLogo({
+  k,
+  className,
+  bare = false,
+}: {
+  k: IntegrationKey;
+  className?: string;
+  bare?: boolean;
+}) {
   const local = LOCAL_LOGOS[k];
   if (local) {
     return (
@@ -108,7 +116,8 @@ export function IntegrationLogo({ k, className }: { k: IntegrationKey; className
         role="img"
         aria-label={k}
         className={cn(
-          "h-10 w-10 shrink-0 rounded-lg border border-border bg-cover bg-center",
+          "h-10 w-10 shrink-0 rounded-lg bg-cover bg-center",
+          !bare && "border border-border",
           className,
         )}
         style={{ backgroundImage: `url(${local})` }}
@@ -116,6 +125,21 @@ export function IntegrationLogo({ k, className }: { k: IntegrationKey; className
     );
   }
   if (k === "slack") {
+    if (bare) {
+      return (
+        <svg
+          role="img"
+          aria-label="Slack"
+          viewBox="0 0 512 512"
+          className={cn("h-10 w-10 shrink-0", className)}
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          {SLACK_MARK.map((p, i) => (
+            <path key={i} d={p.d} fill={p.fill} />
+          ))}
+        </svg>
+      );
+    }
     return (
       <div
         className={cn(
@@ -139,6 +163,20 @@ export function IntegrationLogo({ k, className }: { k: IntegrationKey; className
   }
   const icon = ICONS[k];
   if (icon) {
+    if (bare) {
+      return (
+        <svg
+          role="img"
+          aria-label={k}
+          viewBox="0 0 24 24"
+          className={cn("h-10 w-10 shrink-0", className)}
+          fill={`#${icon.hex}`}
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path d={icon.path} />
+        </svg>
+      );
+    }
     // Real logos sit on a white tile so dark marks (GitHub, Notion) stay crisp on the dark UI.
     return (
       <div

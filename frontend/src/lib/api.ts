@@ -35,7 +35,15 @@ async function authHeaders(): Promise<Record<string, string>> {
   if (typeof window === "undefined") return {};
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const token = await (window as any).Clerk?.session?.getToken?.();
+    const w = window as any;
+    // Clerk hydrates AFTER login lands — without this wait the first requests
+    // go out tokenless and 401. Stops early once loaded (signed-out stays null).
+    if (process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+      for (let i = 0; i < 20 && !w.Clerk?.session && !w.Clerk?.loaded; i++) {
+        await new Promise((r) => setTimeout(r, 150));
+      }
+    }
+    const token = await w.Clerk?.session?.getToken?.();
     return token ? { Authorization: `Bearer ${token}` } : {};
   } catch {
     return {};
@@ -46,6 +54,8 @@ async function live<T>(path: string): Promise<T> {
   if (!API_URL) throw new Error(NEEDS_BACKEND);
   const res = await fetch(`${API_URL}${path}`, {
     headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    // A stalled backend must fail fast and retry, never hang the UI.
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
   return res.json() as Promise<T>;
@@ -61,6 +71,7 @@ async function send<T>(
     method,
     headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) {
     const detail = (await res.json().catch(() => null))?.detail;

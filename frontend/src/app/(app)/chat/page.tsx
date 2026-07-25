@@ -13,7 +13,6 @@ import {
   FileText,
   Loader2,
   MessageSquarePlus,
-  Sparkles,
   Square,
   ThumbsDown,
   ThumbsUp,
@@ -22,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import * as api from "@/lib/api";
+import { OrbitMark } from "@/components/shared/logo";
 import type { ChatCitation, ChatDraft, ChatMessage } from "@/lib/types";
 import { rankFinding, sourceKey } from "@/lib/sources";
 import { useFeed } from "@/lib/hooks";
@@ -295,17 +295,8 @@ function DraftCard({ draft, conversationId }: { draft: ChatDraft; conversationId
   );
 }
 
-function OrbitAvatar({ thinking }: { thinking?: boolean }) {
-  return (
-    <div
-      className={cn(
-        "mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10",
-        thinking && "animate-pulse",
-      )}
-    >
-      <Sparkles className="h-3.5 w-3.5 text-primary" />
-    </div>
-  );
+function OrbitAvatar({ thinking: _thinking }: { thinking?: boolean }) {
+  return <OrbitMark className="mt-1 h-7 w-7 shrink-0 drop-shadow-sm" />;
 }
 
 /** Hand-styled markdown so answers read like a polished product, not raw text. */
@@ -838,9 +829,7 @@ export default function ChatPage() {
               </div>
             ) : messages.length === 0 ? (
               <div className="flex min-h-[55vh] animate-in flex-col items-center justify-center fade-in-0 zoom-in-95 text-center duration-500">
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 shadow-[0_0_40px_-12px] shadow-primary/50">
-                  <Sparkles className="h-7 w-7 text-primary" />
-                </div>
+                <OrbitMark className="h-14 w-14 drop-shadow-[0_0_18px_hsl(var(--primary)/0.5)]" />
                 <h1 className="mt-6 text-2xl font-semibold tracking-tight">
                   Ask your company anything
                 </h1>

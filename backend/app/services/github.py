@@ -7,6 +7,7 @@ REST — nothing fabricated. Failures raise; callers decide how to degrade.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from urllib.parse import urlencode
 
@@ -20,10 +21,11 @@ _AUTHORIZE = "https://github.com/login/oauth/authorize"
 _TOKEN = "https://github.com/login/oauth/access_token"
 _SCOPES = "repo read:org"
 
-_MAX_REPOS = 15
+_MAX_REPOS = 8
 
-_PER_REPO = 30
+_PER_REPO = 20
 _ENRICH_PER_REPO = 10
+_REPO_CONCURRENCY = 4
 _CONTRIBUTORS_PER_REPO = 10
 _COMMENTS_MAX = 50
 
@@ -265,47 +267,57 @@ async def fetch_work(
             "affiliation": "owner,collaborator,organization_member",
         },
     )
+    sem = asyncio.Semaphore(_REPO_CONCURRENCY)
+
+    async def one(full: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
+        async with sem:
+            items: list[dict[str, Any]] = []
+            try:
+                prs = await _get(
+                    auth,
+                    f"/repos/{full}/pulls",
+                    {"state": "all", "sort": "updated", "direction": "desc", "per_page": _PER_REPO},
+                )
+                pr_items = [_shape(full, p, True) for p in prs]
+                if since:
+                    pr_items = [x for x in pr_items if (x.get("updatedAt") or "") > since]
+                for pr in [s for s in pr_items if s["state"] == "open"][:_ENRICH_PER_REPO]:
+                    await _enrich_pr(auth, full, pr)  # stats + reviews (open PRs only)
+
+                issue_params = {"state": "all", "sort": "updated", "direction": "desc", "per_page": _PER_REPO}
+                if since:
+                    issue_params["since"] = since
+                issues = await _get(auth, f"/repos/{full}/issues", issue_params)
+                # The issues endpoint interleaves PRs; keep only real issues.
+                issue_items = [_shape(full, i, False) for i in issues if "pull_request" not in i]
+
+                # Full discussion on every item; a 0-comment item skips the API call.
+                for it in (*pr_items, *issue_items):
+                    if it.get("commentCount") == 0:
+                        continue
+                    it["comments"] = await _fetch_comments(auth, full, it["identifier"].rsplit("#", 1)[-1])
+                items = [*pr_items, *issue_items]
+            except Exception:
+                return [], None  # a single archived/blocked repo must not sink the sync
+            if since:
+                return items, None  # contributors barely change; full syncs refresh them
+            try:
+                rows = await _get(auth, f"/repos/{full}/contributors", {"per_page": _CONTRIBUTORS_PER_REPO})
+                return items, [
+                    {"login": c.get("login"), "contributions": c.get("contributions", 0)}
+                    for c in rows
+                    if c.get("login")
+                ]
+            except Exception:
+                return items, []
+
+    names = [r["full_name"] for r in repos if r.get("full_name")]
+    results = await asyncio.gather(*(one(full) for full in names))
+
     out: list[dict[str, Any]] = []
     contributors: dict[str, list[dict[str, Any]]] = {}
-    for r in repos:
-        full = r.get("full_name")
-        if not full:
-            continue
-        try:
-            prs = await _get(
-                auth,
-                f"/repos/{full}/pulls",
-                {"state": "all", "sort": "updated", "direction": "desc", "per_page": _PER_REPO},
-            )
-            pr_items = [_shape(full, p, True) for p in prs]
-            if since:
-                pr_items = [x for x in pr_items if (x.get("updatedAt") or "") > since]
-            for pr in [s for s in pr_items if s["state"] == "open"][:_ENRICH_PER_REPO]:
-                await _enrich_pr(auth, full, pr)  # stats + reviews (open PRs only)
-
-            issue_params = {"state": "all", "sort": "updated", "direction": "desc", "per_page": _PER_REPO}
-            if since:
-                issue_params["since"] = since
-            issues = await _get(auth, f"/repos/{full}/issues", issue_params)
-            # The issues endpoint interleaves PRs; keep only real issues.
-            issue_items = [_shape(full, i, False) for i in issues if "pull_request" not in i]
-
-            # Full discussion on every item; a 0-comment item skips the API call.
-            for it in (*pr_items, *issue_items):
-                if it.get("commentCount") == 0:
-                    continue
-                it["comments"] = await _fetch_comments(auth, full, it["identifier"].rsplit("#", 1)[-1])
-            out.extend(pr_items)
-            out.extend(issue_items)
-        except Exception:
-            continue  # a single archived/blocked repo must not sink the sync
-        if since:
-            continue  # contributors barely change; full syncs refresh them
-        try:
-            rows = await _get(auth, f"/repos/{full}/contributors", {"per_page": _CONTRIBUTORS_PER_REPO})
-            contributors[full] = [
-                {"login": c.get("login"), "contributions": c.get("contributions", 0)} for c in rows if c.get("login")
-            ]
-        except Exception:
-            contributors[full] = []
+    for full, (items, contrib) in zip(names, results):
+        out.extend(items)
+        if contrib is not None:
+            contributors[full] = contrib
     return out, contributors

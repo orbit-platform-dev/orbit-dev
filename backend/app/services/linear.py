@@ -157,7 +157,7 @@ async def exchange_code(code: str) -> dict[str, Any] | str:
 # Read everything, not just a page: paginate the whole connection. Open issues
 # are the live execution reality; recently-completed ones drive loop closure.
 _MAX_OPEN = 2000  # effectively "all open work" with a safety ceiling
-_MAX_COMPLETED = 500  # recent completions are enough to close commitments
+_MAX_COMPLETED = 200  # recent completions are enough to close commitments
 
 _OPEN_FILTER: dict[str, Any] = {"state": {"type": {"nin": ["completed", "canceled"]}}}
 _COMPLETED_FILTER: dict[str, Any] = {"state": {"type": {"eq": "completed"}}}

@@ -643,6 +643,41 @@ def cite_dicts(deps: ChatDeps, cap: int = 6) -> list[dict]:
     return [{"id": a.id, "source": a.source, "title": a.title, "url": a.url} for a, _ in items]
 
 
+_CITE_SIM = 0.75
+
+
+async def relevant_citations(deps: ChatDeps, answer: str, cap: int = 6) -> list[dict]:
+    """Sources that actually back THIS answer. The ledger holds everything any
+    tool retrieved during the run, including dead ends the model discarded —
+    cite only items the answer names or that are semantically close to it."""
+    items = sorted(deps.ledger.values(), key=lambda t: t[1], reverse=True)
+    if not items:
+        return []
+    if not (answer or "").strip() or not embeddings.available():
+        return cite_dicts(deps, cap)
+    text = answer.lower()
+    named = [a for a, _ in items if a.external_ref and a.external_ref.lower() in text]
+    av = await embeddings.embed_query(answer[:2000])
+    if av is None:
+        return cite_dicts(deps, cap)
+    close = sorted(
+        ((a, embeddings.cosine(av, a.embedding)) for a, _ in items if a.embedding),
+        key=lambda t: t[1],
+        reverse=True,
+    )
+    out: list[Artifact] = []
+    seen: set[str] = set()
+    for a in (*named, *(a for a, sim in close if sim >= _CITE_SIM)):
+        if a.id not in seen:
+            seen.add(a.id)
+            out.append(a)
+        if len(out) >= cap:
+            break
+    if not out and deps.touched:
+        out = [a for a, _ in items[:2]]
+    return [{"id": a.id, "source": a.source, "title": a.title, "url": a.url} for a in out]
+
+
 _STATS_WORDS = ("how many", "how much", "count", "total", "average", "avg", "number of", "how long")
 
 

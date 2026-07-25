@@ -204,6 +204,11 @@ def _advance_cursor(integ, *, full: bool, at: datetime | None = None) -> None:
     integ.sync_state = st
 
 
+def _image_budget(integ) -> list[int]:
+    first = bool(integ) and not ((integ.sync_state or {}).get("cursor"))
+    return [0 if first else _IMAGES_PER_SYNC]
+
+
 class _Prefetch(NamedTuple):
     auth: Any = None
     since: str | None = None
@@ -492,7 +497,7 @@ async def pull_linear(db, workspace_id: str, pre: _Prefetch | None = None) -> in
     issues = pre.data
 
     ingested = 0
-    img_budget = [_IMAGES_PER_SYNC]
+    img_budget = _image_budget(integ)
     for issue in issues:
         content, meta = _linear_content_meta(issue)
         existing = (
@@ -674,7 +679,7 @@ async def pull_github(db, workspace_id: str, pre: _Prefetch | None = None) -> in
     items, contributors = pre.data
 
     ingested = 0
-    img_budget = [_IMAGES_PER_SYNC]
+    img_budget = _image_budget(integ)
     for item in items:
         source = "github-pr" if item.get("isPr") else "github-issue"
         content, meta = _github_content_meta(item)
@@ -955,7 +960,7 @@ async def pull_slack(db, workspace_id: str, pre: _Prefetch | None = None) -> int
     team, channel_threads = pre.data
 
     ingested = 0
-    img_budget = [_IMAGES_PER_SYNC]
+    img_budget = _image_budget(integ)
     for ch, threads in channel_threads:
         for t in threads:
             ext = f"{t['channel']}:{t['ts']}"

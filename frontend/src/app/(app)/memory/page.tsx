@@ -302,34 +302,27 @@ function AddCallDialog() {
 export default function MemoryPage() {
   const { data: hb } = useHeartbeat();
   const sync = hb?.sync;
-
   return (
     <div>
-      <PageHeader
-        title="Memory"
-        description={
-          hb?.lastRunAt ? `Orbit last read your tools ${timeAgo(hb.lastRunAt)}` : undefined
-        }
-        actions={<AddCallDialog />}
-      />
       {sync?.active ? (
-        // While Orbit reads the tools, the sync IS the page — no half-built data.
         <MemoryTheater sync={sync} />
       ) : (
-        <Tabs defaultValue="knowledge">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <TabsList>
-              <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
-              <TabsTrigger value="sources">Sources</TabsTrigger>
-            </TabsList>
-          </div>
-          <TabsContent value="knowledge">
-            <EntitiesView />
-          </TabsContent>
-          <TabsContent value="sources">
-            <SignalsView />
-          </TabsContent>
-        </Tabs>
+        <>
+          <Tabs defaultValue="knowledge">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <TabsList>
+                <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
+                <TabsTrigger value="sources">Sources</TabsTrigger>
+              </TabsList>
+            </div>
+            <TabsContent value="knowledge">
+              <EntitiesView />
+            </TabsContent>
+            <TabsContent value="sources">
+              <SignalsView />
+            </TabsContent>
+          </Tabs>
+        </>
       )}
     </div>
   );
