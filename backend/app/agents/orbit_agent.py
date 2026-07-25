@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from pydantic_ai import Agent, RunContext, UsageLimits
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     PartDeltaEvent,
@@ -375,8 +376,10 @@ def _thinking_settings():
 
 
 def _build() -> Agent[ChatDeps]:
+    reserve = max(0, (settings.agent_request_limit or 5) - 1)
+    toolset = FunctionToolset(_TOOLS).filtered(lambda ctx, _tool: ctx.usage.requests < reserve)
     return Agent(build_model(settings.resolved_agent_model), deps_type=ChatDeps,
-                 system_prompt=SYSTEM_PROMPTS["orbit-agent"], tools=_TOOLS, retries=2)
+                 system_prompt=SYSTEM_PROMPTS["orbit-agent"], toolsets=[toolset], retries=2)
 
 
 async def _directives(deps: ChatDeps, question: str) -> str:
