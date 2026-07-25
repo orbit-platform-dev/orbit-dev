@@ -16,6 +16,7 @@ import random
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any, NamedTuple
 
 from sqlalchemy import delete, func, select, update
 
@@ -175,17 +176,38 @@ async def _sync_plan(db, workspace_id: str, key: str):
     return (None if stale_full else st["cursor"]), integ
 
 
-def _advance_cursor(integ, *, full: bool) -> None:
+def _advance_cursor(integ, *, full: bool, at: datetime | None = None) -> None:
     if not integ:
         return
     now = datetime.now(timezone.utc)
     st = dict(integ.sync_state or {})
-    st["cursor"] = (now - timedelta(minutes=_CURSOR_OVERLAP_MINUTES)).isoformat()
+    # Anchor the cursor to when the data was FETCHED, not when the (possibly
+    # long) apply finished — anything updated in between must be seen next tick.
+    st["cursor"] = ((at or now) - timedelta(minutes=_CURSOR_OVERLAP_MINUTES)).isoformat()
     # The first advance (initial backfill) sets the reconcile baseline too, so the
     # very next tick stays incremental instead of immediately running a full pull.
     if full or not st.get("lastFull"):
         st["lastFull"] = now.isoformat()
     integ.sync_state = st
+
+class _Prefetch(NamedTuple):
+    auth: Any = None
+    since: str | None = None
+    integ: Integration | None = None
+    fetch: Any = None
+    data: Any = None
+    exc: Exception | None = None
+    fetched_at: datetime | None = None
+
+
+async def _resolve(pre: _Prefetch) -> _Prefetch:
+    if not pre.auth or pre.fetch is None:
+        return pre
+    try:
+        data = await pre.fetch()
+    except Exception as exc:
+        return pre._replace(exc=exc, fetched_at=datetime.now(timezone.utc))
+    return pre._replace(data=data, fetched_at=datetime.now(timezone.utc))
 
 
 def _parse_ts(value: str | None) -> datetime | None:
@@ -389,7 +411,20 @@ async def _reembed_if_images_changed(existing, content: str, imgs: dict, prev_im
             existing.embedding = vec
 
 
-async def pull_linear(db, workspace_id: str) -> int:
+async def _plan_linear(db, workspace_id: str) -> _Prefetch:
+    auth = await linear.get_auth(db, workspace_id)
+    if not auth:
+        return _Prefetch()
+    since, integ = await _sync_plan(db, workspace_id, "linear")
+
+    async def fetch():
+        return (await linear.fetch_open_issues(auth, since=since)
+                + await linear.fetch_completed_issues(auth, since=since))
+
+    return _Prefetch(auth=auth, since=since, integ=integ, fetch=fetch)
+
+
+async def pull_linear(db, workspace_id: str, pre: _Prefetch | None = None) -> int:
     """Ingest Linear issues as full-context artifacts. Returns the count of NEW
     artifacts (existing ones are REFRESHED in place, so a re-pull enriches the
     whole backlog with new fields — owner, project, labels, cycle time).
@@ -397,17 +432,16 @@ async def pull_linear(db, workspace_id: str) -> int:
     Honest when Linear isn't connected (returns 0) and on API failure (logs,
     returns what it managed) — never fabricates.
     """
-    auth = await linear.get_auth(db, workspace_id)
-    if not auth:
+    if pre is None:
+        pre = await _resolve(await _plan_linear(db, workspace_id))
+    if not pre.auth:
         return 0
-    since, integ = await _sync_plan(db, workspace_id, "linear")
-    try:
-        issues = (await linear.fetch_open_issues(auth, since=since)
-                  + await linear.fetch_completed_issues(auth, since=since))
-    except Exception as exc:
-        logger.warning("Linear pull failed", exc_info=True)
-        await _note_sync_health(db, integ, exc)
+    auth, since, integ = pre.auth, pre.since, pre.integ
+    if pre.exc is not None:
+        logger.warning("Linear pull failed", exc_info=pre.exc)
+        await _note_sync_health(db, integ, pre.exc)
         return 0
+    issues = pre.data
 
     ingested = 0
     img_budget = [_IMAGES_PER_SYNC]
@@ -459,9 +493,9 @@ async def pull_linear(db, workspace_id: str) -> int:
                     and (a.meta or {}).get("stateType") not in ("completed", "canceled")):
                 a.status = "stale"
 
-    await _note_sync_health(db, integ, None) 
-    _advance_cursor(integ, full=since is None)
-    await db.commit() 
+    await _note_sync_health(db, integ, None)
+    _advance_cursor(integ, full=since is None, at=pre.fetched_at)
+    await db.commit()
 
     # A new issue may fulfill an earlier untracked commitment — re-match once.
     from .model import match_open_commitments
@@ -526,19 +560,31 @@ def _github_content_meta(s: dict) -> tuple[str, dict]:
     return "\n\n".join(blocks), meta
 
 
-async def pull_github(db, workspace_id: str) -> int:
-    """Ingest GitHub PRs + issues as artifacts — same idempotent refresh-in-place
-    contract as pull_linear. Honest when not connected (0) / on failure."""
+async def _plan_github(db, workspace_id: str) -> _Prefetch:
     auth = await github.get_auth(db, workspace_id)
     if not auth:
-        return 0
+        return _Prefetch()
     since, integ = await _sync_plan(db, workspace_id, "github")
-    try:
-        items, contributors = await github.fetch_work(auth, since=since)
-    except Exception as exc:
-        logger.warning("GitHub pull failed", exc_info=True)
-        await _note_sync_health(db, integ, exc)
+
+    async def fetch():
+        return await github.fetch_work(auth, since=since)
+
+    return _Prefetch(auth=auth, since=since, integ=integ, fetch=fetch)
+
+
+async def pull_github(db, workspace_id: str, pre: _Prefetch | None = None) -> int:
+    """Ingest GitHub PRs + issues as artifacts — same idempotent refresh-in-place
+    contract as pull_linear. Honest when not connected (0) / on failure."""
+    if pre is None:
+        pre = await _resolve(await _plan_github(db, workspace_id))
+    if not pre.auth:
         return 0
+    auth, since, integ = pre.auth, pre.since, pre.integ
+    if pre.exc is not None:
+        logger.warning("GitHub pull failed", exc_info=pre.exc)
+        await _note_sync_health(db, integ, pre.exc)
+        return 0
+    items, contributors = pre.data
 
     ingested = 0
     img_budget = [_IMAGES_PER_SYNC]
@@ -622,35 +668,47 @@ async def pull_github(db, workspace_id: str) -> int:
                 a.meta = {**(a.meta or {}), "state": state, "stateType": "completed"}
 
     await _note_sync_health(db, integ, None)  # a clean pull clears any prior 'reconnect'
-    _advance_cursor(integ, full=since is None)
+    _advance_cursor(integ, full=since is None, at=pre.fetched_at)
     await db.commit()
     return ingested
 
 
-async def pull_gdrive(db, workspace_id: str) -> int:
-    """Ingest recently-modified Google Docs/Sheets/Slides + PDFs (text layer,
-    scanned ones via OCR) as document artifacts. Content refreshes in place when
-    a file changes (modifiedTime moves). Honest when not connected (0) / on failure."""
+async def _plan_gdrive(db, workspace_id: str) -> _Prefetch:
     try:
         auth = await google_drive.get_auth(db, workspace_id)
     except Exception as exc:
         logger.warning("Google Drive token refresh failed", exc_info=True)
         await _note_sync_health(db, await db.get(Integration, {"workspace_id": workspace_id, "key": "google-drive"}), exc)
-        return 0
+        return _Prefetch()
     if not auth:
-        return 0
+        return _Prefetch()
     since, integ = await _sync_plan(db, workspace_id, "google-drive")
     # What's already in memory, so unchanged files are never re-downloaded/re-OCR'd.
     known_rows = (await db.execute(select(Artifact.external_ref, Artifact.meta).where(
         Artifact.workspace_id == workspace_id,
         Artifact.source.in_(SOURCE_BY_INTEGRATION["google-drive"])))).all()
     known = {ref: (m or {}).get("modifiedAt") for ref, m in known_rows if ref}
-    try:
-        docs, listed = await google_drive.fetch_documents(auth, since=since, known=known)
-    except Exception as exc:
-        logger.warning("Google Drive pull failed", exc_info=True)
-        await _note_sync_health(db, integ, exc)
+
+    async def fetch():
+        return await google_drive.fetch_documents(auth, since=since, known=known)
+
+    return _Prefetch(auth=auth, since=since, integ=integ, fetch=fetch)
+
+
+async def pull_gdrive(db, workspace_id: str, pre: _Prefetch | None = None) -> int:
+    """Ingest recently-modified Google Docs/Sheets/Slides + PDFs (text layer,
+    scanned ones via OCR) as document artifacts. Content refreshes in place when
+    a file changes (modifiedTime moves). Honest when not connected (0) / on failure."""
+    if pre is None:
+        pre = await _resolve(await _plan_gdrive(db, workspace_id))
+    if not pre.auth:
         return 0
+    auth, since, integ = pre.auth, pre.since, pre.integ
+    if pre.exc is not None:
+        logger.warning("Google Drive pull failed", exc_info=pre.exc)
+        await _note_sync_health(db, integ, pre.exc)
+        return 0
+    docs, listed = pre.data
 
     ingested = 0
     for d in docs:
@@ -710,41 +768,55 @@ async def pull_gdrive(db, workspace_id: str) -> int:
                 continue  # transient — deletion needs proof, not doubt
 
     await _note_sync_health(db, integ, None)  # a clean pull clears any prior 'reconnect'
-    _advance_cursor(integ, full=since is None)
+    _advance_cursor(integ, full=since is None, at=pre.fetched_at)
     await db.commit()
     from .model import match_open_commitments
     await match_open_commitments(db, workspace_id)
     return ingested
 
 
-async def pull_slack(db, workspace_id: str) -> int:
-    """Ingest Slack threads (root + replies) from the channels the bot is in as
-    artifacts. Threads are conversational, so they extract like calls. Honest when
-    not connected (0) and on failure (logs, returns what it managed)."""
+async def _plan_slack(db, workspace_id: str) -> _Prefetch:
     auth = await slack.get_auth(db, workspace_id)
     if not auth:
-        return 0
+        return _Prefetch()
     since, integ = await _sync_plan(db, workspace_id, "slack")
-    try:
-        channels = await slack.list_channels(auth)
-    except Exception as exc:
-        logger.warning("Slack channel list failed", exc_info=True)
-        await _note_sync_health(db, integ, exc)
-        return 0
-    team = await slack.team_url(auth)  # permalink prefix; None degrades to no link
     oldest = None
     if since:
         parsed = _parse_ts(since)
         oldest = f"{parsed.timestamp():.6f}" if parsed else None
 
+    async def fetch():
+        channels = await slack.list_channels(auth)
+        team = await slack.team_url(auth)  # permalink prefix; None degrades to no link
+        per_channel = []
+        for ch in channels:
+            try:
+                per_channel.append((ch, await slack.fetch_threads(auth, ch["id"], oldest=oldest)))
+            except Exception:
+                logger.warning("Slack history failed for #%s", ch.get("name"), exc_info=True)
+        return team, per_channel
+
+    return _Prefetch(auth=auth, since=since, integ=integ, fetch=fetch)
+
+
+async def pull_slack(db, workspace_id: str, pre: _Prefetch | None = None) -> int:
+    """Ingest Slack threads (root + replies) from the channels the bot is in as
+    artifacts. Threads are conversational, so they extract like calls. Honest when
+    not connected (0) and on failure (logs, returns what it managed)."""
+    if pre is None:
+        pre = await _resolve(await _plan_slack(db, workspace_id))
+    if not pre.auth:
+        return 0
+    auth, since, integ = pre.auth, pre.since, pre.integ
+    if pre.exc is not None:
+        logger.warning("Slack channel list failed", exc_info=pre.exc)
+        await _note_sync_health(db, integ, pre.exc)
+        return 0
+    team, channel_threads = pre.data
+
     ingested = 0
     img_budget = [_IMAGES_PER_SYNC]
-    for ch in channels:
-        try:
-            threads = await slack.fetch_threads(auth, ch["id"], oldest=oldest)
-        except Exception:
-            logger.warning("Slack history failed for #%s", ch.get("name"), exc_info=True)
-            continue
+    for ch, threads in channel_threads:
         for t in threads:
             ext = f"{t['channel']}:{t['ts']}"
             url = slack.permalink(team, ch["id"], t["ts"])
@@ -794,8 +866,8 @@ async def pull_slack(db, workspace_id: str) -> int:
             a.url = slack.permalink(team, m.get("channelId"), m.get("ts")) or a.url
 
     await _note_sync_health(db, integ, None)  # a clean pull clears any prior 'reconnect'
-    _advance_cursor(integ, full=since is None)
-    await db.commit()  
+    _advance_cursor(integ, full=since is None, at=pre.fetched_at)
+    await db.commit()
 
     from .model import match_open_commitments
     await match_open_commitments(db, workspace_id)
@@ -825,20 +897,32 @@ def _fireflies_content_meta(t: dict) -> tuple[str, dict]:
     return "\n\n".join(b for b in blocks if b), meta
 
 
-async def pull_fireflies(db, workspace_id: str) -> int:
+async def _plan_fireflies(db, workspace_id: str) -> _Prefetch:
+    auth = await fireflies.get_auth(db, workspace_id)
+    if not auth:
+        return _Prefetch()
+    since, integ = await _sync_plan(db, workspace_id, "fireflies")
+
+    async def fetch():
+        return await fireflies.fetch_transcripts(auth, since=since)
+
+    return _Prefetch(auth=auth, since=since, integ=integ, fetch=fetch)
+
+
+async def pull_fireflies(db, workspace_id: str, pre: _Prefetch | None = None) -> int:
     """Ingest Fireflies meeting transcripts as call artifacts. Transcripts are
     immutable once written, so existing ones are left untouched (no refresh
     churn). Honest when not connected (0) / on failure."""
-    auth = await fireflies.get_auth(db, workspace_id)
-    if not auth:
+    if pre is None:
+        pre = await _resolve(await _plan_fireflies(db, workspace_id))
+    if not pre.auth:
         return 0
-    since, integ = await _sync_plan(db, workspace_id, "fireflies")
-    try:
-        transcripts = await fireflies.fetch_transcripts(auth, since=since)
-    except Exception as exc:
-        logger.warning("Fireflies pull failed", exc_info=True)
-        await _note_sync_health(db, integ, exc)
+    since, integ = pre.since, pre.integ
+    if pre.exc is not None:
+        logger.warning("Fireflies pull failed", exc_info=pre.exc)
+        await _note_sync_health(db, integ, pre.exc)
         return 0
+    transcripts = pre.data
 
     ingested = 0
     for t in transcripts:
@@ -864,7 +948,7 @@ async def pull_fireflies(db, workspace_id: str) -> int:
         ingested += 1
 
     await _note_sync_health(db, integ, None)  # a clean pull clears any prior 'reconnect'
-    _advance_cursor(integ, full=since is None)
+    _advance_cursor(integ, full=since is None, at=pre.fetched_at)
     await db.commit()
     # A meeting can create a commitment; re-match against Linear.
     from .model import match_open_commitments
@@ -1002,11 +1086,19 @@ async def backfill_chunks(db, workspace_id: str, limit: int = 50) -> int:
 
 async def pull_all(db, workspace_id: str) -> dict[str, int]:
     """Pull new artifacts from every connected sensor. Honest per source (0 when
-    not connected). This is the Observe step the heartbeat runs."""
-    return {
-        "linear": await pull_linear(db, workspace_id),
-        "slack": await pull_slack(db, workspace_id),
-        "github": await pull_github(db, workspace_id),
-        "google-drive": await pull_gdrive(db, workspace_id),
-        "fireflies": await pull_fireflies(db, workspace_id),
-    }
+    not connected). This is the Observe step the heartbeat runs.
+
+    Network fetches run CONCURRENTLY (wall clock ≈ the slowest connector);
+    everything that writes — upserts, extraction, the entity graph — stays
+    serial in this one session, so merge order and semantics are unchanged."""
+    connectors = (
+        ("linear", _plan_linear, pull_linear),
+        ("slack", _plan_slack, pull_slack),
+        ("github", _plan_github, pull_github),
+        ("google-drive", _plan_gdrive, pull_gdrive),
+        ("fireflies", _plan_fireflies, pull_fireflies),
+    )
+    plans = [await plan(db, workspace_id) for _, plan, _ in connectors]
+    resolved = await asyncio.gather(*(_resolve(p) for p in plans))
+    return {key: await run(db, workspace_id, pre)
+            for (key, _, run), pre in zip(connectors, resolved)}
