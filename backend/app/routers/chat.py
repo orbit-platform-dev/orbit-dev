@@ -203,7 +203,7 @@ async def ask(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_workspace_
         except Exception:
             logger.warning("agent answer failed; degrading", exc_info=True)
             text, _ = await orbit_agent.keyword_fallback(deps, question)
-        citations = orbit_agent.cite_dicts(deps)
+        citations = await orbit_agent.relevant_citations(deps, text)
         grounded = deps.touched
         draft = deps.staged_drafts[0] if deps.staged_drafts else None
 
@@ -256,7 +256,7 @@ async def ask_stream(
                 if not text:
                     text, _ = await orbit_agent.keyword_fallback(deps, question)
                     yield _sse({"type": "delta", "text": text})
-                citations = orbit_agent.cite_dicts(deps)
+                citations = await orbit_agent.relevant_citations(deps, text)
                 grounded = deps.touched
                 for d in deps.staged_drafts:
                     yield _sse({"type": "draft", "draft": d})
