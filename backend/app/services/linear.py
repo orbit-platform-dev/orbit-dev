@@ -10,6 +10,7 @@ raise; callers decide how to degrade.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 from urllib.parse import urlencode
@@ -18,6 +19,8 @@ import httpx
 
 from ..config import settings
 from ..models import Integration
+
+logger = logging.getLogger("orbit.linear")
 
 _API = "https://api.linear.app/graphql"
 _AUTHORIZE = "https://linear.app/oauth/authorize"
@@ -281,14 +284,36 @@ async def create_issue(
         auth,
         """
       mutation($input: IssueCreateInput!) {
-        issueCreate(input: $input) { success issue { identifier url } }
+        issueCreate(input: $input) { success issue { id identifier url } }
       }""",
         {"input": issue_input},
     )
     created = data["issueCreate"]
     if not created["success"]:
         raise RuntimeError("Linear refused to create the issue")
-    return {"identifier": created["issue"]["identifier"], "url": created["issue"]["url"]}
+    return {
+        "id": created["issue"]["id"],
+        "identifier": created["issue"]["identifier"],
+        "url": created["issue"]["url"],
+    }
+
+
+async def attach_link(auth: str, issue_id: str, url: str, title: str) -> bool:
+    """Attach a URL to an issue (shows in Linear's attachment section). Best-effort:
+    returns False on failure so evidence attachment never blocks issue creation."""
+    try:
+        data = await _gql(
+            auth,
+            """
+          mutation($issueId: String!, $url: String!, $title: String) {
+            attachmentLinkURL(issueId: $issueId, url: $url, title: $title) { success }
+          }""",
+            {"issueId": issue_id, "url": url, "title": title[:255]},
+        )
+        return bool(data["attachmentLinkURL"]["success"])
+    except Exception:
+        logger.warning("Linear attachment failed for %s", url, exc_info=True)
+        return False
 
 
 async def find_or_create_label(auth: str, team_id: str, name: str) -> str | None:

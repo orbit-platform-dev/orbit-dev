@@ -19,7 +19,8 @@ from sqlalchemy import select
 from ..deps import Depends, get_current_user, get_db
 from ..models import ActivityEvent, Artifact, Entity, Feedback, Insight, Workspace
 from ..schemas import ArtifactOut, BriefOut, CorrectionOut, EntityOut, FeedOut, FindingOut
-from ..services import heartbeat, learning, memory, tickets
+from ..services import heartbeat, learning, memory, scheduler, tickets
+from ..services import linear as linear_svc
 from ..services.workspace import get_workspace_id
 
 router = APIRouter(tags=["feed"])
@@ -46,11 +47,14 @@ async def set_auto_sync(
     body: AutoSyncIn, db=Depends(get_db), ws: str = Depends(get_workspace_id), _=Depends(get_current_user)
 ):
     """Toggle auto-sync for this workspace. Persisted — gates the in-process loop
-    AND Cloud Scheduler ticks. Manual 'Pull now' works either way."""
+    AND Cloud Scheduler ticks. Manual 'Pull now' works either way. When
+    SCHEDULER_JOB is configured (prod), also pauses/resumes the Cloud Scheduler
+    job itself, so toggle-off means zero scheduled calls."""
     row = await db.get(Workspace, ws)
     if row:
         row.auto_sync = body.enabled
         await db.commit()
+    await scheduler.set_paused(not body.enabled)
     return heartbeat.status(ws, enabled=body.enabled)
 
 
@@ -168,6 +172,31 @@ async def _get_finding(db, ws: str, finding_id: str) -> Insight:
     return f
 
 
+async def _evidence_for_issue(db, f: Insight) -> tuple[str, list[tuple[str, str]]]:
+    """The finding's evidence, ready for the created issue: a markdown block to
+    append to the description, and (url, title) pairs for native attachments.
+    Empty when the finding carries no evidence — the description stays untouched."""
+    lines: list[str] = []
+    links: list[tuple[str, str]] = []
+    for eid in f.entity_ids or []:
+        e = await db.get(Entity, eid)
+        if e and e.kind == "commitment":
+            due = (e.meta or {}).get("due")
+            lines.append(f"- Commitment: {e.name}" + (f" (due {due})" if due else ""))
+    for aid in f.artifact_ids or []:
+        a = await db.get(Artifact, aid)
+        if not a:
+            continue
+        if a.url:
+            lines.append(f"- [{a.title}]({a.url})")
+            links.append((a.url, a.title))
+        else:
+            lines.append(f"- {a.title} ({a.source})")
+    if not lines:
+        return "", []
+    return "\n\n---\n**Evidence** (attached by Orbit)\n" + "\n".join(lines), links
+
+
 @router.post("/findings/{finding_id}/approve", response_model=FindingOut)
 async def approve_finding(
     finding_id: str, db=Depends(get_db), ws: str = Depends(get_workspace_id), user=Depends(get_current_user)
@@ -211,14 +240,21 @@ async def approve_finding(
     if action.get("type") != "create-linear-issue":
         raise HTTPException(422, "This finding has no action to approve")
 
+    evidence_md, links = await _evidence_for_issue(db, f)
     try:
         result = await tickets.create_ticket(
-            db, ws, connector="linear", title=action["title"], description=action.get("description", "")
+            db, ws, connector="linear", title=action["title"], description=action.get("description", "") + evidence_md
         )
     except PermissionError as exc:
         raise HTTPException(409, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, f"Linear did not create the issue: {exc}") from exc
+
+    if links and result.get("id"):
+        auth = await linear_svc.get_auth(db, ws)
+        if auth:
+            for url, title in links:
+                await linear_svc.attach_link(auth, result["id"], url, title)
 
     f.action = {**action, "result": result}
     f.status = "approved"
