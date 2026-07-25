@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from pydantic_ai import Agent, RunContext, UsageLimits
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     PartDeltaEvent,
@@ -539,53 +540,87 @@ def _phase_for(part: ToolCallPart) -> dict | None:
     return None
 
 
+def _evidence_block(deps: ChatDeps, cap: int = 8, snippet: int = 500) -> str:
+    items = sorted(deps.ledger.values(), key=lambda t: t[1], reverse=True)[:cap]
+    if not items:
+        return ""
+    lines = [f"[id: {a.id}] ({a.source}) {a.title}\n{(a.content or '')[:snippet]}" for a, _ in items]
+    return "EVIDENCE (already retrieved from company memory):\n" + "\n\n".join(lines)
+
+
+async def _finalize(deps: ChatDeps, question: str) -> str:
+    """One fresh, tool-less model call that answers from the evidence the tool
+    rounds already gathered. Runs when the budgeted agent loop ends without a
+    text answer (request limit hit, or a thinking-only final response), so the
+    user always gets a real grounded reply instead of a canned fallback."""
+    finalizer = Agent(
+        build_model(settings.resolved_agent_model),
+        system_prompt=SYSTEM_PROMPTS["orbit-agent"],
+        retries=1,
+    )
+    evidence = _evidence_block(deps)
+    prompt = (
+        f"{evidence}\n\n" if evidence else ""
+    ) + f"QUESTION: {question}\n\nAnswer now from the evidence above. If it is insufficient, say so honestly."
+    result = await finalizer.run(prompt, usage_limits=UsageLimits(request_limit=1))
+    return (result.output or "").strip()
+
+
 async def stream_events(deps: ChatDeps, question: str, history: list[dict] | None = None):
     directives = await _directives(deps, question)
     recall = await _recall(deps, question)
     agent = _build()
     yield {"type": "phase", "phase": "reasoning"}
     final_parts: list[str] = []
-    async with agent.iter(
-        _prompt(question, history, recall, deps.language),
-        deps=deps,
-        instructions=directives or None,
-        model_settings=_thinking_settings(),
-        usage_limits=UsageLimits(request_limit=settings.agent_request_limit),
-    ) as run:
-        async for node in run:
-            if Agent.is_call_tools_node(node):
-                async with node.stream(run.ctx) as ts:
-                    async for ev in ts:
-                        if isinstance(ev, FunctionToolCallEvent):
-                            ph = _phase_for(ev.part)
-                            if ph:
-                                yield ph
-            elif Agent.is_model_request_node(node):
-                cur: list[str] = []
-                had_tool = False
-                async with node.stream(run.ctx) as rs:
-                    async for ev in rs:
-                        if isinstance(ev, PartStartEvent):
-                            p = ev.part
-                            if isinstance(p, ThinkingPart) and p.content:
-                                yield {"type": "thinking", "text": p.content}
-                            elif isinstance(p, TextPart) and p.content:
-                                cur.append(p.content)
-                                yield {"type": "delta", "text": p.content}
-                            elif isinstance(p, ToolCallPart):
-                                had_tool = True
-                        elif isinstance(ev, PartDeltaEvent):
-                            d = ev.delta
-                            if isinstance(d, ThinkingPartDelta) and d.content_delta:
-                                yield {"type": "thinking", "text": d.content_delta}
-                            elif isinstance(d, TextPartDelta) and d.content_delta:
-                                cur.append(d.content_delta)
-                                yield {"type": "delta", "text": d.content_delta}
-                            elif isinstance(d, ToolCallPartDelta):
-                                had_tool = True
-                if not had_tool and cur:
-                    final_parts = cur
-    deps.final_text = "".join(final_parts).strip()
+    try:
+        async with agent.iter(
+            _prompt(question, history, recall, deps.language),
+            deps=deps,
+            instructions=directives or None,
+            model_settings=_thinking_settings(),
+            usage_limits=UsageLimits(request_limit=settings.agent_request_limit),
+        ) as run:
+            async for node in run:
+                if Agent.is_call_tools_node(node):
+                    async with node.stream(run.ctx) as ts:
+                        async for ev in ts:
+                            if isinstance(ev, FunctionToolCallEvent):
+                                ph = _phase_for(ev.part)
+                                if ph:
+                                    yield ph
+                elif Agent.is_model_request_node(node):
+                    cur: list[str] = []
+                    had_tool = False
+                    async with node.stream(run.ctx) as rs:
+                        async for ev in rs:
+                            if isinstance(ev, PartStartEvent):
+                                p = ev.part
+                                if isinstance(p, ThinkingPart) and p.content:
+                                    yield {"type": "thinking", "text": p.content}
+                                elif isinstance(p, TextPart) and p.content:
+                                    cur.append(p.content)
+                                    yield {"type": "delta", "text": p.content}
+                                elif isinstance(p, ToolCallPart):
+                                    had_tool = True
+                            elif isinstance(ev, PartDeltaEvent):
+                                d = ev.delta
+                                if isinstance(d, ThinkingPartDelta) and d.content_delta:
+                                    yield {"type": "thinking", "text": d.content_delta}
+                                elif isinstance(d, TextPartDelta) and d.content_delta:
+                                    cur.append(d.content_delta)
+                                    yield {"type": "delta", "text": d.content_delta}
+                                elif isinstance(d, ToolCallPartDelta):
+                                    had_tool = True
+                    if not had_tool and cur:
+                        final_parts = cur
+        deps.final_text = "".join(final_parts).strip()
+    except UsageLimitExceeded:
+        logger.warning("agent request budget exhausted; finalizing from gathered evidence")
+    if not deps.final_text:
+        text = await _finalize(deps, question)
+        if text:
+            deps.final_text = text
+            yield {"type": "delta", "text": text}
 
 
 async def answer(deps: ChatDeps, question: str, history: list[dict] | None = None) -> str:
