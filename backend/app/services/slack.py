@@ -122,7 +122,7 @@ async def list_channels(auth: str, limit: int = 200) -> list[dict[str, Any]]:
 
 
 async def fetch_threads(
-    auth: str, channel_id: str, *, history_limit: int = 200, max_threads: int = 50, oldest: str | None = None
+    auth: str, channel_id: str, *, history_limit: int = 200, max_threads: int = 25, oldest: str | None = None
 ) -> list[dict[str, Any]]:
     """Recent threads (root + replies) in a channel, newest first. Threads only —
     a rooted discussion is a coherent unit of intent, like a mini-call. Caps are

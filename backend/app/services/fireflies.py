@@ -18,7 +18,7 @@ _API = "https://api.fireflies.ai/graphql"
 
 
 _PAGE = 50
-_MAX_TRANSCRIPTS = 200
+_MAX_TRANSCRIPTS = 50
 
 
 def _auth_header(cred: dict[str, Any] | None) -> str | None:
