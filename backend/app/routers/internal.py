@@ -3,6 +3,7 @@
 Lets Cloud Scheduler drive the heartbeat when the app runs scale-to-zero
 (HEARTBEAT_ENABLED=false), so there's no always-on instance to pay for.
 """
+
 from __future__ import annotations
 
 import hmac

@@ -1,4 +1,3 @@
-
 export async function disableOrgCreation(userId: string): Promise<void> {
   await fetch(`https://api.clerk.com/v1/users/${userId}`, {
     method: "PATCH",

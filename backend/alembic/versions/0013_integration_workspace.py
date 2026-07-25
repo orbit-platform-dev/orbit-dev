@@ -9,8 +9,10 @@ The table only holds the connector catalog + credentials; the catalog is
 reseeded per workspace at runtime, so we rebuild the table rather than migrate
 rows in place (any existing connection must be reconnected once).
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0013_integration_workspace"
 down_revision = "0012_drop_legacy"

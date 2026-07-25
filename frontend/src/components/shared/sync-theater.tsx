@@ -31,12 +31,18 @@ export function SyncStageTracker({ stage }: { stage: number }) {
       {STAGES.map((s, i) => (
         <Fragment key={s}>
           {i > 0 && (
-            <span className={cn("mx-2 h-px w-6 sm:w-14", i <= stage ? "bg-primary/60" : "bg-border")} />
+            <span
+              className={cn("mx-2 h-px w-6 sm:w-14", i <= stage ? "bg-primary/60" : "bg-border")}
+            />
           )}
           <span
             className={cn(
               "flex items-center gap-1.5 text-[12px] font-medium",
-              i < stage ? "text-foreground" : i === stage ? "text-primary" : "text-muted-foreground/60",
+              i < stage
+                ? "text-foreground"
+                : i === stage
+                  ? "text-primary"
+                  : "text-muted-foreground/60",
             )}
           >
             <span

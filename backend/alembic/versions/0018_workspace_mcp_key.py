@@ -4,8 +4,10 @@ The shared MCP_API_KEY + client-chosen workspace header could not be handed to
 customers (any key-holder could name any workspace). Now each workspace owns a
 key (stored hashed); /mcp resolves the tenant FROM the key.
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0018_workspace_mcp_key"
 down_revision = "0017_mcp_queries"

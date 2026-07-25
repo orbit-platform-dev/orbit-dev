@@ -1,11 +1,4 @@
-import {
-  Database,
-  MessagesSquare,
-  Plug,
-  Settings,
-  Sparkles,
-  type LucideIcon,
-} from "lucide-react";
+import { Database, MessagesSquare, Plug, Settings, Sparkles, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   key: string;

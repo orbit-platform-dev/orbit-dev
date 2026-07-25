@@ -4,8 +4,10 @@ Previously the toggle lived in process memory, so it reset on every restart and
 never gated Cloud Scheduler ticks (which run in a different request/instance).
 Now it is per-workspace state honored by every scheduled tick path.
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0015_workspace_auto_sync"
 down_revision = "0014_feedback_embedding"

@@ -36,7 +36,11 @@ export function CreateWorkspace({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name.trim() }),
       });
-      const data = (await res.json().catch(() => ({}))) as { id?: string; name?: string; error?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        id?: string;
+        name?: string;
+        error?: string;
+      };
       if (!res.ok || !data.id) throw new Error(data.error || "Couldn't create the workspace.");
       await userMemberships?.revalidate?.();
       await setActive?.({ organization: data.id });

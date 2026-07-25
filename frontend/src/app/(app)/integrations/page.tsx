@@ -10,7 +10,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
 import { McpCard } from "@/components/integrations/mcp-card";
 import { useIntegrations, qk } from "@/lib/hooks";
@@ -46,7 +52,12 @@ const KEY_CONNECT: Record<string, { name: string; placeholder: string; help: str
   },
 };
 
-function KeyConnectDialog({ provider, onOpenChange, oauthAvailable, onOAuth }: {
+function KeyConnectDialog({
+  provider,
+  onOpenChange,
+  oauthAvailable,
+  onOAuth,
+}: {
   provider: string | null;
   onOpenChange: (o: boolean) => void;
   oauthAvailable: boolean;
@@ -68,7 +79,9 @@ function KeyConnectDialog({ provider, onOpenChange, oauthAvailable, onOAuth }: {
   return (
     <Dialog open={!!provider} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Connect {info?.name}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Connect {info?.name}</DialogTitle>
+        </DialogHeader>
         {oauthAvailable && (
           // Preferred path: one click, no secret to copy. Full browser redirect.
           <div className="space-y-3">
@@ -76,17 +89,25 @@ function KeyConnectDialog({ provider, onOpenChange, oauthAvailable, onOAuth }: {
               <Plug className="h-4 w-4" /> Connect with {info?.name}
             </Button>
             <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-muted-foreground">
-              <span className="h-px flex-1 bg-border" /> or use an API key <span className="h-px flex-1 bg-border" />
+              <span className="h-px flex-1 bg-border" /> or use an API key{" "}
+              <span className="h-px flex-1 bg-border" />
             </div>
           </div>
         )}
         <div className="space-y-1.5">
           <Label htmlFor="connect-key">Personal API key</Label>
-          <Input id="connect-key" placeholder={info?.placeholder} value={key} onChange={(e) => setKey(e.target.value)} />
+          <Input
+            id="connect-key"
+            placeholder={info?.placeholder}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+          />
           <p className="text-xs text-muted-foreground">{info?.help}</p>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
           <Button onClick={() => connect.mutate()} disabled={connect.isPending || !key.trim()}>
             {connect.isPending ? "Connecting…" : "Connect"}
           </Button>
@@ -96,15 +117,28 @@ function KeyConnectDialog({ provider, onOpenChange, oauthAvailable, onOAuth }: {
   );
 }
 
-function CirclebackConnectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+function CirclebackConnectDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
   const qc = useQueryClient();
   const [secret, setSecret] = useState("");
   const [hook, setHook] = useState<{ url: string; note: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (!open) { setHook(null); setSecret(""); return; }
-    api.getWebhookUrl("circleback").then(setHook).catch(() => toast.error("Could not generate the webhook URL"));
+    if (!open) {
+      setHook(null);
+      setSecret("");
+      return;
+    }
+    api
+      .getWebhookUrl("circleback")
+      .then(setHook)
+      .catch(() => toast.error("Could not generate the webhook URL"));
   }, [open]);
 
   const connect = useMutation({
@@ -120,7 +154,9 @@ function CirclebackConnectDialog({ open, onOpenChange }: { open: boolean; onOpen
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Connect Circleback</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Connect Circleback</DialogTitle>
+        </DialogHeader>
         <div className="space-y-1.5">
           <Label>1 · Webhook URL</Label>
           <div className="flex gap-2">
@@ -144,13 +180,21 @@ function CirclebackConnectDialog({ open, onOpenChange }: { open: boolean; onOpen
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="cb-secret">2 · Signing secret</Label>
-          <Input id="cb-secret" placeholder="whsec_…" value={secret} onChange={(e) => setSecret(e.target.value)} />
+          <Input
+            id="cb-secret"
+            placeholder="whsec_…"
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+          />
           <p className="text-xs text-muted-foreground">
-            Copy the signing secret Circleback shows after adding the webhook. Stored server-side, used only to verify deliveries.
+            Copy the signing secret Circleback shows after adding the webhook. Stored server-side,
+            used only to verify deliveries.
           </p>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
           <Button onClick={() => connect.mutate()} disabled={connect.isPending || !secret.trim()}>
             {connect.isPending ? "Connecting…" : "Connect"}
           </Button>
@@ -160,12 +204,21 @@ function CirclebackConnectDialog({ open, onOpenChange }: { open: boolean; onOpen
   );
 }
 
-function IntegrationRow({ integration, onConnect }: { integration: Integration; onConnect: (key: string) => void }) {
+function IntegrationRow({
+  integration,
+  onConnect,
+}: {
+  integration: Integration;
+  onConnect: (key: string) => void;
+}) {
   const qc = useQueryClient();
   const connected = integration.status === "connected" || integration.status === "syncing";
-  const needsReconnect = integration.status === "reconnect";  // token expired / scope missing
-  const canConnectNow = !!integration.connectable
-    && (integration.key in KEY_CONNECT || !!integration.oauthAvailable || integration.key === "circleback");
+  const needsReconnect = integration.status === "reconnect"; // token expired / scope missing
+  const canConnectNow =
+    !!integration.connectable &&
+    (integration.key in KEY_CONNECT ||
+      !!integration.oauthAvailable ||
+      integration.key === "circleback");
   const disconnect = useMutation({
     mutationFn: () => api.disconnectIntegration(integration.key),
     onSuccess: () => {
@@ -174,7 +227,9 @@ function IntegrationRow({ integration, onConnect }: { integration: Integration; 
     },
   });
   return (
-    <Card className={cn("flex items-center gap-4 p-4", !canConnectNow && !connected && "opacity-80")}>
+    <Card
+      className={cn("flex items-center gap-4 p-4", !canConnectNow && !connected && "opacity-80")}
+    >
       <IntegrationLogo k={integration.key} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -186,16 +241,29 @@ function IntegrationRow({ integration, onConnect }: { integration: Integration; 
         <p className="mt-0.5 truncate text-sm text-muted-foreground">{integration.description}</p>
       </div>
       {connected ? (
-        <Button variant="outline" size="sm" onClick={() => disconnect.mutate()} disabled={disconnect.isPending}>Disconnect</Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => disconnect.mutate()}
+          disabled={disconnect.isPending}
+        >
+          Disconnect
+        </Button>
       ) : needsReconnect && canConnectNow ? (
         <div className="flex shrink-0 items-center gap-2">
           <span className="text-[11px] font-medium text-warning">Session expired</span>
-          <Button size="sm" onClick={() => onConnect(integration.key)}><Plug className="h-4 w-4" /> Reconnect</Button>
+          <Button size="sm" onClick={() => onConnect(integration.key)}>
+            <Plug className="h-4 w-4" /> Reconnect
+          </Button>
         </div>
       ) : canConnectNow ? (
-        <Button size="sm" onClick={() => onConnect(integration.key)}><Plug className="h-4 w-4" /> Connect</Button>
+        <Button size="sm" onClick={() => onConnect(integration.key)}>
+          <Plug className="h-4 w-4" /> Connect
+        </Button>
       ) : (
-        <span className="shrink-0 rounded-full border border-border px-2.5 py-0.5 text-[11px] text-muted-foreground">Coming soon</span>
+        <span className="shrink-0 rounded-full border border-border px-2.5 py-0.5 text-[11px] text-muted-foreground">
+          Coming soon
+        </span>
       )}
     </Card>
   );
@@ -230,7 +298,8 @@ export default function IntegrationsPage() {
     window.history.replaceState({}, "", window.location.pathname);
   }, [qc]);
 
-  const oauthAvailable = (key: string | null) => !!(data ?? []).find((i) => i.key === key)?.oauthAvailable;
+  const oauthAvailable = (key: string | null) =>
+    !!(data ?? []).find((i) => i.key === key)?.oauthAvailable;
   const startOAuth = async (key: string) => {
     try {
       const { url } = await api.getOAuthUrl(key);
@@ -256,7 +325,9 @@ export default function IntegrationsPage() {
     .filter((i) => category === "All" || i.category === category)
     .filter((i) => !query || i.name.toLowerCase().includes(query.toLowerCase()))
     // Connectable first, then alphabetical.
-    .sort((a, b) => Number(!!b.connectable) - Number(!!a.connectable) || a.name.localeCompare(b.name));
+    .sort(
+      (a, b) => Number(!!b.connectable) - Number(!!a.connectable) || a.name.localeCompare(b.name),
+    );
 
   return (
     <div>
@@ -268,7 +339,12 @@ export default function IntegrationsPage() {
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <div className="relative flex-1 sm:max-w-xs">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-9" placeholder="Search integrations…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <Input
+            className="pl-9"
+            placeholder="Search integrations…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </div>
         <div className="flex flex-wrap gap-1.5">
           {categories.map((c) => (
@@ -277,10 +353,20 @@ export default function IntegrationsPage() {
               onClick={() => setCategory(c)}
               className={cn(
                 "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                category === c ? "border-primary/30 bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground",
+                category === c
+                  ? "border-primary/30 bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:text-foreground",
               )}
             >
-              {c === "MCP" ? <span className="inline-flex items-center gap-1"><Bot className="h-3 w-3" /> MCP</span> : c === "All" ? "All" : catLabel(c)}
+              {c === "MCP" ? (
+                <span className="inline-flex items-center gap-1">
+                  <Bot className="h-3 w-3" /> MCP
+                </span>
+              ) : c === "All" ? (
+                "All"
+              ) : (
+                catLabel(c)
+              )}
             </button>
           ))}
         </div>
@@ -289,12 +375,20 @@ export default function IntegrationsPage() {
       {category === "MCP" ? (
         <McpCard />
       ) : isLoading ? (
-        <div className="grid gap-3 sm:grid-cols-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}</div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-20 rounded-xl" />
+          ))}
+        </div>
       ) : filtered.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">No integrations in this category.</p>
+        <p className="py-10 text-center text-sm text-muted-foreground">
+          No integrations in this category.
+        </p>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          {filtered.map((i) => <IntegrationRow key={i.key} integration={i} onConnect={onConnect} />)}
+          {filtered.map((i) => (
+            <IntegrationRow key={i.key} integration={i} onConnect={onConnect} />
+          ))}
         </div>
       )}
 

@@ -5,8 +5,10 @@ are observed, and questions memory could not answer feed the reasoner's
 memory-gap detector. This is observation only — no agent ever writes memory
 directly (proposals go through human approval on the feed).
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0017_mcp_queries"
 down_revision = "0016_workspace_embedding_model"

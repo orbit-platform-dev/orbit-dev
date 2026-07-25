@@ -1,4 +1,5 @@
 """Ask Orbit — the company brain as a tool-calling agent."""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,7 +9,6 @@ import uuid
 from dataclasses import dataclass, field
 
 from pydantic_ai import Agent, RunContext, UsageLimits
-from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     PartDeltaEvent,
@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
 )
+from pydantic_ai.toolsets import FunctionToolset
 from sqlalchemy import func, select
 
 from ..config import settings
@@ -74,8 +75,7 @@ def _record(deps: ChatDeps, artifact: Artifact, score: float) -> None:
 
 async def _present_sources(db, ws: str) -> list[str]:
     connected = await connected_keys(db, ws)
-    rows = (await db.execute(
-        select(Artifact.source).where(Artifact.workspace_id == ws).distinct())).scalars().all()
+    rows = (await db.execute(select(Artifact.source).where(Artifact.workspace_id == ws).distinct())).scalars().all()
     return [s for s in rows if s and source_visible(s, connected)]
 
 
@@ -93,8 +93,9 @@ async def _expand_sources(db, ws: str, requested: list[str]) -> list[str]:
     return sorted(out)
 
 
-async def _search(db, ws: str, query: str, *, sources: list[str] | None = None,
-                  k: int = _TOP_K) -> list[tuple[Artifact, float]]:
+async def _search(
+    db, ws: str, query: str, *, sources: list[str] | None = None, k: int = _TOP_K
+) -> list[tuple[Artifact, float]]:
     connected = await connected_keys(db, ws)
     src = (await _expand_sources(db, ws, sources)) if sources else None
     src = src or None
@@ -120,18 +121,25 @@ async def _search(db, ws: str, query: str, *, sources: list[str] | None = None,
 
 async def _person_issues(db, ws: str, name: str, cap: int = 15) -> list[Artifact]:
     q = _toks(name)
-    rows = (await db.execute(
-        select(Artifact).where(Artifact.workspace_id == ws, Artifact.source.in_(WORK_SOURCES)))).scalars().all()
+    rows = (
+        (await db.execute(select(Artifact).where(Artifact.workspace_id == ws, Artifact.source.in_(WORK_SOURCES))))
+        .scalars()
+        .all()
+    )
     matched = {
-        v for a in rows for v in ((a.meta or {}).get("assignee"), (a.meta or {}).get("assigneeEmail"))
+        v
+        for a in rows
+        for v in ((a.meta or {}).get("assignee"), (a.meta or {}).get("assigneeEmail"))
         if v and (_name_tokens(v) & q)
     }
     if not matched:
         return []
-    mine = [a for a in rows
-            if (a.meta or {}).get("assignee") in matched or (a.meta or {}).get("assigneeEmail") in matched]
-    mine.sort(key=lambda a: ((a.meta or {}).get("stateType") not in ("completed", "canceled"), a.occurred_at),
-              reverse=True)
+    mine = [
+        a for a in rows if (a.meta or {}).get("assignee") in matched or (a.meta or {}).get("assigneeEmail") in matched
+    ]
+    mine.sort(
+        key=lambda a: ((a.meta or {}).get("stateType") not in ("completed", "canceled"), a.occurred_at), reverse=True
+    )
     return mine[:cap]
 
 
@@ -151,28 +159,45 @@ async def default_target(db, ws: str, connector: str) -> tuple[str | None, str |
 async def build_action(db, ws: str, d: dict, *, proactive: bool = False) -> dict:
     target, label = await default_target(db, ws, d["connector"])
     return {
-        "actionId": f"act_{uuid.uuid4().hex[:10]}", "type": "create-ticket",
-        "connector": d["connector"], "title": d["title"], "description": d["description"],
-        "target": target, "targetLabel": label, "status": "pending", "result": None,
+        "actionId": f"act_{uuid.uuid4().hex[:10]}",
+        "type": "create-ticket",
+        "connector": d["connector"],
+        "title": d["title"],
+        "description": d["description"],
+        "target": target,
+        "targetLabel": label,
+        "status": "pending",
+        "result": None,
         "proactive": proactive,
     }
 
 
 async def _connected_pullable(db, ws: str) -> list[str]:
-    rows = (await db.execute(select(Integration).where(
-        Integration.workspace_id == ws, Integration.key.in_(_PULLABLE),
-        Integration.status == "connected"))).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(Integration).where(
+                    Integration.workspace_id == ws, Integration.key.in_(_PULLABLE), Integration.status == "connected"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
     return [r.key for r in rows if r.credentials]
 
 
 async def _run_pull(db, ws: str, connector: str) -> int:
-    fn = {"linear": ingestion.pull_linear, "github": ingestion.pull_github,
-          "slack": ingestion.pull_slack, "google-drive": ingestion.pull_gdrive}.get(connector)
+    fn = {
+        "linear": ingestion.pull_linear,
+        "github": ingestion.pull_github,
+        "slack": ingestion.pull_slack,
+        "google-drive": ingestion.pull_gdrive,
+    }.get(connector)
     return (await fn(db, ws)) if fn else 0
 
 
-async def search_memory(ctx: RunContext[ChatDeps], query: str,
-                        sources: list[str] | None = None, k: int = 8) -> str:
+async def search_memory(ctx: RunContext[ChatDeps], query: str, sources: list[str] | None = None, k: int = 8) -> str:
     """Search the company's memory for artifacts relevant to `query`. Optionally
     restrict to specific `sources` (call list_sources first to see them) so the answer
     stays on topic — e.g. the Google Drive sources for a documents question, GitHub
@@ -191,20 +216,28 @@ async def search_memory(ctx: RunContext[ChatDeps], query: str,
     deps.touched = True
     return "\n\n".join(
         f"[id: {a.id}] ({a.source}) {a.title}\n{(getattr(a, '_hit_snippet', None) or a.content or '')[:_SNIPPET]}"
-        for a, _ in results)
+        for a, _ in results
+    )
 
 
 async def list_sources(ctx: RunContext[ChatDeps]) -> str:
     """List the kinds of memory available (connector source types) with how many items
     each has, so you can pick the right `sources` for a targeted search."""
     connected = await connected_keys(ctx.deps.db, ctx.deps.ws)
-    rows = [(s, c) for s, c in (await ctx.deps.db.execute(
-        select(Artifact.source, func.count()).where(Artifact.workspace_id == ctx.deps.ws)
-        .group_by(Artifact.source))).all() if source_visible(s, connected)]
+    rows = [
+        (s, c)
+        for s, c in (
+            await ctx.deps.db.execute(
+                select(Artifact.source, func.count())
+                .where(Artifact.workspace_id == ctx.deps.ws)
+                .group_by(Artifact.source)
+            )
+        ).all()
+        if source_visible(s, connected)
+    ]
     if not rows:
         return "Company memory is empty — nothing has been ingested yet."
-    return "Available memory sources (source = item count):\n" + "\n".join(
-        f"- {s}: {c}" for s, c in sorted(rows))
+    return "Available memory sources (source = item count):\n" + "\n".join(f"- {s}: {c}" for s, c in sorted(rows))
 
 
 async def person_work(ctx: RunContext[ChatDeps], name: str) -> str:
@@ -221,7 +254,8 @@ async def person_work(ctx: RunContext[ChatDeps], name: str) -> str:
     return "\n".join(
         f"[id: {a.id}] ({a.source}) {a.title} — "
         f"{(a.meta or {}).get('stateType') or (a.meta or {}).get('state') or 'open'}"
-        for a in arts)
+        for a in arts
+    )
 
 
 async def graph_neighbors(ctx: RunContext[ChatDeps], entity: str) -> str:
@@ -231,11 +265,19 @@ async def graph_neighbors(ctx: RunContext[ChatDeps], entity: str) -> str:
     if not q:
         return "Name a person, project or customer to explore."
     db, ws = ctx.deps.db, ctx.deps.ws
-    ents = (await db.execute(select(Entity).where(
-        Entity.workspace_id == ws, Entity.kind.in_(("person", "project", "customer"))))).scalars().all()
+    ents = (
+        (
+            await db.execute(
+                select(Entity).where(Entity.workspace_id == ws, Entity.kind.in_(("person", "project", "customer")))
+            )
+        )
+        .scalars()
+        .all()
+    )
     by_id = {e.id: e for e in ents}
-    hit = next((e for e in ents if (_name_tokens(e.name) & q)
-                or any(_name_tokens(a) & q for a in (e.aliases or []))), None)
+    hit = next(
+        (e for e in ents if (_name_tokens(e.name) & q) or any(_name_tokens(a) & q for a in (e.aliases or []))), None
+    )
     if not hit:
         return f"No entity matching '{entity}' in the company graph."
     edges = await traverse(db, ws, [hit.id], depth=2)
@@ -244,15 +286,20 @@ async def graph_neighbors(ctx: RunContext[ChatDeps], entity: str) -> str:
     art_ids = {x for lk in edges for x, t in ((lk.from_id, lk.from_type), (lk.to_id, lk.to_type)) if t == "artifact"}
     titles: dict[str, str] = {}
     if art_ids:
-        titles = {i: t for i, t in (await db.execute(
-            select(Artifact.id, Artifact.title).where(Artifact.id.in_(list(art_ids)[:40])))).all()}
+        titles = {
+            i: t
+            for i, t in (
+                await db.execute(select(Artifact.id, Artifact.title).where(Artifact.id.in_(list(art_ids)[:40])))
+            ).all()
+        }
 
     def name_of(nid: str, ntype: str) -> str:
         return (by_id[nid].name if (ntype == "entity" and nid in by_id) else titles.get(nid) or "?")[:60]
 
     ctx.deps.touched = True
     return f"Relationships around {hit.name}:\n" + "\n".join(
-        f"- {name_of(lk.from_id, lk.from_type)} —{lk.type}→ {name_of(lk.to_id, lk.to_type)}" for lk in edges[:15])
+        f"- {name_of(lk.from_id, lk.from_type)} —{lk.type}→ {name_of(lk.to_id, lk.to_type)}" for lk in edges[:15]
+    )
 
 
 async def memory_stats(ctx: RunContext[ChatDeps]) -> str:
@@ -274,9 +321,12 @@ async def learned_facts(ctx: RunContext[ChatDeps], query: str) -> str:
     if qv is None:
         return "Could not search learned facts right now."
     ql = query.lower()
-    historical = any(w in ql for w in ("last month", "previously", "used to", "earlier", "who owned", "history", "before"))
-    mems = await memory.search(ctx.deps.db, ctx.deps.ws, qv, k=6,
-                               statuses=("active", "superseded") if historical else ("active",))
+    historical = any(
+        w in ql for w in ("last month", "previously", "used to", "earlier", "who owned", "history", "before")
+    )
+    mems = await memory.search(
+        ctx.deps.db, ctx.deps.ws, qv, k=6, statuses=("active", "superseded") if historical else ("active",)
+    )
     if not mems:
         return "No learned facts match that."
     ctx.deps.touched = True
@@ -284,7 +334,8 @@ async def learned_facts(ctx: RunContext[ChatDeps], query: str) -> str:
         f"- {m.fact} [confidence {int(round(m.confidence * 100))}%"
         + (" · HISTORICAL" if m.status == "superseded" else "")
         + f" · {m.source_ref or 'derived'}]"
-        for m, _ in mems)
+        for m, _ in mems
+    )
 
 
 _PULL_WAIT_S = 240
@@ -314,9 +365,11 @@ async def pull_connector(ctx: RunContext[ChatDeps], name: str) -> str:
     try:
         n = await asyncio.wait_for(asyncio.shield(task), timeout=_PULL_WAIT_S)
     except asyncio.TimeoutError:
-        return (f"{label} is a big pull and is still syncing in the background; new items will land "
-                "in memory over the next minutes. Answer from current memory NOW, tell the user the "
-                f"{label} sync is still running, and suggest asking again shortly.")
+        return (
+            f"{label} is a big pull and is still syncing in the background; new items will land "
+            "in memory over the next minutes. Answer from current memory NOW, tell the user the "
+            f"{label} sync is still running, and suggest asking again shortly."
+        )
     except Exception:
         logger.warning("chat-triggered pull failed", exc_info=True)
         return f"Could not pull fresh data from {label} right now."
@@ -332,11 +385,14 @@ async def draft_ticket(ctx: RunContext[ChatDeps], connector: str, title: str, de
     title = (title or "").strip()[:255]
     if not title:
         return "A ticket needs a title before it can be drafted."
-    action = await build_action(ctx.deps.db, ctx.deps.ws,
-                                {"connector": connector, "title": title, "description": (description or "").strip()})
+    action = await build_action(
+        ctx.deps.db, ctx.deps.ws, {"connector": connector, "title": title, "description": (description or "").strip()}
+    )
     ctx.deps.staged_drafts.append(action)
-    return (f"Drafted a {_PULL_LABEL.get(connector, connector)} ticket '{title}', staged for the user to "
-            "review and approve. Tell them it's ready below.")
+    return (
+        f"Drafted a {_PULL_LABEL.get(connector, connector)} ticket '{title}', staged for the user to "
+        "review and approve. Tell them it's ready below."
+    )
 
 
 async def remember_fact(ctx: RunContext[ChatDeps], fact: str, subject: str = "") -> str:
@@ -351,8 +407,15 @@ async def remember_fact(ctx: RunContext[ChatDeps], fact: str, subject: str = "")
         return "Nothing to remember."
     try:
         mem = await memory.record(
-            ctx.deps.db, ctx.deps.ws, fact=fact[:1000], kind="note", subject=subject.strip(),
-            source_ref=f"Chat · {ctx.deps.who or ctx.deps.uid}", importance=0.7, base_confidence=0.85)
+            ctx.deps.db,
+            ctx.deps.ws,
+            fact=fact[:1000],
+            kind="note",
+            subject=subject.strip(),
+            source_ref=f"Chat · {ctx.deps.who or ctx.deps.uid}",
+            importance=0.7,
+            base_confidence=0.85,
+        )
     except Exception:
         logger.warning("remember_fact failed", exc_info=True)
         return "Could not save that to memory right now."
@@ -361,14 +424,24 @@ async def remember_fact(ctx: RunContext[ChatDeps], fact: str, subject: str = "")
     return f"Remembered: {fact[:120]}"
 
 
-_TOOLS = [search_memory, list_sources, person_work, graph_neighbors,
-          memory_stats, learned_facts, pull_connector, draft_ticket, remember_fact]
+_TOOLS = [
+    search_memory,
+    list_sources,
+    person_work,
+    graph_neighbors,
+    memory_stats,
+    learned_facts,
+    pull_connector,
+    draft_ticket,
+    remember_fact,
+]
 
 
 def _thinking_settings():
     if settings.resolved_agent_model.partition(":")[0] in ("google-gla", "google"):
         try:
             from pydantic_ai.models.google import GoogleModelSettings
+
             return GoogleModelSettings(google_thinking_config={"include_thoughts": True})
         except Exception:
             return None
@@ -378,14 +451,20 @@ def _thinking_settings():
 def _build() -> Agent[ChatDeps]:
     reserve = max(0, (settings.agent_request_limit or 5) - 1)
     toolset = FunctionToolset(_TOOLS).filtered(lambda ctx, _tool: ctx.usage.requests < reserve)
-    return Agent(build_model(settings.resolved_agent_model), deps_type=ChatDeps,
-                 system_prompt=SYSTEM_PROMPTS["orbit-agent"], toolsets=[toolset], retries=2)
+    return Agent(
+        build_model(settings.resolved_agent_model),
+        deps_type=ChatDeps,
+        system_prompt=SYSTEM_PROMPTS["orbit-agent"],
+        toolsets=[toolset],
+        retries=2,
+    )
 
 
 async def _directives(deps: ChatDeps, question: str) -> str:
     try:
-        return (await learning.directives_block(deps.db, deps.ws, question)
-                + await learning.directives_block(deps.db, deps.ws, question, user_id=deps.uid))
+        return await learning.directives_block(deps.db, deps.ws, question) + await learning.directives_block(
+            deps.db, deps.ws, question, user_id=deps.uid
+        )
     except Exception:
         logger.warning("directives fetch failed", exc_info=True)
         return ""
@@ -420,10 +499,14 @@ async def _recall(deps: ChatDeps, question: str) -> str:
         return ""
     lines = "\n".join(
         f"- {m.fact} [confidence {int(round(m.confidence * 100))}%"
-        + (f" · {m.source_ref}" if m.source_ref else "") + "]"
-        for m, _ in mems)
-    return ("WHAT ORBIT HAS LEARNED SO FAR (prior facts and your own notes — signals to weigh by "
-            "confidence and verify against current evidence, not absolute truth):\n" + lines + "\n\n")
+        + (f" · {m.source_ref}" if m.source_ref else "")
+        + "]"
+        for m, _ in mems
+    )
+    return (
+        "WHAT ORBIT HAS LEARNED SO FAR (prior facts and your own notes — signals to weigh by "
+        "confidence and verify against current evidence, not absolute truth):\n" + lines + "\n\n"
+    )
 
 
 def _prompt(question: str, history: list[dict] | None, recall: str = "", language: str = "") -> str:
@@ -444,8 +527,14 @@ def _phase_for(part: ToolCallPart) -> dict | None:
         return {"type": "phase", "phase": "drafting"}
     if part.tool_name == "remember_fact":
         return {"type": "phase", "phase": "remembering"}
-    if part.tool_name in ("search_memory", "list_sources", "person_work", "graph_neighbors",
-                          "memory_stats", "learned_facts"):
+    if part.tool_name in (
+        "search_memory",
+        "list_sources",
+        "person_work",
+        "graph_neighbors",
+        "memory_stats",
+        "learned_facts",
+    ):
         return {"type": "phase", "phase": "retrieving"}
     return None
 
@@ -456,9 +545,13 @@ async def stream_events(deps: ChatDeps, question: str, history: list[dict] | Non
     agent = _build()
     yield {"type": "phase", "phase": "reasoning"}
     final_parts: list[str] = []
-    async with agent.iter(_prompt(question, history, recall, deps.language), deps=deps, instructions=directives or None,
-                          model_settings=_thinking_settings(),
-                          usage_limits=UsageLimits(request_limit=settings.agent_request_limit)) as run:
+    async with agent.iter(
+        _prompt(question, history, recall, deps.language),
+        deps=deps,
+        instructions=directives or None,
+        model_settings=_thinking_settings(),
+        usage_limits=UsageLimits(request_limit=settings.agent_request_limit),
+    ) as run:
         async for node in run:
             if Agent.is_call_tools_node(node):
                 async with node.stream(run.ctx) as ts:
@@ -499,8 +592,12 @@ async def answer(deps: ChatDeps, question: str, history: list[dict] | None = Non
     directives = await _directives(deps, question)
     recall = await _recall(deps, question)
     agent = _build()
-    result = await agent.run(_prompt(question, history, recall, deps.language), deps=deps, instructions=directives or None,
-                             usage_limits=UsageLimits(request_limit=settings.agent_request_limit))
+    result = await agent.run(
+        _prompt(question, history, recall, deps.language),
+        deps=deps,
+        instructions=directives or None,
+        usage_limits=UsageLimits(request_limit=settings.agent_request_limit),
+    )
     text = (result.output or "").strip()
     deps.final_text = text
     return text
@@ -521,8 +618,10 @@ def _wants_stats(question: str) -> bool:
 
 def _fallback_text(stats: str, hits: list[Artifact]) -> str:
     if not hits and not stats:
-        return ("I couldn't run full AI analysis just now and found nothing matching in memory — "
-                "the model may be temporarily rate-limited. Try again in a moment.")
+        return (
+            "I couldn't run full AI analysis just now and found nothing matching in memory — "
+            "the model may be temporarily rate-limited. Try again in a moment."
+        )
     parts = ["I couldn't run full AI analysis just now, so here's a quick read straight from memory:"]
     if stats:
         parts.append(stats)

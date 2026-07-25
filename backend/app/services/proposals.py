@@ -11,6 +11,7 @@ The draft lives on the finding at ``Insight.evidence["proposal"]`` (no migration
 needed; the detector's re-scan upsert never overwrites evidence) and is surfaced
 to the UI via ``FindingOut.proposal``.
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,7 +27,7 @@ from . import learning
 logger = logging.getLogger("orbit.proposals")
 
 _HIGH_PRIORITY = ("gap", "drift")  # only the risk kinds get an autonomous draft
-_MAX_PER_RUN = 3                    # bound LLM work per heartbeat tick
+_MAX_PER_RUN = 3  # bound LLM work per heartbeat tick
 
 
 def _now() -> datetime:
@@ -56,8 +57,11 @@ def _fallback_proposal(insight: Insight, entities: list[Entity], artifacts: list
         parts.append("Evidence: " + ", ".join(a.title for a in artifacts[:5]) + ".")
     parts.append("Proposed next step: assign an owner and confirm scope before it slips.")
     return {
-        "kind": kind, "title": f"Proposed action: {insight.title}"[:200],
-        "body": "\n\n".join(parts), "draftedAt": _now().isoformat(), "status": "draft",
+        "kind": kind,
+        "title": f"Proposed action: {insight.title}"[:200],
+        "body": "\n\n".join(parts),
+        "draftedAt": _now().isoformat(),
+        "status": "draft",
     }
 
 
@@ -84,7 +88,8 @@ async def draft_proposal(db, ws: str, insight: Insight) -> dict:
             "kind": out.kind or data["kind"],
             "title": (out.title or data["title"])[:200],
             "body": out.body or data["body"],
-            "draftedAt": _now().isoformat(), "status": "draft",
+            "draftedAt": _now().isoformat(),
+            "status": "draft",
         }
     except Exception:
         logger.warning("product agent draft failed; using deterministic fallback", exc_info=True)
@@ -98,21 +103,38 @@ async def dispatch_for_workspace(db, ws: str, limit: int = _MAX_PER_RUN) -> int:
     proposal). Insight-writes only — no external action. Returns the count drafted.
     Runs on the heartbeat's background loop, so it never blocks a user request.
     """
-    findings = (await db.execute(select(Insight).where(
-        Insight.workspace_id == ws, Insight.origin == "model",
-        Insight.status == "open", Insight.kind.in_(_HIGH_PRIORITY),
-    ).order_by(Insight.created_at.desc()))).scalars().all()
+    findings = (
+        (
+            await db.execute(
+                select(Insight)
+                .where(
+                    Insight.workspace_id == ws,
+                    Insight.origin == "model",
+                    Insight.status == "open",
+                    Insight.kind.in_(_HIGH_PRIORITY),
+                )
+                .order_by(Insight.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
     todo = [f for f in findings if not (f.evidence or {}).get("proposal")][:limit]
     if not todo:
         return 0
     for f in todo:
         proposal = await draft_proposal(db, ws, f)
         f.evidence = {**(f.evidence or {}), "proposal": proposal}  # reassign so JSON change tracks
-        db.add(ActivityEvent(
-            id=f"ac_{uuid.uuid4().hex[:8]}",
-            actor={"name": "Orbit Product Agent", "isAgent": True}, action="drafted",
-            target=f"Drafted a proposal for: {f.title}"[:200], target_type="finding", at=_now(),
-        ))
+        db.add(
+            ActivityEvent(
+                id=f"ac_{uuid.uuid4().hex[:8]}",
+                actor={"name": "Orbit Product Agent", "isAgent": True},
+                action="drafted",
+                target=f"Drafted a proposal for: {f.title}"[:200],
+                target_type="finding",
+                at=_now(),
+            )
+        )
     await db.commit()
     logger.info("product agent drafted %d proposal(s) for %s", len(todo), ws)
     return len(todo)

@@ -33,16 +33,22 @@ function Stat({ label, value, active }: { label: string; value: number; active: 
   const shown = useCountUp(value);
   return (
     <div className="flex min-w-[7.5rem] flex-col items-center rounded-xl border border-border bg-card px-4 py-3">
-      <span className={cn("text-2xl font-semibold tabular-nums tracking-tight", active && "text-primary")}>
+      <span
+        className={cn(
+          "text-2xl font-semibold tabular-nums tracking-tight",
+          active && "text-primary",
+        )}
+      >
         {shown.toLocaleString()}
       </span>
-      <span className="mt-0.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{label}</span>
+      <span className="mt-0.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </span>
     </div>
   );
 }
 
 export function LiveCounts({ active, className }: { active: boolean; className?: string }) {
-
   const { data } = useQuery({
     queryKey: ["memory", "counts"],
     queryFn: api.getMemoryCounts,

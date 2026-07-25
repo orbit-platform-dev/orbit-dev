@@ -30,7 +30,13 @@ export function withinRange(dateStr: string | undefined, range: TimeRange): bool
   return Date.now() - t <= DAYS[range] * 86_400_000;
 }
 
-export function TimeFilter({ value, onChange }: { value: TimeRange; onChange: (v: TimeRange) => void }) {
+export function TimeFilter({
+  value,
+  onChange,
+}: {
+  value: TimeRange;
+  onChange: (v: TimeRange) => void;
+}) {
   return (
     <div className="inline-flex rounded-lg border border-border bg-card p-0.5">
       {RANGES.map((r) => (
@@ -39,7 +45,9 @@ export function TimeFilter({ value, onChange }: { value: TimeRange; onChange: (v
           onClick={() => onChange(r.value)}
           className={cn(
             "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-            value === r.value ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground",
+            value === r.value
+              ? "bg-primary/10 text-primary"
+              : "text-muted-foreground hover:text-foreground",
           )}
         >
           {r.label}

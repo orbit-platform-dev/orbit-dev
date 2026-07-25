@@ -9,7 +9,13 @@ import { Toaster } from "@/components/ui/sonner";
 import { initI18n } from "@/lib/i18n/client";
 import { DEFAULT_LOCALE, type LocaleCode } from "@/lib/i18n/config";
 
-export function Providers({ children, locale = DEFAULT_LOCALE }: { children: React.ReactNode; locale?: LocaleCode }) {
+export function Providers({
+  children,
+  locale = DEFAULT_LOCALE,
+}: {
+  children: React.ReactNode;
+  locale?: LocaleCode;
+}) {
   const [i18n] = React.useState(() => initI18n(locale));
   const [queryClient] = React.useState(
     () =>
@@ -27,7 +33,12 @@ export function Providers({ children, locale = DEFAULT_LOCALE }: { children: Rea
   const tree = (
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="light"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
           <TooltipProvider delayDuration={200}>
             {children}
             <Toaster />

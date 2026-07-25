@@ -1,4 +1,5 @@
 """Application settings, loaded from environment / .env."""
+
 from functools import lru_cache
 
 from pydantic import model_validator
@@ -29,7 +30,6 @@ class Settings(BaseSettings):
     clerk_jwks_url: str | None = None
     clerk_issuer: str | None = None
 
-
     frontend_url: str = "http://localhost:3000"
     public_api_url: str | None = None
 
@@ -44,11 +44,9 @@ class Settings(BaseSettings):
     zoom_client_secret: str | None = None
     zoom_redirect_uri: str = "http://localhost:8000/zoom/oauth/callback"
 
-
     linear_client_id: str | None = None
     linear_client_secret: str | None = None
     linear_redirect_uri: str = "http://localhost:8000/integrations/linear/oauth/callback"
-
 
     slack_client_id: str | None = None
     slack_client_secret: str | None = None
@@ -59,7 +57,7 @@ class Settings(BaseSettings):
     github_redirect_uri: str = "http://localhost:8000/integrations/github/oauth/callback"
 
     orbit_linear_api_key: str | None = None
-    orbit_linear_team_id: str | None = None          
+    orbit_linear_team_id: str | None = None
     orbit_linear_label: str = "MVP Requests"
 
     enable_ai: bool = False
@@ -71,7 +69,7 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
 
     embedding_model: str | None = None
-    ollama_base_url: str | None = None  
+    ollama_base_url: str | None = None
 
     anthropic_api_key: str | None = None
 

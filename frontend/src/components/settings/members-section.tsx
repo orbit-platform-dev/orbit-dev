@@ -32,14 +32,21 @@ const ROLES = [
   { value: "org:admin", label: "Admin" },
   { value: "org:member", label: "Member" },
 ];
-const roleLabel = (role: string) => ROLES.find((r) => r.value === role)?.label ?? role.replace(/^org:/, "");
+const roleLabel = (role: string) =>
+  ROLES.find((r) => r.value === role)?.label ?? role.replace(/^org:/, "");
 
 function errText(e: unknown, fallback: string): string {
   const err = e as { errors?: { longMessage?: string; message?: string }[]; message?: string };
   return err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message || err?.message || fallback;
 }
 
-function InviteMemberDialog({ workspaceName, onInvited }: { workspaceName: string; onInvited: () => void }) {
+function InviteMemberDialog({
+  workspaceName,
+  onInvited,
+}: {
+  workspaceName: string;
+  onInvited: () => void;
+}) {
   const [open, setOpen] = React.useState(false);
   const [email, setEmail] = React.useState("");
   const [role, setRole] = React.useState("org:member");
@@ -172,7 +179,11 @@ function ManageMembers() {
       <SectionHeader
         title="Members"
         description={`People with access to ${workspaceName}. Its memory, connections and data are isolated to this workspace.`}
-        action={isAdmin ? <InviteMemberDialog workspaceName={workspaceName} onInvited={refresh} /> : undefined}
+        action={
+          isAdmin ? (
+            <InviteMemberDialog workspaceName={workspaceName} onInvited={refresh} />
+          ) : undefined
+        }
       />
 
       <Card>
@@ -189,10 +200,16 @@ function ManageMembers() {
           ) : (
             memberRows.map((m) => {
               const pd = m.publicUserData;
-              const displayName = [pd?.firstName, pd?.lastName].filter(Boolean).join(" ") || pd?.identifier || "Member";
+              const displayName =
+                [pd?.firstName, pd?.lastName].filter(Boolean).join(" ") ||
+                pd?.identifier ||
+                "Member";
               const isSelf = pd?.userId === user?.id;
               return (
-                <div key={m.id} className="flex items-center gap-3 rounded-lg px-2 py-2.5 hover:bg-accent/40">
+                <div
+                  key={m.id}
+                  className="flex items-center gap-3 rounded-lg px-2 py-2.5 hover:bg-accent/40"
+                >
                   <UserAvatar name={displayName} className="h-9 w-9" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-sm font-medium">
@@ -202,7 +219,9 @@ function ManageMembers() {
                     <div className="truncate text-xs text-muted-foreground">{pd?.identifier}</div>
                   </div>
                   <span className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
-                    {m.role === "org:admin" ? <ShieldCheck className="h-3 w-3 text-primary" /> : null}
+                    {m.role === "org:admin" ? (
+                      <ShieldCheck className="h-3 w-3 text-primary" />
+                    ) : null}
                     {roleLabel(m.role)}
                   </span>
                   {isAdmin && !isSelf ? (
@@ -214,7 +233,11 @@ function ManageMembers() {
                       onClick={() => removeMember(m)}
                       aria-label={`Remove ${displayName}`}
                     >
-                      {pendingId === m.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      {pendingId === m.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
                     </Button>
                   ) : null}
                 </div>
@@ -231,13 +254,18 @@ function ManageMembers() {
           </CardHeader>
           <CardContent className="space-y-1">
             {inviteRows.map((inv) => (
-              <div key={inv.id} className="flex items-center gap-3 rounded-lg px-2 py-2.5 hover:bg-accent/40">
+              <div
+                key={inv.id}
+                className="flex items-center gap-3 rounded-lg px-2 py-2.5 hover:bg-accent/40"
+              >
                 <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card">
                   <Mail className="h-4 w-4 text-muted-foreground" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{inv.emailAddress}</div>
-                  <div className="text-xs text-muted-foreground">Invited · {roleLabel(inv.role)}</div>
+                  <div className="text-xs text-muted-foreground">
+                    Invited · {roleLabel(inv.role)}
+                  </div>
                 </div>
                 {isAdmin ? (
                   <Button

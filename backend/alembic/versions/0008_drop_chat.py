@@ -3,8 +3,10 @@
 The chat surface was removed entirely; company intelligence lives on the
 dashboard (brief + insights). Defensive DDL as usual for --reload drift.
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0008_drop_chat"
 down_revision = "0007_drop_graph"

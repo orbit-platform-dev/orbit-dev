@@ -9,9 +9,12 @@ import { Button } from "@/components/ui/button";
 
 function clerkError(err: unknown): string {
   const e = err as { errors?: { longMessage?: string; message?: string }[] };
-  return e?.errors?.[0]?.longMessage || e?.errors?.[0]?.message || "This invitation link is invalid or has expired.";
+  return (
+    e?.errors?.[0]?.longMessage ||
+    e?.errors?.[0]?.message ||
+    "This invitation link is invalid or has expired."
+  );
 }
-
 
 export function AcceptInvitation() {
   const router = useRouter();
@@ -74,7 +77,9 @@ export function AcceptInvitation() {
       {phase === "loading" && (
         <>
           <h2 className="text-2xl font-semibold tracking-tight">Preparing your invitation…</h2>
-          <p className="mt-1.5 text-sm text-muted-foreground">One moment while we set up your access.</p>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            One moment while we set up your access.
+          </p>
         </>
       )}
 
@@ -92,8 +97,12 @@ export function AcceptInvitation() {
 
       {phase === "ready" && (
         <>
-          <h2 className="text-2xl font-semibold tracking-tight">Welcome to Orbit{email ? `, ${email}` : ""}</h2>
-          <p className="mt-1.5 text-sm text-muted-foreground">Your invitation is accepted. Next, set up your workspace.</p>
+          <h2 className="text-2xl font-semibold tracking-tight">
+            Welcome to Orbit{email ? `, ${email}` : ""}
+          </h2>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            Your invitation is accepted. Next, set up your workspace.
+          </p>
           <Button className="mt-6 w-full gap-2" onClick={enterWorkspace} disabled={busy}>
             {busy ? "Entering…" : "Continue"}
             {!busy && <ArrowRight className="h-4 w-4" />}

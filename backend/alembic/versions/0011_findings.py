@@ -5,8 +5,10 @@ prepared action, origin + dedupe key) and adds `artifacts.meta` for
 source-specific fields (Linear issue state). Defensive DDL, same reason as prior
 migrations: dev --reload + startup drift-repair can add the columns first.
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0011_findings"
 down_revision = "0010_company_model"

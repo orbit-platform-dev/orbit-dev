@@ -6,6 +6,7 @@ artifacts it actually fetched. This module owns HTTP, per-user conversation
 persistence, and the ticket draft/approve lifecycle. Conversations are scoped to
 (workspace_id, user_id) so each person's chat stays private within a shared workspace.
 """
+
 from __future__ import annotations
 
 import json
@@ -89,9 +90,11 @@ def _sse(data: dict) -> str:
 
 
 def _sync_notice(sync: dict) -> str:
-    return ("I'm still reading and understanding your company from the connected tools "
-            f"(currently: {sync.get('phase', 'reading')}). {sync.get('message', '')} "
-            "Ask me again in a moment and I'll answer from the full picture.").strip()
+    return (
+        "I'm still reading and understanding your company from the connected tools "
+        f"(currently: {sync.get('phase', 'reading')}). {sync.get('message', '')} "
+        "Ask me again in a moment and I'll answer from the full picture."
+    ).strip()
 
 
 async def _owned(db, ws: str, uid: str, cid: str) -> ChatConversation:
@@ -105,15 +108,21 @@ async def _get_or_create(db, ws: str, uid: str, cid: str | None, title: str) -> 
     if cid:
         return await _owned(db, ws, uid, cid)
     conv = ChatConversation(
-        id=f"conv_{uuid.uuid4().hex[:12]}", workspace_id=ws, user_id=uid,
-        title=title[:60], messages=[], created_at=_now(), updated_at=_now(),
+        id=f"conv_{uuid.uuid4().hex[:12]}",
+        workspace_id=ws,
+        user_id=uid,
+        title=title[:60],
+        messages=[],
+        created_at=_now(),
+        updated_at=_now(),
     )
     db.add(conv)
     return conv
 
 
-def _persist(conv: ChatConversation, question: str, text: str, citations: list[dict],
-             grounded: bool, draft: dict | None) -> None:
+def _persist(
+    conv: ChatConversation, question: str, text: str, citations: list[dict], grounded: bool, draft: dict | None
+) -> None:
     msgs = list(conv.messages or [])
     msgs.append({"role": "user", "content": question, "citations": [], "grounded": True})
     assistant = {"role": "assistant", "content": text, "citations": citations, "grounded": grounded}
@@ -137,24 +146,32 @@ def _find_action(conv: ChatConversation, action_id: str) -> dict | None:
 @router.get("/conversations", response_model=list[ConversationSummary])
 async def list_conversations(db=Depends(get_db), ws: str = Depends(get_workspace_id), user=Depends(get_current_user)):
     rows = (
-        await db.execute(
-            select(ChatConversation)
-            .where(ChatConversation.workspace_id == ws, ChatConversation.user_id == _uid(user))
-            .order_by(ChatConversation.updated_at.desc())
-            .limit(100)
+        (
+            await db.execute(
+                select(ChatConversation)
+                .where(ChatConversation.workspace_id == ws, ChatConversation.user_id == _uid(user))
+                .order_by(ChatConversation.updated_at.desc())
+                .limit(100)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [ConversationSummary(id=c.id, title=c.title, updated_at=c.updated_at) for c in rows]
 
 
 @router.get("/conversations/{cid}", response_model=ConversationDetail)
-async def get_conversation(cid: str, db=Depends(get_db), ws: str = Depends(get_workspace_id), user=Depends(get_current_user)):
+async def get_conversation(
+    cid: str, db=Depends(get_db), ws: str = Depends(get_workspace_id), user=Depends(get_current_user)
+):
     conv = await _owned(db, ws, _uid(user), cid)
     return ConversationDetail(id=conv.id, title=conv.title, messages=[Message(**m) for m in (conv.messages or [])])
 
 
 @router.delete("/conversations/{cid}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_conversation(cid: str, db=Depends(get_db), ws: str = Depends(get_workspace_id), user=Depends(get_current_user)):
+async def delete_conversation(
+    cid: str, db=Depends(get_db), ws: str = Depends(get_workspace_id), user=Depends(get_current_user)
+):
     conv = await _owned(db, ws, _uid(user), cid)
     await db.delete(conv)
     await db.commit()
@@ -168,8 +185,9 @@ async def ask(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_workspace_
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Message is required.")
     conv = await _get_or_create(db, ws, uid, body.conversation_id, question)
     history = list(conv.messages or [])
-    deps = orbit_agent.ChatDeps(db=db, ws=ws, uid=uid, who=user.get("name") or uid,
-                                language=(body.language or "").strip())
+    deps = orbit_agent.ChatDeps(
+        db=db, ws=ws, uid=uid, who=user.get("name") or uid, language=(body.language or "").strip()
+    )
 
     citations: list[dict] = []
     draft: dict | None = None
@@ -191,12 +209,19 @@ async def ask(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_workspace_
 
     _persist(conv, question, text, citations, grounded, draft)
     await db.commit()
-    return ChatOut(conversation_id=conv.id, answer=text,
-                   citations=[Citation(**c) for c in citations], grounded=grounded, draft=draft)
+    return ChatOut(
+        conversation_id=conv.id,
+        answer=text,
+        citations=[Citation(**c) for c in citations],
+        grounded=grounded,
+        draft=draft,
+    )
 
 
 @router.post("/stream")
-async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_workspace_id), user=Depends(get_current_user)):
+async def ask_stream(
+    body: ChatIn, db=Depends(get_db), ws: str = Depends(get_workspace_id), user=Depends(get_current_user)
+):
     uid = _uid(user)
     question = (body.message or "").strip()
     if not question:
@@ -205,8 +230,9 @@ async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_wor
     history = list(conv.messages or [])
 
     async def gen():
-        deps = orbit_agent.ChatDeps(db=db, ws=ws, uid=uid, who=user.get("name") or uid,
-                                language=(body.language or "").strip())
+        deps = orbit_agent.ChatDeps(
+            db=db, ws=ws, uid=uid, who=user.get("name") or uid, language=(body.language or "").strip()
+        )
         try:
             sync = heartbeat.status(ws).get("sync") or {}
             citations: list[dict] = []
@@ -238,14 +264,22 @@ async def ask_stream(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_wor
 
             _persist(conv, question, text, citations, grounded, draft)
             await db.commit()
-            yield _sse({"type": "done", "conversationId": conv.id,
-                        "citations": citations, "grounded": grounded, "draft": draft})
+            yield _sse(
+                {
+                    "type": "done",
+                    "conversationId": conv.id,
+                    "citations": citations,
+                    "grounded": grounded,
+                    "draft": draft,
+                }
+            )
         except Exception:
             logger.warning("chat stream errored", exc_info=True)
             yield _sse({"type": "error", "message": "Something went wrong while answering. Please try again."})
 
-    return StreamingResponse(gen(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(
+        gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 class TicketTargets(_Camel):
@@ -281,8 +315,14 @@ class EditActionIn(_Camel):
 
 
 @router.patch("/conversations/{cid}/actions/{action_id}")
-async def edit_action(cid: str, action_id: str, body: EditActionIn, db=Depends(get_db),
-                      ws: str = Depends(get_workspace_id), user=Depends(get_current_user)):
+async def edit_action(
+    cid: str,
+    action_id: str,
+    body: EditActionIn,
+    db=Depends(get_db),
+    ws: str = Depends(get_workspace_id),
+    user=Depends(get_current_user),
+):
     conv = await _owned(db, ws, _uid(user), cid)
     draft = _find_action(conv, action_id)
     if not draft:
@@ -297,9 +337,15 @@ async def edit_action(cid: str, action_id: str, body: EditActionIn, db=Depends(g
     for field in ("title", "description"):
         v = getattr(body, field)
         if v is not None and v != draft.get(field, ""):
-            await learning.record_feedback(db, ws, section="chat-ticket", field=field,
-                                           before=str(draft.get(field, "")), after=str(v),
-                                           context=draft.get("title", ""))
+            await learning.record_feedback(
+                db,
+                ws,
+                section="chat-ticket",
+                field=field,
+                before=str(draft.get(field, "")),
+                after=str(v),
+                context=draft.get("title", ""),
+            )
             draft[field] = v
     if body.connector in ("linear", "github") and body.connector != draft.get("connector"):
         draft["connector"] = body.connector
@@ -315,8 +361,9 @@ async def edit_action(cid: str, action_id: str, body: EditActionIn, db=Depends(g
 
 
 @router.post("/conversations/{cid}/actions/{action_id}/approve")
-async def approve_action(cid: str, action_id: str, db=Depends(get_db),
-                         ws: str = Depends(get_workspace_id), user=Depends(get_current_user)):
+async def approve_action(
+    cid: str, action_id: str, db=Depends(get_db), ws: str = Depends(get_workspace_id), user=Depends(get_current_user)
+):
     conv = await _owned(db, ws, _uid(user), cid)
     draft = _find_action(conv, action_id)
     if not draft:
@@ -327,8 +374,9 @@ async def approve_action(cid: str, action_id: str, db=Depends(get_db),
     connector = draft.get("connector")
     title, description = draft.get("title", ""), draft.get("description", "")
     try:
-        result = await tickets.create_ticket(db, ws, connector=connector, title=title,
-                                             description=description, target=draft.get("target"))
+        result = await tickets.create_ticket(
+            db, ws, connector=connector, title=title, description=description, target=draft.get("target")
+        )
     except PermissionError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except ValueError as exc:
@@ -339,12 +387,16 @@ async def approve_action(cid: str, action_id: str, db=Depends(get_db),
     draft["status"], draft["result"] = "created", result
     flag_modified(conv, "messages")
     conv.updated_at = _now()
-    db.add(ActivityEvent(
-        id=f"ac_{uuid.uuid4().hex[:8]}",
-        actor={"name": user.get("name", "You"), "isAgent": False}, action="approved",
-        target=f"Created {result.get('identifier', 'a ticket')} from chat",
-        target_type="chat-ticket", at=_now(),
-    ))
+    db.add(
+        ActivityEvent(
+            id=f"ac_{uuid.uuid4().hex[:8]}",
+            actor={"name": user.get("name", "You"), "isAgent": False},
+            action="approved",
+            target=f"Created {result.get('identifier', 'a ticket')} from chat",
+            target_type="chat-ticket",
+            at=_now(),
+        )
+    )
     await db.commit()
 
     try:
@@ -355,9 +407,16 @@ async def approve_action(cid: str, action_id: str, db=Depends(get_db),
         await db.rollback()
 
     try:
-        await memory.record(db, ws, fact="The team creates tickets in Orbit to track work and requests.",
-                            kind="preference", subject="ticket-habit", source_ref="Orbit",
-                            importance=0.5, base_confidence=0.8)
+        await memory.record(
+            db,
+            ws,
+            fact="The team creates tickets in Orbit to track work and requests.",
+            kind="preference",
+            subject="ticket-habit",
+            source_ref="Orbit",
+            importance=0.5,
+            base_confidence=0.8,
+        )
         await db.commit()
     except Exception:
         logger.warning("habit record failed", exc_info=True)
@@ -371,8 +430,14 @@ class RateIn(_Camel):
 
 
 @router.post("/conversations/{cid}/messages/{index}/rate")
-async def rate_answer(cid: str, index: int, body: RateIn, db=Depends(get_db),
-                      ws: str = Depends(get_workspace_id), user=Depends(get_current_user)):
+async def rate_answer(
+    cid: str,
+    index: int,
+    body: RateIn,
+    db=Depends(get_db),
+    ws: str = Depends(get_workspace_id),
+    user=Depends(get_current_user),
+):
     if body.rating not in ("up", "down"):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "rating must be 'up' or 'down'")
     uid = _uid(user)
@@ -384,13 +449,18 @@ async def rate_answer(cid: str, index: int, body: RateIn, db=Depends(get_db),
     conv.messages = msgs
     flag_modified(conv, "messages")
     conv.updated_at = _now()
-    question = next((msgs[i].get("content", "") for i in range(index - 1, -1, -1)
-                     if msgs[i].get("role") == "user"), "")
+    question = next((msgs[i].get("content", "") for i in range(index - 1, -1, -1) if msgs[i].get("role") == "user"), "")
     answer = msgs[index].get("content", "")
     try:
-        await learning.record_feedback(db, ws, section="chat-answer", field="rating",
-                                       before=question[:280], after=f"{body.rating}: {answer[:180]}",
-                                       user_id=uid)
+        await learning.record_feedback(
+            db,
+            ws,
+            section="chat-answer",
+            field="rating",
+            before=question[:280],
+            after=f"{body.rating}: {answer[:180]}",
+            user_id=uid,
+        )
     except Exception:
         logger.warning("rating feedback record failed", exc_info=True)
     await db.commit()

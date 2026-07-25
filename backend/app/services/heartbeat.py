@@ -6,6 +6,7 @@ insights — it never executes actions, never touches external tools beyond
 read-only Linear queries, and never approves anything. The approval invariant
 is untouched: humans decide, the heartbeat notices.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -20,13 +21,14 @@ from ..database import SessionLocal
 from ..models import ActivityEvent, Artifact, Entity, Insight, Integration, Workspace
 from .ingestion import backfill_chunks, backfill_embeddings, pull_all
 from .learning import backfill_embeddings as backfill_feedback_embeddings
-from .memory import backfill_embeddings as backfill_memory_embeddings, decay as decay_memories
+from .memory import backfill_embeddings as backfill_memory_embeddings
+from .memory import decay as decay_memories
 from .proposals import dispatch_for_workspace
 from .reasoning import detect_findings, generate_brief
 
 logger = logging.getLogger("orbit.heartbeat")
 
-_STARTUP_DELAY_S = 20  
+_STARTUP_DELAY_S = 20
 
 _state: dict = {
     "interval_minutes": settings.heartbeat_interval_minutes,
@@ -60,25 +62,43 @@ def status(ws: str | None = None, enabled: bool | None = None) -> dict:
 async def _summarize(db, ws: str) -> dict:
     async def one(q):
         return (await db.execute(q)).scalar_one()
+
     return {
-        "issues": await one(select(func.count()).select_from(Artifact).where(
-            Artifact.workspace_id == ws, Artifact.source == "linear-issue")),
-        "calls": await one(select(func.count()).select_from(Artifact).where(
-            Artifact.workspace_id == ws, Artifact.source.in_(["call", "document"]))),
-        "customers": await one(select(func.count()).select_from(Entity).where(
-            Entity.workspace_id == ws, Entity.kind == "customer")),
-        "commitments": await one(select(func.count()).select_from(Entity).where(
-            Entity.workspace_id == ws, Entity.kind == "commitment")),
-        "findings": await one(select(func.count()).select_from(Insight).where(
-            Insight.workspace_id == ws, Insight.status == "open",
-            Insight.kind.in_(["gap", "trend", "drift", "win"]))),
+        "issues": await one(
+            select(func.count())
+            .select_from(Artifact)
+            .where(Artifact.workspace_id == ws, Artifact.source == "linear-issue")
+        ),
+        "calls": await one(
+            select(func.count())
+            .select_from(Artifact)
+            .where(Artifact.workspace_id == ws, Artifact.source.in_(["call", "document"]))
+        ),
+        "customers": await one(
+            select(func.count()).select_from(Entity).where(Entity.workspace_id == ws, Entity.kind == "customer")
+        ),
+        "commitments": await one(
+            select(func.count()).select_from(Entity).where(Entity.workspace_id == ws, Entity.kind == "commitment")
+        ),
+        "findings": await one(
+            select(func.count())
+            .select_from(Insight)
+            .where(
+                Insight.workspace_id == ws, Insight.status == "open", Insight.kind.in_(["gap", "trend", "drift", "win"])
+            )
+        ),
     }
 
 
 def _done_message(s: dict) -> str:
     parts = []
-    for key, label in (("issues", "issues"), ("calls", "calls"), ("customers", "customers"),
-                       ("commitments", "commitments"), ("findings", "findings")):
+    for key, label in (
+        ("issues", "issues"),
+        ("calls", "calls"),
+        ("customers", "customers"),
+        ("commitments", "commitments"),
+        ("findings", "findings"),
+    ):
         if s.get(key):
             parts.append(f"{s[key]} {label}")
     return f"Analysed {', '.join(parts)}" if parts else "Nothing to analyse yet — connect a tool or add a call."
@@ -86,9 +106,13 @@ def _done_message(s: dict) -> str:
 
 def _prime(workspace_id: str, trigger: str) -> None:
     _sync[workspace_id] = {
-        "active": True, "phase": "reading", "trigger": trigger,
+        "active": True,
+        "phase": "reading",
+        "trigger": trigger,
         "message": "",
-        "counts": {}, "startedAt": datetime.now(timezone.utc).isoformat(), "finishedAt": None,
+        "counts": {},
+        "startedAt": datetime.now(timezone.utc).isoformat(),
+        "finishedAt": None,
     }
 
 
@@ -97,7 +121,7 @@ async def run_now(workspace_id: str, trigger: str = "manual", *, primed: bool = 
     stream coarse progress into `_sync` for the UI. Uses its own DB session."""
     if not primed:
         if _sync.get(workspace_id, {}).get("active"):
-            return  
+            return
         _prime(workspace_id, trigger)
     try:
         async with SessionLocal() as db:
@@ -105,30 +129,41 @@ async def run_now(workspace_id: str, trigger: str = "manual", *, primed: bool = 
             _sync[workspace_id].update(
                 phase="reasoning",
                 message="Building your company model and reasoning across it…",
-                counts={"issues": counts.get("linear", 0)})
-            await backfill_embeddings(db, workspace_id, limit=300)  
-            await backfill_chunks(db, workspace_id)  
+                counts={"issues": counts.get("linear", 0)},
+            )
+            await backfill_embeddings(db, workspace_id, limit=300)
+            await backfill_chunks(db, workspace_id)
             await backfill_memory_embeddings(db, workspace_id)
             await backfill_feedback_embeddings(db, workspace_id)
-            await decay_memories(db, workspace_id)       
+            await decay_memories(db, workspace_id)
             await detect_findings(db, workspace_id)
-            signal_count = (await db.execute(select(func.count()).select_from(Artifact)
-                            .where(Artifact.workspace_id == workspace_id))).scalar_one()
+            signal_count = (
+                await db.execute(
+                    select(func.count()).select_from(Artifact).where(Artifact.workspace_id == workspace_id)
+                )
+            ).scalar_one()
             if signal_count:
                 await generate_brief(db, workspace_id)
                 _state["last_brief_at"] = datetime.now(timezone.utc).isoformat()
             await dispatch_for_workspace(db, workspace_id)
             await db.commit()
             summary = await _summarize(db, workspace_id)
-        _sync[workspace_id].update(active=False, phase="done", counts=summary,
-                                   message=_done_message(summary),
-                                   finishedAt=datetime.now(timezone.utc).isoformat())
+        _sync[workspace_id].update(
+            active=False,
+            phase="done",
+            counts=summary,
+            message=_done_message(summary),
+            finishedAt=datetime.now(timezone.utc).isoformat(),
+        )
         _state["last_run_at"] = datetime.now(timezone.utc).isoformat()
     except Exception:
         logger.exception("immediate sync failed")
-        _sync[workspace_id].update(active=False, phase="error",
-                                   message="Sync hit an error; the heartbeat will retry shortly.",
-                                   finishedAt=datetime.now(timezone.utc).isoformat())
+        _sync[workspace_id].update(
+            active=False,
+            phase="error",
+            message="Sync hit an error; the heartbeat will retry shortly.",
+            finishedAt=datetime.now(timezone.utc).isoformat(),
+        )
 
 
 def start_sync(workspace_id: str, trigger: str = "manual") -> None:
@@ -142,10 +177,14 @@ def start_sync(workspace_id: str, trigger: str = "manual") -> None:
 
 
 async def _brief_is_stale(db, ws: str) -> bool:
-    latest = (await db.execute(
-        select(Insight.created_at).where(
-            Insight.workspace_id == ws, Insight.kind == "brief", Insight.origin == "model")
-        .order_by(Insight.created_at.desc()).limit(1))).scalar_one_or_none()
+    latest = (
+        await db.execute(
+            select(Insight.created_at)
+            .where(Insight.workspace_id == ws, Insight.kind == "brief", Insight.origin == "model")
+            .order_by(Insight.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
     if latest is None:
         return True
     if latest.tzinfo is None:
@@ -156,8 +195,11 @@ async def _brief_is_stale(db, ws: str) -> bool:
 async def _has_live_connector(db, ws: str) -> bool:
     """True if the workspace has at least one connected, credentialed connector.
     With none, a tick has nothing new to observe — skip it (no wasted LLM/embed spend)."""
-    rows = (await db.execute(select(Integration).where(
-        Integration.workspace_id == ws, Integration.status == "connected"))).scalars().all()
+    rows = (
+        (await db.execute(select(Integration).where(Integration.workspace_id == ws, Integration.status == "connected")))
+        .scalars()
+        .all()
+    )
     return any(r.credentials for r in rows)
 
 
@@ -167,7 +209,6 @@ async def _tick() -> None:
         workspaces = [(r[0], r[1]) for r in rows] or [("ws_default", True)]
         total_found = 0
         for ws, auto_sync in workspaces:
-
             if not auto_sync:
                 continue
 
@@ -180,19 +221,19 @@ async def _tick() -> None:
             except Exception:
                 logger.warning("auto-pull failed; reasoning on existing memory", exc_info=True)
             try:
-                await backfill_embeddings(db, ws, limit=300)  
+                await backfill_embeddings(db, ws, limit=300)
                 await backfill_chunks(db, ws)  # chunk-embed long docs so deep passages are searchable
                 await backfill_memory_embeddings(db, ws)
                 await backfill_feedback_embeddings(db, ws)
-                await decay_memories(db, ws)        
+                await decay_memories(db, ws)
             except Exception:
                 logger.warning("embedding backfill / decay failed; continuing", exc_info=True)
             open_findings = await detect_findings(db, ws)
             total_found += open_findings
 
-            signal_count = (await db.execute(
-                select(func.count()).select_from(Artifact).where(Artifact.workspace_id == ws)
-            )).scalar_one()
+            signal_count = (
+                await db.execute(select(func.count()).select_from(Artifact).where(Artifact.workspace_id == ws))
+            ).scalar_one()
             if signal_count and await _brief_is_stale(db, ws):
                 await generate_brief(db, ws)
                 _state["last_brief_at"] = datetime.now(timezone.utc).isoformat()
@@ -203,12 +244,16 @@ async def _tick() -> None:
                 logger.warning("proposal dispatch failed; continuing", exc_info=True)
 
             if open_findings:
-                db.add(ActivityEvent(
-                    id=f"ac_{uuid.uuid4().hex[:8]}",
-                    actor={"name": "Orbit", "isAgent": True}, action="scanned",
-                    target=f"{open_findings} open finding(s) after a scheduled scan",
-                    target_type="finding", at=datetime.now(timezone.utc),
-                ))
+                db.add(
+                    ActivityEvent(
+                        id=f"ac_{uuid.uuid4().hex[:8]}",
+                        actor={"name": "Orbit", "isAgent": True},
+                        action="scanned",
+                        target=f"{open_findings} open finding(s) after a scheduled scan",
+                        target_type="finding",
+                        at=datetime.now(timezone.utc),
+                    )
+                )
         await db.commit()
         _state["last_found"] = total_found
 

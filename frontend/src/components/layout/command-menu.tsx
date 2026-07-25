@@ -47,13 +47,21 @@ export function CommandMenu() {
               placeholder={t("command.placeholder")}
               className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             />
-            <kbd className="hidden rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">ESC</kbd>
+            <kbd className="hidden rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">
+              ESC
+            </kbd>
           </div>
           <Command.List className="max-h-[60vh] overflow-y-auto p-2">
-            <Command.Empty className="py-8 text-center text-sm text-muted-foreground">{t("command.empty")}</Command.Empty>
+            <Command.Empty className="py-8 text-center text-sm text-muted-foreground">
+              {t("command.empty")}
+            </Command.Empty>
             <Command.Group heading={t("command.navigate")}>
               {allNavItems.map((item) => (
-                <Item key={item.href} onSelect={() => go(item.href)} icon={<item.icon className="h-4 w-4" />}>
+                <Item
+                  key={item.href}
+                  onSelect={() => go(item.href)}
+                  icon={<item.icon className="h-4 w-4" />}
+                >
                   {t(item.key)}
                 </Item>
               ))}

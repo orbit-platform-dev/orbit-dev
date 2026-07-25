@@ -7,6 +7,7 @@ here means pasting that signing secret; the shaping of a delivered payload into 
 memory artifact lives in ingestion (`_circleback_content_meta`), like every other
 connector's content builder.
 """
+
 from __future__ import annotations
 
 import hashlib

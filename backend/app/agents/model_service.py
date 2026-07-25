@@ -4,13 +4,15 @@ Resolves the configured ``"provider:name"`` string (DEFAULT_MODEL) into a
 PydanticAI model. Switching providers is config-only; adding one is a single
 registry entry. Agents never reference a provider directly.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from ..config import settings
 from pydantic_ai.models import infer_model
+
+from ..config import settings
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
@@ -59,6 +61,5 @@ def build_model(model_id: str | None = None) -> "Model":
     provider, _, name = model_id.partition(":")
     builder = PROVIDERS.get(provider)
     if builder is None or not name:
-
         return infer_model(model_id)
     return builder(name)

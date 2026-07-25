@@ -11,7 +11,9 @@ export function sourceKey(source: string): IntegrationKey | null {
 }
 
 export function findingSources(f: Finding): IntegrationKey[] {
-  return Array.from(new Set(f.artifacts.map((a) => sourceKey(a.source)).filter((k): k is IntegrationKey => !!k)));
+  return Array.from(
+    new Set(f.artifacts.map((a) => sourceKey(a.source)).filter((k): k is IntegrationKey => !!k)),
+  );
 }
 
 // Deterministic priority for findings — problems first, weighted by how much

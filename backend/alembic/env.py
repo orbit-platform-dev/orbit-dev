@@ -5,13 +5,13 @@ Runs in two modes:
 - In-process (startup bootstrap in app.database.init_db): the app passes its own
   sync connection via `config.attributes["connection"]`.
 """
+
 from __future__ import annotations
 
 from alembic import context
-
+from app import models  # noqa: F401  (register all tables on Base.metadata)
 from app.config import settings
 from app.database import Base
-from app import models  # noqa: F401  (register all tables on Base.metadata)
 
 config = context.config
 target_metadata = Base.metadata
@@ -29,8 +29,7 @@ def _do_run_migrations(connection) -> None:
 
 
 def run_migrations_offline() -> None:
-    context.configure(url=settings.database_url, target_metadata=target_metadata,
-                      literal_binds=True)
+    context.configure(url=settings.database_url, target_metadata=target_metadata, literal_binds=True)
     with context.begin_transaction():
         context.run_migrations()
 
@@ -42,6 +41,7 @@ def run_migrations_online() -> None:
         return
 
     import asyncio
+
     from sqlalchemy.ext.asyncio import create_async_engine
 
     async def _run() -> None:

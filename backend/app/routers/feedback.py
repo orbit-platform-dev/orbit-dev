@@ -1,5 +1,6 @@
 """In-app feedback (bug / feature / other) → a Linear issue in our Orbit-dev
 workspace. Auth-required; the image (optional) arrives as a data URL."""
+
 from __future__ import annotations
 
 import base64
@@ -24,7 +25,7 @@ class FeedbackIn(BaseModel):
     category: str
     description: str
     email: str | None = None
-    image: str | None = None       # data URL: data:image/png;base64,....
+    image: str | None = None  # data URL: data:image/png;base64,....
     image_name: str | None = None
 
 
@@ -61,8 +62,13 @@ async def submit_feedback(body: FeedbackIn, user=Depends(get_current_user)):
 
     try:
         issue = await feedback.submit(
-            category=category, description=description, email=email,
-            image=image_bytes, image_name=body.image_name, image_type=image_type)
+            category=category,
+            description=description,
+            email=email,
+            image=image_bytes,
+            image_name=body.image_name,
+            image_type=image_type,
+        )
     except Exception as exc:
         logger.warning("feedback submit failed", exc_info=True)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Could not file the report: {exc}") from exc

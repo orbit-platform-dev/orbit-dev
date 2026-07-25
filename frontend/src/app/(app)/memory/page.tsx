@@ -64,9 +64,15 @@ function SourceRow({ artifact }: { artifact: Artifact }) {
   const key = sourceKey(artifact.source);
   const ex = artifact.extracted ?? {};
   const extractedBits = [
-    (ex.commitments?.length ?? 0) > 0 ? `${ex.commitments!.length} commitment${ex.commitments!.length > 1 ? "s" : ""}` : null,
-    (ex.decisions?.length ?? 0) > 0 ? `${ex.decisions!.length} decision${ex.decisions!.length > 1 ? "s" : ""}` : null,
-    (ex.requests?.length ?? 0) > 0 ? `${ex.requests!.length} request${ex.requests!.length > 1 ? "s" : ""}` : null,
+    (ex.commitments?.length ?? 0) > 0
+      ? `${ex.commitments!.length} commitment${ex.commitments!.length > 1 ? "s" : ""}`
+      : null,
+    (ex.decisions?.length ?? 0) > 0
+      ? `${ex.decisions!.length} decision${ex.decisions!.length > 1 ? "s" : ""}`
+      : null,
+    (ex.requests?.length ?? 0) > 0
+      ? `${ex.requests!.length} request${ex.requests!.length > 1 ? "s" : ""}`
+      : null,
   ].filter(Boolean);
 
   const inner = (
@@ -75,7 +81,11 @@ function SourceRow({ artifact }: { artifact: Artifact }) {
         <IntegrationLogo k={key} className="h-8 w-8 rounded-lg" />
       ) : (
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card">
-          {artifact.source === "call" ? <Phone className="h-3.5 w-3.5 text-muted-foreground" /> : <FileText className="h-3.5 w-3.5 text-muted-foreground" />}
+          {artifact.source === "call" ? (
+            <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+          ) : (
+            <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+          )}
         </span>
       )}
       <span className="min-w-0 flex-1">
@@ -86,12 +96,17 @@ function SourceRow({ artifact }: { artifact: Artifact }) {
           {artifact.status === "stale" ? <Badge variant="muted">No longer syncing</Badge> : null}
         </span>
       </span>
-      {artifact.url ? <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+      {artifact.url ? (
+        <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      ) : null}
     </>
   );
-  const cls = "flex min-w-0 items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 transition-all duration-200 hover:-translate-y-px hover:border-primary/30 hover:shadow-md hover:shadow-primary/5";
+  const cls =
+    "flex min-w-0 items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 transition-all duration-200 hover:-translate-y-px hover:border-primary/30 hover:shadow-md hover:shadow-primary/5";
   return artifact.url ? (
-    <a href={artifact.url} target="_blank" rel="noreferrer" className={cls}>{inner}</a>
+    <a href={artifact.url} target="_blank" rel="noreferrer" className={cls}>
+      {inner}
+    </a>
   ) : (
     <div className={cls}>{inner}</div>
   );
@@ -100,7 +115,13 @@ function SourceRow({ artifact }: { artifact: Artifact }) {
 function SignalsView() {
   const { data, isLoading } = useArtifacts();
   if (isLoading) {
-    return <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>;
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <Skeleton key={i} className="h-14 rounded-lg" />
+        ))}
+      </div>
+    );
   }
   const items = data ?? [];
   if (items.length === 0) {
@@ -122,15 +143,24 @@ function SignalsView() {
         {Array.from(counts.entries()).map(([source, n]) => {
           const key = sourceKey(source);
           return (
-            <span key={source} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground">
-              {key ? <IntegrationLogo k={key} className="h-4 w-4 rounded-[4px] border-0" /> : <FileText className="h-3 w-3" />}
+            <span
+              key={source}
+              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground"
+            >
+              {key ? (
+                <IntegrationLogo k={key} className="h-4 w-4 rounded-[4px] border-0" />
+              ) : (
+                <FileText className="h-3 w-3" />
+              )}
               <span className="font-medium text-foreground">{sourceLabel(source)}</span> {n}
             </span>
           );
         })}
       </div>
       <div className="space-y-2">
-        {items.map((a) => <SourceRow key={a.id} artifact={a} />)}
+        {items.map((a) => (
+          <SourceRow key={a.id} artifact={a} />
+        ))}
       </div>
     </div>
   );
@@ -149,7 +179,9 @@ function EntityRow({ entity }: { entity: Entity }) {
       <Icon className="h-4 w-4 shrink-0 text-primary" />
       <span className="min-w-0 flex-1 truncate text-sm font-medium">{entity.name}</span>
       <CommitmentStatusChip entity={entity} />
-      <span className="hidden text-xs text-muted-foreground sm:inline">{timeAgo(entity.updatedAt)}</span>
+      <span className="hidden text-xs text-muted-foreground sm:inline">
+        {timeAgo(entity.updatedAt)}
+      </span>
       <ChevronRight className="h-4 w-4 text-muted-foreground" />
     </Link>
   );
@@ -158,7 +190,13 @@ function EntityRow({ entity }: { entity: Entity }) {
 function EntitiesView() {
   const { data, isLoading } = useEntities();
   if (isLoading) {
-    return <div className="space-y-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>;
+    return (
+      <div className="space-y-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} className="h-12 rounded-lg" />
+        ))}
+      </div>
+    );
   }
   const all = data ?? [];
   if (all.length === 0) {
@@ -171,7 +209,10 @@ function EntitiesView() {
       />
     );
   }
-  const groups = KIND_ORDER.map((kind) => ({ kind, items: all.filter((e) => e.kind === kind) })).filter((g) => g.items.length);
+  const groups = KIND_ORDER.map((kind) => ({
+    kind,
+    items: all.filter((e) => e.kind === kind),
+  })).filter((g) => g.items.length);
   return (
     <div className="space-y-8">
       {groups.map(({ kind, items }) => {
@@ -179,9 +220,14 @@ function EntitiesView() {
         return (
           <section key={kind}>
             <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              <Icon className="h-3.5 w-3.5" /> {plural} <span className="text-muted-foreground/60">· {items.length}</span>
+              <Icon className="h-3.5 w-3.5" /> {plural}{" "}
+              <span className="text-muted-foreground/60">· {items.length}</span>
             </div>
-            <div className="space-y-2">{items.map((e) => <EntityRow key={e.id} entity={e} />)}</div>
+            <div className="space-y-2">
+              {items.map((e) => (
+                <EntityRow key={e.id} entity={e} />
+              ))}
+            </div>
           </section>
         );
       })}
@@ -212,11 +258,18 @@ function AddCallDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Add a customer call</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Add a customer call</DialogTitle>
+        </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="artifact-title">Title</Label>
-            <Input id="artifact-title" placeholder="Acme discovery call" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <Input
+              id="artifact-title"
+              placeholder="Acme discovery call"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="artifact-content">Transcript</Label>
@@ -230,8 +283,13 @@ function AddCallDialog() {
           </div>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={() => ingest.mutate()} disabled={ingest.isPending || content.trim().split(/\s+/).length < 6}>
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => ingest.mutate()}
+            disabled={ingest.isPending || content.trim().split(/\s+/).length < 6}
+          >
             {ingest.isPending ? "Reading…" : "Add to memory"}
           </Button>
         </DialogFooter>
@@ -249,7 +307,9 @@ export default function MemoryPage() {
     <div>
       <PageHeader
         title="Memory"
-        description={hb?.lastRunAt ? `Orbit last read your tools ${timeAgo(hb.lastRunAt)}` : undefined}
+        description={
+          hb?.lastRunAt ? `Orbit last read your tools ${timeAgo(hb.lastRunAt)}` : undefined
+        }
         actions={<AddCallDialog />}
       />
       {sync?.active ? (

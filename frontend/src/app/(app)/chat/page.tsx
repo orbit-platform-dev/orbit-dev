@@ -30,7 +30,13 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn, timeAgo } from "@/lib/utils";
 
 const DEFAULT_SUGGESTIONS = [
@@ -49,7 +55,8 @@ const PHASE_COPY: Record<string, string> = {
 
 function phaseLabel(phase: string | null): string {
   if (!phase) return "Thinking…";
-  if (phase.startsWith("pulling:")) return `Pulling fresh data from ${phase.slice(8)} — big syncs can take a minute…`;
+  if (phase.startsWith("pulling:"))
+    return `Pulling fresh data from ${phase.slice(8)} — big syncs can take a minute…`;
   return PHASE_COPY[phase] ?? "Thinking…";
 }
 
@@ -68,10 +75,9 @@ function PhaseStatus({ phase, className }: { phase: string | null; className?: s
 type Msg = ChatMessage & {
   streaming?: boolean;
   stopped?: boolean;
-  thinking?: string;    
-  thoughtFor?: number;  
+  thinking?: string;
+  thoughtFor?: number;
 };
-
 
 function CitationChip({ c }: { c: ChatCitation }) {
   const key = sourceKey(c.source);
@@ -87,9 +93,13 @@ function CitationChip({ c }: { c: ChatCitation }) {
     </span>
   );
   return c.url ? (
-    <a href={c.url} target="_blank" rel="noreferrer" title={c.title} className="max-w-full">{body}</a>
+    <a href={c.url} target="_blank" rel="noreferrer" title={c.title} className="max-w-full">
+      {body}
+    </a>
   ) : (
-    <span title={c.title} className="max-w-full">{body}</span>
+    <span title={c.title} className="max-w-full">
+      {body}
+    </span>
   );
 }
 
@@ -107,7 +117,11 @@ function DraftCard({ draft, conversationId }: { draft: ChatDraft; conversationId
   const saved = React.useRef({ title: draft.title, description: draft.description });
 
   const editable = d.status === "pending";
-  const targets = useQuery({ queryKey: ["chat", "ticket-targets"], queryFn: api.getTicketTargets, enabled: editable });
+  const targets = useQuery({
+    queryKey: ["chat", "ticket-targets"],
+    queryFn: api.getTicketTargets,
+    enabled: editable,
+  });
   const options =
     d.connector === "github"
       ? (targets.data?.github ?? []).map((r) => ({ value: r.fullName, label: r.fullName }))
@@ -151,7 +165,8 @@ function DraftCard({ draft, conversationId }: { draft: ChatDraft; conversationId
 
   const dismiss = () => {
     setDismissed(true);
-    if (conversationId) void api.editChatAction(conversationId, d.actionId, { discard: true }).catch(() => {});
+    if (conversationId)
+      void api.editChatAction(conversationId, d.actionId, { discard: true }).catch(() => {});
   };
 
   if (dismissed || d.status === "discarded") return null;
@@ -199,7 +214,9 @@ function DraftCard({ draft, conversationId }: { draft: ChatDraft; conversationId
                     onClick={() => switchConnector(c.key)}
                     className={cn(
                       "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors",
-                      d.connector === c.key ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+                      d.connector === c.key
+                        ? "bg-accent text-foreground"
+                        : "text-muted-foreground hover:text-foreground",
                     )}
                   >
                     <IntegrationLogo k={c.key} className="h-3.5 w-3.5 rounded-[3px] border-0" />
@@ -216,7 +233,15 @@ function DraftCard({ draft, conversationId }: { draft: ChatDraft; conversationId
                 }}
               >
                 <SelectTrigger className="min-w-[10rem] flex-1 text-xs">
-                  <SelectValue placeholder={targets.isLoading ? "Loading…" : d.connector === "github" ? "Choose a repo" : "Choose a team"} />
+                  <SelectValue
+                    placeholder={
+                      targets.isLoading
+                        ? "Loading…"
+                        : d.connector === "github"
+                          ? "Choose a repo"
+                          : "Choose a team"
+                    }
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {options.map((o) => (
@@ -231,7 +256,11 @@ function DraftCard({ draft, conversationId }: { draft: ChatDraft; conversationId
         ) : (
           <>
             <div className="text-sm font-medium">{d.title}</div>
-            {d.description ? <div className="whitespace-pre-wrap text-[13px] leading-6 text-muted-foreground">{d.description}</div> : null}
+            {d.description ? (
+              <div className="whitespace-pre-wrap text-[13px] leading-6 text-muted-foreground">
+                {d.description}
+              </div>
+            ) : null}
           </>
         )}
       </div>
@@ -249,7 +278,11 @@ function DraftCard({ draft, conversationId }: { draft: ChatDraft; conversationId
         ) : (
           <>
             <Button size="sm" onClick={approve} disabled={creating || !conversationId || !d.target}>
-              {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              {creating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5" />
+              )}
               {creating ? "Creating…" : "Approve & create"}
             </Button>
             <Button size="sm" variant="ghost" onClick={dismiss} disabled={creating}>
@@ -287,22 +320,41 @@ function Prose({ children }: { children: string }) {
           ol: (p) => <ol className="mb-3 list-decimal space-y-1.5 pl-5 last:mb-0" {...p} />,
           li: (p) => <li className="marker:text-muted-foreground" {...p} />,
           strong: (p) => <strong className="font-semibold" {...p} />,
-          a: (p) => <a className="font-medium text-primary underline underline-offset-2" target="_blank" rel="noreferrer" {...p} />,
+          a: (p) => (
+            <a
+              className="font-medium text-primary underline underline-offset-2"
+              target="_blank"
+              rel="noreferrer"
+              {...p}
+            />
+          ),
           h1: (p) => <h3 className="mb-2 mt-4 text-base font-semibold first:mt-0" {...p} />,
           h2: (p) => <h3 className="mb-2 mt-4 text-base font-semibold first:mt-0" {...p} />,
           h3: (p) => <h3 className="mb-2 mt-4 text-[15px] font-semibold first:mt-0" {...p} />,
-          code: (p) => <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[13px]" {...p} />,
+          code: (p) => (
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[13px]" {...p} />
+          ),
           pre: (p) => (
-            <pre className="mb-3 overflow-x-auto rounded-lg border border-border bg-card p-3 text-xs [&_code]:bg-transparent [&_code]:p-0" {...p} />
+            <pre
+              className="mb-3 overflow-x-auto rounded-lg border border-border bg-card p-3 text-xs [&_code]:bg-transparent [&_code]:p-0"
+              {...p}
+            />
           ),
           table: (p) => (
             <div className="mb-3 overflow-x-auto">
               <table className="w-full border-collapse text-sm" {...p} />
             </div>
           ),
-          th: (p) => <th className="border-b border-border px-2 py-1.5 text-left font-semibold" {...p} />,
+          th: (p) => (
+            <th className="border-b border-border px-2 py-1.5 text-left font-semibold" {...p} />
+          ),
           td: (p) => <td className="border-b border-border/50 px-2 py-1.5" {...p} />,
-          blockquote: (p) => <blockquote className="mb-3 border-l-2 border-primary/40 pl-3 text-muted-foreground" {...p} />,
+          blockquote: (p) => (
+            <blockquote
+              className="mb-3 border-l-2 border-primary/40 pl-3 text-muted-foreground"
+              {...p}
+            />
+          ),
         }}
       >
         {children}
@@ -311,8 +363,15 @@ function Prose({ children }: { children: string }) {
   );
 }
 
-
-function ThinkingBlock({ text, active, seconds }: { text: string; active: boolean; seconds?: number }) {
+function ThinkingBlock({
+  text,
+  active,
+  seconds,
+}: {
+  text: string;
+  active: boolean;
+  seconds?: number;
+}) {
   const [open, setOpen] = React.useState(false);
   const boxRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -343,10 +402,21 @@ function ThinkingBlock({ text, active, seconds }: { text: string; active: boolea
   );
 }
 
-function RatingRow({ rating, onRate }: { rating?: "up" | "down" | null; onRate: (r: "up" | "down") => void }) {
+function RatingRow({
+  rating,
+  onRate,
+}: {
+  rating?: "up" | "down" | null;
+  onRate: (r: "up" | "down") => void;
+}) {
   const [thanks, setThanks] = React.useState(false);
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  React.useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  React.useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
   const rate = (r: "up" | "down") => {
     onRate(r);
     setThanks(true);
@@ -367,19 +437,29 @@ function RatingRow({ rating, onRate }: { rating?: "up" | "down" | null; onRate: 
   );
   // Stays visible once rated (so the highlight is always shown); hover-reveal otherwise.
   return (
-    <div className={cn(
-      "mt-2 flex items-center gap-1 transition-opacity",
-      rating ? "opacity-100" : "opacity-0 group-hover:opacity-100 has-[button:focus]:opacity-100",
-    )}>
+    <div
+      className={cn(
+        "mt-2 flex items-center gap-1 transition-opacity",
+        rating ? "opacity-100" : "opacity-0 group-hover:opacity-100 has-[button:focus]:opacity-100",
+      )}
+    >
       {btn("up", ThumbsUp)}
       {btn("down", ThumbsDown)}
-      {thanks ? <span className="ml-1 text-[11px] text-muted-foreground animate-in fade-in">Thanks for your feedback</span> : null}
+      {thanks ? (
+        <span className="ml-1 text-[11px] text-muted-foreground animate-in fade-in">
+          Thanks for your feedback
+        </span>
+      ) : null}
     </div>
   );
 }
 
 function AssistantMessage({
-  m, phase, conversationId, index, onRate,
+  m,
+  phase,
+  conversationId,
+  index,
+  onRate,
 }: {
   m: Msg;
   phase: string | null;
@@ -397,7 +477,11 @@ function AssistantMessage({
         ) : (
           <>
             {m.thinking ? (
-              <ThinkingBlock text={m.thinking} active={!!m.streaming && !m.content} seconds={m.thoughtFor} />
+              <ThinkingBlock
+                text={m.thinking}
+                active={!!m.streaming && !m.content}
+                seconds={m.thoughtFor}
+              />
             ) : null}
             {m.streaming && !m.content ? (
               // Long tool steps happen AFTER thinking streams — keep the live
@@ -406,18 +490,26 @@ function AssistantMessage({
             ) : null}
             {m.content ? <Prose>{m.streaming ? m.content + " ▍" : m.content}</Prose> : null}
             {m.stopped ? (
-              <div className="mt-2 text-xs text-muted-foreground">Stopped — this answer wasn&apos;t saved to history.</div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                Stopped — this answer wasn&apos;t saved to history.
+              </div>
             ) : null}
             {!m.streaming && m.grounded === false ? (
-              <div className="mt-2 text-xs text-muted-foreground">Answered from general knowledge, not your company&apos;s data.</div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                Answered from general knowledge, not your company&apos;s data.
+              </div>
             ) : null}
-            {!m.streaming && m.draft ? <DraftCard draft={m.draft} conversationId={conversationId} /> : null}
+            {!m.streaming && m.draft ? (
+              <DraftCard draft={m.draft} conversationId={conversationId} />
+            ) : null}
             {!m.streaming && m.citations && m.citations.length > 0 ? (
               <div className="mt-3 flex flex-wrap gap-1.5 animate-in fade-in slide-in-from-bottom-1 duration-300">
                 <span className="flex w-full items-center gap-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                   Sources
                 </span>
-                {m.citations.map((c) => <CitationChip key={c.id} c={c} />)}
+                {m.citations.map((c) => (
+                  <CitationChip key={c.id} c={c} />
+                ))}
               </div>
             ) : null}
             {!m.streaming && m.content && !m.stopped ? (
@@ -444,7 +536,10 @@ export default function ChatPage() {
   const abortRef = React.useRef<AbortController | null>(null);
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
 
-  const conversations = useQuery({ queryKey: ["chat", "conversations"], queryFn: api.listChatConversations });
+  const conversations = useQuery({
+    queryKey: ["chat", "conversations"],
+    queryFn: api.listChatConversations,
+  });
   const { data: feed } = useFeed();
 
   // Live suggestions: what Orbit's radar flagged right now beats canned prompts.
@@ -472,7 +567,6 @@ export default function ChatPage() {
   }, []);
   const convs = conversations.data ?? [];
 
-
   const pendingRef = React.useRef("");
   const doneRef = React.useRef<import("@/lib/types").ChatAnswer | null>(null);
   const rafRef = React.useRef<number | null>(null);
@@ -481,7 +575,8 @@ export default function ChatPage() {
     setMessages((m) => {
       const next = [...m];
       const last = next[next.length - 1];
-      if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + text };
+      if (last?.role === "assistant")
+        next[next.length - 1] = { ...last, content: last.content + text };
       return next;
     });
 
@@ -489,16 +584,24 @@ export default function ChatPage() {
     setMessages((m) => {
       const next = [...m];
       const last = next[next.length - 1];
-      if (last?.role === "assistant") next[next.length - 1] = { ...last, ...patch, streaming: false };
+      if (last?.role === "assistant")
+        next[next.length - 1] = { ...last, ...patch, streaming: false };
       return next;
     });
 
-  const finalize = React.useCallback((final: import("@/lib/types").ChatAnswer) => {
-    finishLast({ citations: final.citations, grounded: final.grounded, draft: final.draft ?? null });
-    setStreaming(false);
-    setActiveId(final.conversationId);
-    qc.invalidateQueries({ queryKey: ["chat", "conversations"] });
-  }, [qc]);
+  const finalize = React.useCallback(
+    (final: import("@/lib/types").ChatAnswer) => {
+      finishLast({
+        citations: final.citations,
+        grounded: final.grounded,
+        draft: final.draft ?? null,
+      });
+      setStreaming(false);
+      setActiveId(final.conversationId);
+      qc.invalidateQueries({ queryKey: ["chat", "conversations"] });
+    },
+    [qc],
+  );
 
   const drain = React.useCallback(() => {
     const pending = pendingRef.current;
@@ -533,12 +636,12 @@ export default function ChatPage() {
     answerStartedRef.current = false;
   };
 
-
   const appendThinking = (t: string) =>
     setMessages((m) => {
       const next = [...m];
       const last = next[next.length - 1];
-      if (last?.role === "assistant") next[next.length - 1] = { ...last, thinking: (last.thinking ?? "") + t };
+      if (last?.role === "assistant")
+        next[next.length - 1] = { ...last, thinking: (last.thinking ?? "") + t };
       return next;
     });
 
@@ -604,7 +707,7 @@ export default function ChatPage() {
 
   const stop = () => {
     abortRef.current?.abort();
-    const rest = pendingRef.current; 
+    const rest = pendingRef.current;
     resetStream();
     if (rest) appendToLast(rest);
     finishLast({ stopped: true });
@@ -643,19 +746,22 @@ export default function ChatPage() {
       qc.invalidateQueries({ queryKey: ["chat", "conversations"] });
     } catch (e) {
       toast.error("Couldn't delete that conversation");
-      throw e; 
+      throw e;
     }
   };
 
-  const rate = React.useCallback(async (index: number, rating: "up" | "down") => {
-    if (!activeId) return;
-    setMessages((m) => m.map((x, i) => (i === index ? { ...x, rating } : x)));
-    try {
-      await api.rateChatAnswer(activeId, index, rating);
-    } catch {
-      toast.error("Couldn't save your feedback");
-    }
-  }, [activeId]);
+  const rate = React.useCallback(
+    async (index: number, rating: "up" | "down") => {
+      if (!activeId) return;
+      setMessages((m) => m.map((x, i) => (i === index ? { ...x, rating } : x)));
+      try {
+        await api.rateChatAnswer(activeId, index, rating);
+      } catch {
+        toast.error("Couldn't save your feedback");
+      }
+    },
+    [activeId],
+  );
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -677,11 +783,17 @@ export default function ChatPage() {
     <div className="flex h-[calc(100vh-6.5rem)] gap-6">
       {/* Conversations */}
       <aside className="hidden w-64 shrink-0 flex-col md:flex">
-        <Button variant="outline" className="w-full justify-start gap-2 border-dashed" onClick={newChat}>
+        <Button
+          variant="outline"
+          className="w-full justify-start gap-2 border-dashed"
+          onClick={newChat}
+        >
           <MessageSquarePlus className="h-4 w-4" /> New chat
         </Button>
         {convs.length > 0 ? (
-          <div className="mt-4 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Recent</div>
+          <div className="mt-4 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Recent
+          </div>
         ) : null}
         <div className="no-scrollbar mt-1 flex-1 space-y-0.5 overflow-y-auto pb-2">
           {convs.map((c) => (
@@ -695,7 +807,9 @@ export default function ChatPage() {
             >
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm">{c.title || "New chat"}</span>
-                <span className="block text-[11px] text-muted-foreground">{timeAgo(c.updatedAt)}</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  {timeAgo(c.updatedAt)}
+                </span>
               </span>
               <Trash2
                 onClick={(e) => {
@@ -727,10 +841,12 @@ export default function ChatPage() {
                 <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 shadow-[0_0_40px_-12px] shadow-primary/50">
                   <Sparkles className="h-7 w-7 text-primary" />
                 </div>
-                <h1 className="mt-6 text-2xl font-semibold tracking-tight">Ask your company anything</h1>
+                <h1 className="mt-6 text-2xl font-semibold tracking-tight">
+                  Ask your company anything
+                </h1>
                 <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
-                  Orbit has read your issues, threads, calls and docs. Every answer is grounded in your
-                  own data, with sources.
+                  Orbit has read your issues, threads, calls and docs. Every answer is grounded in
+                  your own data, with sources.
                 </p>
                 <div className="mt-8 grid w-full max-w-lg gap-2.5 sm:grid-cols-2">
                   {suggestions.map((s) => (
@@ -740,7 +856,9 @@ export default function ChatPage() {
                       className="group rounded-xl border border-border bg-card/50 px-4 py-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card hover:shadow-lg hover:shadow-primary/5"
                     >
                       <div className="line-clamp-2 text-sm font-medium">{s.title}</div>
-                      <div className="mt-0.5 text-xs text-muted-foreground group-hover:text-muted-foreground/80">{s.hint}</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground group-hover:text-muted-foreground/80">
+                        {s.hint}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -756,7 +874,13 @@ export default function ChatPage() {
                         </div>
                       </div>
                     ) : (
-                      <AssistantMessage m={m} phase={phase} conversationId={activeId} index={i} onRate={rate} />
+                      <AssistantMessage
+                        m={m}
+                        phase={phase}
+                        conversationId={activeId}
+                        index={i}
+                        onRate={rate}
+                      />
                     )}
                   </div>
                 ))}
@@ -768,15 +892,24 @@ export default function ChatPage() {
         {/* Composer */}
         <div className="mx-auto w-full max-w-[44rem] pb-2 pt-3">
           <form
-            onSubmit={(e) => { e.preventDefault(); send(input); }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              send(input);
+            }}
             className="relative rounded-2xl border border-border bg-card shadow-lg shadow-black/5 transition-all duration-300 focus-within:border-primary/50 focus-within:shadow-[0_0_40px_-12px] focus-within:shadow-primary/40"
           >
             <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => { setInput(e.target.value); autogrow(e.target); }}
+              onChange={(e) => {
+                setInput(e.target.value);
+                autogrow(e.target);
+              }}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); }
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send(input);
+                }
               }}
               placeholder="Ask about customers, risks, ownership, what's shipping…"
               rows={1}
@@ -785,18 +918,32 @@ export default function ChatPage() {
             />
             <div className="absolute bottom-2.5 right-2.5">
               {streaming ? (
-                <Button type="button" size="icon-sm" variant="secondary" onClick={stop} aria-label="Stop generating" className="rounded-lg">
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="secondary"
+                  onClick={stop}
+                  aria-label="Stop generating"
+                  className="rounded-lg"
+                >
                   <Square className="h-3.5 w-3.5 fill-current" />
                 </Button>
               ) : (
-                <Button type="submit" size="icon-sm" disabled={!input.trim()} aria-label="Send" className="rounded-lg">
+                <Button
+                  type="submit"
+                  size="icon-sm"
+                  disabled={!input.trim()}
+                  aria-label="Send"
+                  className="rounded-lg"
+                >
                   <ArrowUp className="h-4 w-4" />
                 </Button>
               )}
             </div>
           </form>
           <p className="mt-2 text-center text-[11px] text-muted-foreground">
-            Orbit answers from your company&apos;s own data and cites its sources · Shift+Enter for a new line
+            Orbit answers from your company&apos;s own data and cites its sources · Shift+Enter for
+            a new line
           </p>
         </div>
       </div>

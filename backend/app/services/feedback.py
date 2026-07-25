@@ -5,6 +5,7 @@ Linear), NOT any customer's connected connector credentials. Every report is
 tagged with the configured label ("MVP Requests") plus its category, so they're
 easy to triage. Unavailable (503) when the key isn't configured.
 """
+
 from __future__ import annotations
 
 from ..config import settings
@@ -22,9 +23,15 @@ def configured() -> bool:
     return bool(settings.orbit_linear_api_key)
 
 
-async def submit(*, category: str, description: str, email: str,
-                 image: bytes | None = None, image_name: str | None = None,
-                 image_type: str | None = None) -> dict[str, str]:
+async def submit(
+    *,
+    category: str,
+    description: str,
+    email: str,
+    image: bytes | None = None,
+    image_name: str | None = None,
+    image_type: str | None = None,
+) -> dict[str, str]:
     """File the report as a Linear issue; returns {identifier, url}. Raises if the
     feature isn't configured or Linear rejects the write."""
     key = settings.orbit_linear_api_key
@@ -43,8 +50,7 @@ async def submit(*, category: str, description: str, email: str,
 
     body = (description or "").strip()
     if image:
-        asset = await linear.upload_file(key, image_name or "screenshot.png",
-                                         image_type or "image/png", image)
+        asset = await linear.upload_file(key, image_name or "screenshot.png", image_type or "image/png", image)
         if asset:
             body += f"\n\n![{image_name or 'screenshot'}]({asset})"
     body += f"\n\n---\nReported by: {email}\nCategory: {category_label}"

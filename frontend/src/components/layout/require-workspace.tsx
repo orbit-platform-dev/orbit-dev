@@ -10,7 +10,11 @@ import { CreateWorkspace } from "@/components/workspace/create-workspace";
 export function RequireWorkspace({ children }: { children: React.ReactNode }) {
   const { isLoaded: authLoaded, isSignedIn } = useAuth();
   const { isLoaded: orgLoaded, organization } = useOrganization();
-  const { isLoaded: listLoaded, setActive, userMemberships } = useOrganizationList({
+  const {
+    isLoaded: listLoaded,
+    setActive,
+    userMemberships,
+  } = useOrganizationList({
     userMemberships: true,
   });
 
@@ -30,7 +34,6 @@ export function RequireWorkspace({ children }: { children: React.ReactNode }) {
   // No active org: decide from the membership list (avoid waiting on it above).
   if (!listLoaded) return <GateSpinner />;
   if (firstOrgId) return <GateSpinner />; // membership exists; effect is activating it
-
 
   return (
     <div className="mx-auto flex min-h-[75vh] w-full max-w-lg flex-col justify-center gap-8 py-10">

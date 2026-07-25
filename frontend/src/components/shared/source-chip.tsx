@@ -4,7 +4,15 @@ import { sourceKey } from "@/lib/sources";
 
 /** One evidence reference: connector logo + title, deep-linked when a URL exists.
  *  The shared trust primitive — used wherever Orbit shows its receipts. */
-export function SourceChip({ source, title, url }: { source: string; title: string; url?: string | null }) {
+export function SourceChip({
+  source,
+  title,
+  url,
+}: {
+  source: string;
+  title: string;
+  url?: string | null;
+}) {
   const key = sourceKey(source);
   const body = (
     <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs shadow-sm transition-all hover:border-primary/40 hover:bg-accent/60">
@@ -18,8 +26,12 @@ export function SourceChip({ source, title, url }: { source: string; title: stri
     </span>
   );
   return url ? (
-    <a href={url} target="_blank" rel="noreferrer" title={title} className="max-w-full">{body}</a>
+    <a href={url} target="_blank" rel="noreferrer" title={title} className="max-w-full">
+      {body}
+    </a>
   ) : (
-    <span title={title} className="max-w-full">{body}</span>
+    <span title={title} className="max-w-full">
+      {body}
+    </span>
   );
 }

@@ -6,6 +6,7 @@ The link that matters most: a commitment made on a call is matched to the Linear
 issue that fulfills it, or left flagged as untracked. Resolution is deterministic
 and reuses the customer normalizer.
 """
+
 from __future__ import annotations
 
 import difflib
@@ -40,8 +41,26 @@ def normalize_name(name: str) -> str:
 
 # Short but meaningful tokens; acronyms like SSO/API matter, so keep len >= 3
 # but drop common filler so overlap stays signal.
-_STOP = {"the", "and", "for", "with", "this", "that", "will", "have", "from",
-         "into", "your", "our", "are", "was", "before", "after", "them", "their"}
+_STOP = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "this",
+    "that",
+    "will",
+    "have",
+    "from",
+    "into",
+    "your",
+    "our",
+    "are",
+    "was",
+    "before",
+    "after",
+    "them",
+    "their",
+}
 
 
 def _tokens(s: str) -> set[str]:
@@ -102,14 +121,15 @@ async def search_artifacts(
     if not query_vector:
         return []
 
-    best: dict[str, float] = {}       # artifact_id -> best similarity (across its own + chunk vectors)
-    arts: dict[str, Artifact] = {}    # loaded parent artifacts
-    snippet: dict[str, str] = {}      # artifact_id -> matched passage (only when a chunk won)
+    best: dict[str, float] = {}  # artifact_id -> best similarity (across its own + chunk vectors)
+    arts: dict[str, Artifact] = {}  # loaded parent artifacts
+    snippet: dict[str, str] = {}  # artifact_id -> matched passage (only when a chunk won)
 
     if _is_postgres():
         adist = cast(Artifact.embedding, Vector(EMBEDDING_DIM)).cosine_distance(query_vector)
         astmt = select(Artifact, adist.label("distance")).where(
-            Artifact.workspace_id == ws, Artifact.embedding.isnot(None))
+            Artifact.workspace_id == ws, Artifact.embedding.isnot(None)
+        )
         if sources:
             astmt = astmt.where(Artifact.source.in_(sources))
         if exclude_ids:
@@ -121,7 +141,8 @@ async def search_artifacts(
 
         cdist = cast(ArtifactChunk.embedding, Vector(EMBEDDING_DIM)).cosine_distance(query_vector)
         cstmt = select(ArtifactChunk.artifact_id, ArtifactChunk.text, cdist.label("distance")).where(
-            ArtifactChunk.workspace_id == ws, ArtifactChunk.embedding.isnot(None))
+            ArtifactChunk.workspace_id == ws, ArtifactChunk.embedding.isnot(None)
+        )
         if sources:
             cstmt = cstmt.where(ArtifactChunk.source.in_(sources))
         if exclude_ids:
@@ -147,8 +168,7 @@ async def search_artifacts(
                 s = embeddings.cosine(query_vector, a.embedding)
                 if s >= floor:
                     best[a.id] = s
-        cstmt = select(ArtifactChunk).where(
-            ArtifactChunk.workspace_id == ws, ArtifactChunk.embedding.isnot(None))
+        cstmt = select(ArtifactChunk).where(ArtifactChunk.workspace_id == ws, ArtifactChunk.embedding.isnot(None))
         if sources:
             cstmt = cstmt.where(ArtifactChunk.source.in_(sources))
         if exclude_ids:
@@ -163,8 +183,11 @@ async def search_artifacts(
 
     missing = [aid for aid in best if aid not in arts]
     if missing:  # parents surfaced only via a chunk — load them
-        for a in (await db.execute(select(Artifact).where(
-                Artifact.workspace_id == ws, Artifact.id.in_(missing)))).scalars().all():
+        for a in (
+            (await db.execute(select(Artifact).where(Artifact.workspace_id == ws, Artifact.id.in_(missing))))
+            .scalars()
+            .all()
+        ):
             arts[a.id] = a
 
     out: list[tuple[Artifact, float]] = []
@@ -186,8 +209,7 @@ async def resolve_entity(db, ws: str, kind: str, name: str, *, meta: dict | None
     norm = normalize_name(name)
     if not norm:
         return None
-    rows = (await db.execute(
-        select(Entity).where(Entity.workspace_id == ws, Entity.kind == kind))).scalars().all()
+    rows = (await db.execute(select(Entity).where(Entity.workspace_id == ws, Entity.kind == kind))).scalars().all()
     for e in rows:
         if e.normalized_name == norm or norm in [normalize_name(a) for a in (e.aliases or [])]:
             if meta:
@@ -195,10 +217,17 @@ async def resolve_entity(db, ws: str, kind: str, name: str, *, meta: dict | None
             e.updated_at = _now()
             return e
     e = Entity(
-        id=f"en_{uuid.uuid4().hex[:10]}", workspace_id=ws, kind=kind,
-        name=name.strip()[:200], normalized_name=norm, aliases=[], identifiers={},
-        meta={k: v for k, v in (meta or {}).items() if v}, state="open",
-        created_at=_now(), updated_at=_now(),
+        id=f"en_{uuid.uuid4().hex[:10]}",
+        workspace_id=ws,
+        kind=kind,
+        name=name.strip()[:200],
+        normalized_name=norm,
+        aliases=[],
+        identifiers={},
+        meta={k: v for k, v in (meta or {}).items() if v},
+        state="open",
+        created_at=_now(),
+        updated_at=_now(),
     )
     db.add(e)
     await db.flush()
@@ -246,14 +275,34 @@ async def merge_person(db, ws: str, keep: Entity, drop: Entity) -> None:
     `drop`. Only ever called when the two share an email (a safe, unique key)."""
     if keep.id == drop.id:
         return
-    links = (await db.execute(select(Link).where(
-        Link.workspace_id == ws, or_(Link.from_id == drop.id, Link.to_id == drop.id)))).scalars().all()
+    links = (
+        (
+            await db.execute(
+                select(Link).where(Link.workspace_id == ws, or_(Link.from_id == drop.id, Link.to_id == drop.id))
+            )
+        )
+        .scalars()
+        .all()
+    )
     for lk in links:
         new_from = keep.id if lk.from_id == drop.id else lk.from_id
         new_to = keep.id if lk.to_id == drop.id else lk.to_id
-        twin = (await db.execute(select(Link).where(
-            Link.workspace_id == ws, Link.from_type == lk.from_type, Link.from_id == new_from,
-            Link.to_type == lk.to_type, Link.to_id == new_to, Link.type == lk.type))).scalars().first()
+        twin = (
+            (
+                await db.execute(
+                    select(Link).where(
+                        Link.workspace_id == ws,
+                        Link.from_type == lk.from_type,
+                        Link.from_id == new_from,
+                        Link.to_type == lk.to_type,
+                        Link.to_id == new_to,
+                        Link.type == lk.type,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
         if twin and twin.id != lk.id:  # keep already has this edge — drop the redundant one
             await db.delete(lk)
         else:
@@ -272,8 +321,9 @@ async def merge_person(db, ws: str, keep: Entity, drop: Entity) -> None:
     await db.flush()
 
 
-async def resolve_person(db, ws: str, name: str, *, email: str | None = None,
-                         handle: str | None = None) -> Entity | None:
+async def resolve_person(
+    db, ws: str, name: str, *, email: str | None = None, handle: str | None = None
+) -> Entity | None:
     """Find-or-create a person, unified across connectors by email (then handle,
     then name). Enriches the match with any new signal; merges legacy duplicates
     that share an email. Returns None when there's nothing to key on."""
@@ -282,8 +332,9 @@ async def resolve_person(db, ws: str, name: str, *, email: str | None = None,
     handle = (handle or "").strip().lower() or None
     if not (norm or email or handle):
         return None
-    persons = (await db.execute(select(Entity).where(
-        Entity.workspace_id == ws, Entity.kind == "person"))).scalars().all()
+    persons = (
+        (await db.execute(select(Entity).where(Entity.workspace_id == ws, Entity.kind == "person"))).scalars().all()
+    )
 
     match = None
     if email:  # strong, cross-connector key — collapse any duplicates on it
@@ -302,34 +353,69 @@ async def resolve_person(db, ws: str, name: str, *, email: str | None = None,
         return match
 
     e = Entity(
-        id=f"en_{uuid.uuid4().hex[:10]}", workspace_id=ws, kind="person",
-        name=name.strip()[:200], normalized_name=norm,
-        aliases=[], identifiers={k: v for k, v in
-                                 (("emails", [email] if email else None),
-                                  ("handles", [handle] if handle else None)) if v},
-        meta={"email": email} if email else {}, state="open",
-        created_at=_now(), updated_at=_now(),
+        id=f"en_{uuid.uuid4().hex[:10]}",
+        workspace_id=ws,
+        kind="person",
+        name=name.strip()[:200],
+        normalized_name=norm,
+        aliases=[],
+        identifiers={
+            k: v for k, v in (("emails", [email] if email else None), ("handles", [handle] if handle else None)) if v
+        },
+        meta={"email": email} if email else {},
+        state="open",
+        created_at=_now(),
+        updated_at=_now(),
     )
     db.add(e)
     await db.flush()
     return e
 
 
-async def ensure_link(db, ws: str, from_type: str, from_id: str, to_type: str, to_id: str,
-                      link_type: str, *, source_artifact_id: str | None = None, meta: dict | None = None) -> Link:
+async def ensure_link(
+    db,
+    ws: str,
+    from_type: str,
+    from_id: str,
+    to_type: str,
+    to_id: str,
+    link_type: str,
+    *,
+    source_artifact_id: str | None = None,
+    meta: dict | None = None,
+) -> Link:
     """Idempotent typed link between two nodes (entity or artifact)."""
-    existing = (await db.execute(select(Link).where(
-        Link.workspace_id == ws, Link.from_type == from_type, Link.from_id == from_id,
-        Link.to_type == to_type, Link.to_id == to_id, Link.type == link_type,
-    ))).scalars().first()
+    existing = (
+        (
+            await db.execute(
+                select(Link).where(
+                    Link.workspace_id == ws,
+                    Link.from_type == from_type,
+                    Link.from_id == from_id,
+                    Link.to_type == to_type,
+                    Link.to_id == to_id,
+                    Link.type == link_type,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
     if existing:
         if meta:
             existing.meta = {**(existing.meta or {}), **meta}
         return existing
     link = Link(
-        id=f"lk_{uuid.uuid4().hex[:10]}", workspace_id=ws,
-        from_type=from_type, from_id=from_id, to_type=to_type, to_id=to_id,
-        type=link_type, source_artifact_id=source_artifact_id, meta=meta or {}, created_at=_now(),
+        id=f"lk_{uuid.uuid4().hex[:10]}",
+        workspace_id=ws,
+        from_type=from_type,
+        from_id=from_id,
+        to_type=to_type,
+        to_id=to_id,
+        type=link_type,
+        source_artifact_id=source_artifact_id,
+        meta=meta or {},
+        created_at=_now(),
     )
     db.add(link)
     await db.flush()
@@ -338,12 +424,19 @@ async def ensure_link(db, ws: str, from_type: str, from_id: str, to_type: str, t
 
 async def _link_commitment_issue(db, ws: str, commitment: Entity, iss: Artifact, *, via: str) -> None:
     """Record a commitment as fulfilled by a Linear issue (deterministic or vector)."""
-    await ensure_link(db, ws, "artifact", iss.id, "entity", commitment.id, "fulfills",
-                      source_artifact_id=iss.id,
-                      meta={"identifier": iss.external_ref, "url": iss.url, "via": via})
+    await ensure_link(
+        db,
+        ws,
+        "artifact",
+        iss.id,
+        "entity",
+        commitment.id,
+        "fulfills",
+        source_artifact_id=iss.id,
+        meta={"identifier": iss.external_ref, "url": iss.url, "via": via},
+    )
     commitment.state = "tracked"
-    commitment.meta = {**(commitment.meta or {}),
-                       "linear": {"identifier": iss.external_ref, "url": iss.url}}
+    commitment.meta = {**(commitment.meta or {}), "linear": {"identifier": iss.external_ref, "url": iss.url}}
     commitment.updated_at = _now()
 
 
@@ -353,8 +446,11 @@ async def match_commitment_to_linear(db, ws: str, commitment: Entity) -> bool:
     semantic matches text misses. Sets state='tracked'; otherwise leaves it
     untracked. READ-ONLY w.r.t. embeddings — issues are embedded at ingest, so
     the query vector is the only thing computed here and it is never persisted."""
-    issues = (await db.execute(select(Artifact).where(
-        Artifact.workspace_id == ws, Artifact.source == "linear-issue"))).scalars().all()
+    issues = (
+        (await db.execute(select(Artifact).where(Artifact.workspace_id == ws, Artifact.source == "linear-issue")))
+        .scalars()
+        .all()
+    )
     if not issues:
         return False
 
@@ -382,8 +478,15 @@ async def match_commitment_to_linear(db, ws: str, commitment: Entity) -> bool:
 async def match_open_commitments(db, ws: str) -> int:
     """Re-match every still-open commitment against Linear (used after a pull).
     Returns how many became tracked."""
-    open_commitments = (await db.execute(select(Entity).where(
-        Entity.workspace_id == ws, Entity.kind == "commitment", Entity.state == "open"))).scalars().all()
+    open_commitments = (
+        (
+            await db.execute(
+                select(Entity).where(Entity.workspace_id == ws, Entity.kind == "commitment", Entity.state == "open")
+            )
+        )
+        .scalars()
+        .all()
+    )
     matched = 0
     for c in open_commitments:
         if await match_commitment_to_linear(db, ws, c):
@@ -396,8 +499,17 @@ async def match_open_commitments(db, ws: str) -> int:
 WORK_SOURCES = ("linear-issue", "github-pr", "github-issue")
 
 
-BOT_NAMES = frozenset({"mend renovate", "renovate", "dependabot", "github-actions",
-                       "polar-sync-app", "cloudflare-workers-and-pages", "figma"})
+BOT_NAMES = frozenset(
+    {
+        "mend renovate",
+        "renovate",
+        "dependabot",
+        "github-actions",
+        "polar-sync-app",
+        "cloudflare-workers-and-pages",
+        "figma",
+    }
+)
 
 
 def is_bot(name: str | None) -> bool:
@@ -422,22 +534,35 @@ async def link_work_entities(db, ws: str, artifact: Artifact) -> None:
     assignee_ent = None
     if m.get("assignee") and not is_bot(m.get("assignee")):
         assignee_ent = await resolve_person(
-            db, ws, m["assignee"],
+            db,
+            ws,
+            m["assignee"],
             email=None if is_gh else m.get("assigneeEmail"),
-            handle=m["assignee"] if is_gh else None)
+            handle=m["assignee"] if is_gh else None,
+        )
         if assignee_ent:
-            await ensure_link(db, ws, "entity", assignee_ent.id, "artifact", artifact.id,
-                              "assigned_to", source_artifact_id=artifact.id)
+            await ensure_link(
+                db,
+                ws,
+                "entity",
+                assignee_ent.id,
+                "artifact",
+                artifact.id,
+                "assigned_to",
+                source_artifact_id=artifact.id,
+            )
     if m.get("creator") and m.get("creator") != m.get("assignee") and not is_bot(m.get("creator")):
         ce = await resolve_person(db, ws, m["creator"], handle=m["creator"] if is_gh else None)
         if ce:
-            await ensure_link(db, ws, "entity", ce.id, "artifact", artifact.id,
-                              "created", source_artifact_id=artifact.id)
+            await ensure_link(
+                db, ws, "entity", ce.id, "artifact", artifact.id, "created", source_artifact_id=artifact.id
+            )
     if m.get("project"):
         pr = await resolve_entity(db, ws, "project", m["project"], meta={"state": m.get("projectState")})
         if pr:
-            await ensure_link(db, ws, "artifact", artifact.id, "entity", pr.id, "belongs_to",
-                              source_artifact_id=artifact.id)
+            await ensure_link(
+                db, ws, "artifact", artifact.id, "entity", pr.id, "belongs_to", source_artifact_id=artifact.id
+            )
             if assignee_ent:
                 await ensure_link(db, ws, "entity", assignee_ent.id, "entity", pr.id, "works_on")
 
@@ -459,13 +584,15 @@ async def build_from_artifact(db, ws: str, artifact: Artifact) -> None:
             c = await resolve_entity(db, ws, "customer", name)
             if c:
                 customer_ents[normalize_name(name)] = c
-                await ensure_link(db, ws, "artifact", artifact.id, "entity", c.id, "mentions",
-                                  source_artifact_id=artifact.id)
+                await ensure_link(
+                    db, ws, "artifact", artifact.id, "entity", c.id, "mentions", source_artifact_id=artifact.id
+                )
         elif kind == "person":
             p = await resolve_person(db, ws, name)
             if p:
-                await ensure_link(db, ws, "artifact", artifact.id, "entity", p.id, "mentions",
-                                  source_artifact_id=artifact.id)
+                await ensure_link(
+                    db, ws, "artifact", artifact.id, "entity", p.id, "mentions", source_artifact_id=artifact.id
+                )
 
     # Note-takers carry structured attendees with emails — the strongest signal
     # for unifying a person across tools (an attendee email ties back to a Linear
@@ -478,8 +605,9 @@ async def build_from_artifact(db, ws: str, artifact: Artifact) -> None:
             if (nm or em) and not (nm and is_bot(nm)):
                 p = await resolve_person(db, ws, nm or em, email=em)
                 if p:
-                    await ensure_link(db, ws, "artifact", artifact.id, "entity", p.id, "mentions",
-                                      source_artifact_id=artifact.id)
+                    await ensure_link(
+                        db, ws, "artifact", artifact.id, "entity", p.id, "mentions", source_artifact_id=artifact.id
+                    )
 
     primary_customer = next(iter(customer_ents.values()), None)
 
@@ -487,12 +615,10 @@ async def build_from_artifact(db, ws: str, artifact: Artifact) -> None:
         text = (c or {}).get("text", "")
         if not text:
             continue
-        ce = await resolve_entity(db, ws, "commitment", text,
-                                  meta={"to": c.get("to", ""), "due": c.get("due", "")})
+        ce = await resolve_entity(db, ws, "commitment", text, meta={"to": c.get("to", ""), "due": c.get("due", "")})
         if not ce:
             continue
-        await ensure_link(db, ws, "artifact", artifact.id, "entity", ce.id, "source_of",
-                          source_artifact_id=artifact.id)
+        await ensure_link(db, ws, "artifact", artifact.id, "entity", ce.id, "source_of", source_artifact_id=artifact.id)
         to_name = c.get("to", "")
         cust = customer_ents.get(normalize_name(to_name)) if to_name else None
         if to_name and not cust:
@@ -509,16 +635,16 @@ async def build_from_artifact(db, ws: str, artifact: Artifact) -> None:
         fe = await resolve_entity(db, ws, "feature", req)
         if not fe:
             continue
-        await ensure_link(db, ws, "artifact", artifact.id, "entity", fe.id, "source_of",
-                          source_artifact_id=artifact.id)
+        await ensure_link(db, ws, "artifact", artifact.id, "entity", fe.id, "source_of", source_artifact_id=artifact.id)
         for cust in customer_ents.values():
             await ensure_link(db, ws, "entity", fe.id, "entity", cust.id, "requested_by")
 
     await db.commit()
 
 
-async def traverse(db, ws: str, start_ids: list[str], depth: int = 2,
-                   edge_types: list[str] | None = None) -> list[Link]:
+async def traverse(
+    db, ws: str, start_ids: list[str], depth: int = 2, edge_types: list[str] | None = None
+) -> list[Link]:
     """BFS over the graph up to `depth` hops from the start set; returns the
     edges reached. Python-side scan — swap for a recursive CTE at real scale;
     every caller goes through this seam."""
@@ -528,9 +654,7 @@ async def traverse(db, ws: str, start_ids: list[str], depth: int = 2,
     for _ in range(max(1, depth)):
         if not frontier:
             break
-        stmt = select(Link).where(
-            Link.workspace_id == ws,
-            or_(Link.from_id.in_(frontier), Link.to_id.in_(frontier)))
+        stmt = select(Link).where(Link.workspace_id == ws, or_(Link.from_id.in_(frontier), Link.to_id.in_(frontier)))
         if edge_types:
             stmt = stmt.where(Link.type.in_(edge_types))
         rows = (await db.execute(stmt)).scalars().all()
@@ -547,5 +671,12 @@ async def traverse(db, ws: str, start_ids: list[str], depth: int = 2,
 
 async def neighbors(db, ws: str, entity_id: str) -> list[Link]:
     """All links touching an entity (either direction)."""
-    return (await db.execute(select(Link).where(
-        Link.workspace_id == ws, or_(Link.from_id == entity_id, Link.to_id == entity_id)))).scalars().all()
+    return (
+        (
+            await db.execute(
+                select(Link).where(Link.workspace_id == ws, or_(Link.from_id == entity_id, Link.to_id == entity_id))
+            )
+        )
+        .scalars()
+        .all()
+    )
