@@ -85,6 +85,10 @@ class Settings(BaseSettings):
 
     heartbeat_token: str | None = None
 
+    # Full resource name (projects/…/locations/…/jobs/…); set in prod so the
+    # auto-sync toggle pauses/resumes the Cloud Scheduler job itself.
+    scheduler_job: str | None = None
+
     mcp_api_key: str | None = None
 
     agent_request_limit: int | None = None
