@@ -13,7 +13,13 @@ import { Button } from "@/components/ui/button";
 
 const COLLAPSE_KEY = "orbit-sidebar-collapsed";
 
-export function Sidebar({ onNavigate, collapsible = true }: { onNavigate?: () => void; collapsible?: boolean }) {
+export function Sidebar({
+  onNavigate,
+  collapsible = true,
+}: {
+  onNavigate?: () => void;
+  collapsible?: boolean;
+}) {
   const pathname = usePathname();
   const { t } = useTranslation();
   const [collapsed, setCollapsed] = React.useState(false);
@@ -50,27 +56,51 @@ export function Sidebar({ onNavigate, collapsible = true }: { onNavigate?: () =>
       )}
     >
       <div className={cn("pt-4", collapsed ? "px-2.5" : "px-3")}>
-        <div className={cn("flex items-center py-2", collapsed ? "justify-center px-0" : "gap-2.5 px-2")}>
+        <div
+          className={cn(
+            "flex items-center py-2",
+            collapsed ? "justify-center px-0" : "gap-2.5 px-2",
+          )}
+        >
           <OrbitMark className="h-8 w-8 shrink-0" />
-          {!collapsed && <div className="flex-1 truncate text-sm font-semibold leading-tight">Orbit</div>}
+          {!collapsed && (
+            <div className="flex-1 truncate text-sm font-semibold leading-tight">Orbit</div>
+          )}
           {collapsible && !collapsed && (
-            <Button variant="ghost" size="icon-sm" onClick={toggle} aria-label="Collapse sidebar" title="Collapse (⌘B)"
-                    className="text-muted-foreground hover:text-foreground">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={toggle}
+              aria-label="Collapse sidebar"
+              title="Collapse (⌘B)"
+              className="text-muted-foreground hover:text-foreground"
+            >
               <PanelLeftClose className="h-4 w-4" />
             </Button>
           )}
         </div>
         {collapsible && collapsed && (
           <div className="flex justify-center pt-1">
-            <Button variant="ghost" size="icon-sm" onClick={toggle} aria-label="Expand sidebar" title="Expand (⌘B)"
-                    className="text-muted-foreground hover:text-foreground">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={toggle}
+              aria-label="Expand sidebar"
+              title="Expand (⌘B)"
+              className="text-muted-foreground hover:text-foreground"
+            >
               <PanelLeftOpen className="h-4 w-4" />
             </Button>
           </div>
         )}
       </div>
 
-      <nav className={cn("no-scrollbar mt-3 flex-1 space-y-5 overflow-y-auto pb-4", collapsed ? "px-2.5" : "px-3")}>
+      <nav
+        className={cn(
+          "no-scrollbar mt-3 flex-1 space-y-5 overflow-y-auto pb-4",
+          collapsed ? "px-2.5" : "px-3",
+        )}
+      >
         {navSections.map((section, i) => (
           <div key={i} className="space-y-0.5">
             {section.label && !collapsed ? (
@@ -89,7 +119,9 @@ export function Sidebar({ onNavigate, collapsible = true }: { onNavigate?: () =>
                   className={cn(
                     "group relative flex items-center rounded-lg py-2 text-sm font-medium transition-colors",
                     collapsed ? "justify-center px-0" : "gap-2.5 px-2",
-                    active ? "text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                    active
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
                   )}
                 >
                   {active && (

@@ -5,9 +5,11 @@ on SQLite it is plain JSON ranked in Python (dev-scale). Defensive DDL, same
 reason as 0005/0006: dev --reload plus the startup drift-repair can materialize
 the model table before this migration runs.
 """
-from alembic import op
+
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
+
+from alembic import op
 
 revision = "0009_artifact_memory"
 down_revision = "0008_drop_chat"
@@ -44,8 +46,7 @@ def upgrade() -> None:
         op.create_index("ix_artifacts_source", "artifacts", ["source"])
         op.create_index("ix_artifacts_external_ref", "artifacts", ["external_ref"])
         if is_pg:
-            op.execute("CREATE INDEX ix_artifacts_embedding ON artifacts "
-                       "USING hnsw (embedding vector_cosine_ops)")
+            op.execute("CREATE INDEX ix_artifacts_embedding ON artifacts USING hnsw (embedding vector_cosine_ops)")
 
 
 def downgrade() -> None:

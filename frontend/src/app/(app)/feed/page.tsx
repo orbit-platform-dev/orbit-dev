@@ -45,13 +45,19 @@ const KIND: Record<string, { label: string; icon: LucideIcon; chip: string }> = 
   trend: { label: "Trend", icon: TrendingUp, chip: "text-info bg-info/10 border-info/20" },
   win: { label: "Win", icon: CheckCircle2, chip: "text-success bg-success/10 border-success/20" },
 };
-const kindMeta = (k: string) => KIND[k] ?? { label: k, icon: Sparkles, chip: "text-muted-foreground bg-muted border-border" };
+const kindMeta = (k: string) =>
+  KIND[k] ?? { label: k, icon: Sparkles, chip: "text-muted-foreground bg-muted border-border" };
 
 function KindChip({ kind }: { kind: string }) {
   const m = kindMeta(kind);
   const Icon = m.icon;
   return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider", m.chip)}>
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
+        m.chip,
+      )}
+    >
       <Icon className="h-3 w-3" /> {m.label}
     </span>
   );
@@ -59,24 +65,46 @@ function KindChip({ kind }: { kind: string }) {
 
 function BriefCard({ brief, findings }: { brief: Brief; findings: Finding[] }) {
   const cols = [
-    { label: "Risks", icon: AlertTriangle, tone: "text-warning", items: brief.evidence?.risks ?? [] },
-    { label: "Highlights", icon: CheckCircle2, tone: "text-success", items: brief.evidence?.highlights ?? [] },
-    { label: "Recommended", icon: Lightbulb, tone: "text-primary", items: brief.evidence?.recommendations ?? [] },
+    {
+      label: "Risks",
+      icon: AlertTriangle,
+      tone: "text-warning",
+      items: brief.evidence?.risks ?? [],
+    },
+    {
+      label: "Highlights",
+      icon: CheckCircle2,
+      tone: "text-success",
+      items: brief.evidence?.highlights ?? [],
+    },
+    {
+      label: "Recommended",
+      icon: Lightbulb,
+      tone: "text-primary",
+      items: brief.evidence?.recommendations ?? [],
+    },
   ].filter((c) => c.items.length);
   // Honest grounding: the brief summarizes the findings below — show the
   // aggregate evidence per tool, never an arbitrary sample of items.
   const byTool = new Map<string, number>();
-  for (const f of findings) for (const a of f.artifacts) {
-    const k = sourceKey(a.source);
-    if (k) byTool.set(k, (byTool.get(k) ?? 0) + 1);
-  }
+  for (const f of findings)
+    for (const a of f.artifacts) {
+      const k = sourceKey(a.source);
+      if (k) byTool.set(k, (byTool.get(k) ?? 0) + 1);
+    }
   return (
     <Card glass className="mb-6 animate-in fade-in-0 slide-in-from-bottom-2 p-6 duration-500">
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-primary">
         <Sparkles className="h-3.5 w-3.5" /> Company brief
       </div>
-      <h2 className="text-gradient mt-2 text-[20px] font-semibold tracking-[-0.02em]">{brief.title}</h2>
-      {brief.detail ? <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-muted-foreground">{brief.detail}</p> : null}
+      <h2 className="text-gradient mt-2 text-[20px] font-semibold tracking-[-0.02em]">
+        {brief.title}
+      </h2>
+      {brief.detail ? (
+        <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+          {brief.detail}
+        </p>
+      ) : null}
       <div className="mt-6 grid gap-6 sm:grid-cols-3">
         {cols.map(({ label, icon: Icon, tone, items }) => (
           <div key={label}>
@@ -96,12 +124,16 @@ function BriefCard({ brief, findings }: { brief: Brief; findings: Finding[] }) {
       </div>
       {(findings.length > 0 || byTool.size > 0) && (
         <div className="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/60 pt-4 text-xs text-muted-foreground">
-          <span>Grounded in the {findings.length} finding{findings.length === 1 ? "" : "s"} below</span>
+          <span>
+            Grounded in the {findings.length} finding{findings.length === 1 ? "" : "s"} below
+          </span>
           {byTool.size > 0 && <span className="text-muted-foreground/40">·</span>}
           {Array.from(byTool.entries()).map(([tool, n]) => (
             <span key={tool} className="inline-flex items-center gap-1.5">
               <IntegrationLogo k={tool} className="h-4 w-4 rounded-[4px] border-0" />
-              <span>{n} item{n === 1 ? "" : "s"}</span>
+              <span>
+                {n} item{n === 1 ? "" : "s"}
+              </span>
             </span>
           ))}
         </div>
@@ -119,7 +151,9 @@ function EvidenceChips({ finding }: { finding: Finding }) {
   return (
     <div className="mt-3 flex flex-wrap gap-1.5">
       {chips.map((c, i) => (
-        <span key={i} className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{c}</span>
+        <span key={i} className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+          {c}
+        </span>
       ))}
     </div>
   );
@@ -149,14 +183,29 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
     },
     onSuccess: (f) => {
       invalidate();
-      toast.success(isMemory ? "Saved to company memory" : `Created ${f.action?.result?.identifier ?? "the Linear issue"}`);
+      toast.success(
+        isMemory
+          ? "Saved to company memory"
+          : `Created ${f.action?.result?.identifier ?? "the Linear issue"}`,
+      );
       onClose();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : (isMemory ? "Could not save the fact" : "Could not create the issue")),
+    onError: (e) =>
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : isMemory
+            ? "Could not save the fact"
+            : "Could not create the issue",
+      ),
   });
   const dismiss = useMutation({
     mutationFn: () => api.dismissFinding(finding.id),
-    onSuccess: () => { invalidate(); toast.success("Dismissed"); onClose(); },
+    onSuccess: () => {
+      invalidate();
+      toast.success("Dismissed");
+      onClose();
+    },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Could not dismiss"),
   });
 
@@ -164,7 +213,9 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <div className="flex items-center gap-2"><KindChip kind={finding.kind} /></div>
+          <div className="flex items-center gap-2">
+            <KindChip kind={finding.kind} />
+          </div>
           <DialogTitle className="pt-1 text-[17px] leading-snug">{finding.title}</DialogTitle>
         </DialogHeader>
 
@@ -172,7 +223,9 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
 
         {(finding.entities.length > 0 || finding.artifacts.length > 0) && (
           <div className="min-w-0 rounded-lg border border-border bg-card/50 p-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Evidence</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Evidence
+            </div>
             <div className="mt-2 max-h-72 space-y-0.5 overflow-y-auto text-sm">
               {finding.entities.map((e) => (
                 <Link
@@ -180,16 +233,24 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
                   href={`/memory/${e.id}`}
                   className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-accent/60"
                 >
-                  <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{e.kind}</span>
+                  <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    {e.kind}
+                  </span>
                   <span className="min-w-0 flex-1 truncate">{e.name}</span>
                 </Link>
               ))}
               {finding.artifacts.map((a) => {
                 const inner = (
                   <>
-                    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{a.source}</span>
-                    <span className="min-w-0 flex-1 truncate" title={a.title}>{a.title}</span>
-                    {a.url ? <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                      {a.source}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate" title={a.title}>
+                      {a.title}
+                    </span>
+                    {a.url ? (
+                      <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    ) : null}
                   </>
                 );
                 return a.url ? (
@@ -215,7 +276,9 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
         {hasAction && !approved && (
           <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/[0.04] p-3">
             <div className="text-[11px] font-semibold uppercase tracking-wider text-primary">
-              {isMemory ? "Proposed memory · Remember this fact" : "Recommended action · Create Linear issue"}
+              {isMemory
+                ? "Proposed memory · Remember this fact"
+                : "Recommended action · Create Linear issue"}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="act-title">{isMemory ? "Fact" : "Title"}</Label>
@@ -223,7 +286,12 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="act-desc">{isMemory ? "Context" : "Description"}</Label>
-              <Textarea id="act-desc" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} />
+              <Textarea
+                id="act-desc"
+                rows={4}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
             </div>
           </div>
         )}
@@ -238,21 +306,42 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
           <div className="rounded-lg border border-success/20 bg-success/[0.06] p-3 text-sm text-success">
             Approved · created{" "}
             {action.result.url ? (
-              <a href={action.result.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 font-medium hover:underline">
+              <a
+                href={action.result.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-0.5 font-medium hover:underline"
+              >
                 {action.result.identifier} <ArrowUpRight className="h-3 w-3" />
               </a>
-            ) : action.result.identifier}
+            ) : (
+              action.result.identifier
+            )}
           </div>
         )}
 
         <DialogFooter>
-          {!approved && <Button variant="ghost" onClick={() => dismiss.mutate()} disabled={dismiss.isPending}>Dismiss</Button>}
-          {hasAction && !approved && (
-            <Button onClick={() => approve.mutate()} disabled={approve.isPending || !title.trim()}>
-              {approve.isPending ? (isMemory ? "Saving…" : "Creating…") : (isMemory ? "Approve & remember" : "Approve & create")}
+          {!approved && (
+            <Button variant="ghost" onClick={() => dismiss.mutate()} disabled={dismiss.isPending}>
+              Dismiss
             </Button>
           )}
-          {(approved || !hasAction) && <Button variant="outline" onClick={onClose}>Close</Button>}
+          {hasAction && !approved && (
+            <Button onClick={() => approve.mutate()} disabled={approve.isPending || !title.trim()}>
+              {approve.isPending
+                ? isMemory
+                  ? "Saving…"
+                  : "Creating…"
+                : isMemory
+                  ? "Approve & remember"
+                  : "Approve & create"}
+            </Button>
+          )}
+          {(approved || !hasAction) && (
+            <Button variant="outline" onClick={onClose}>
+              Close
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -297,13 +386,25 @@ function AttentionCard({ finding, onOpen }: { finding: Finding; onOpen: () => vo
       <Card className="p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5">
         <div className="flex flex-wrap items-center gap-2.5">
           <KindChip kind={finding.kind} />
-          {sev ? <span className={cn("text-[11px] font-semibold uppercase tracking-wider", sev.cls)}>{sev.label}</span> : null}
-          <span className="ml-auto text-xs text-muted-foreground">{timeAgo(finding.createdAt)}</span>
+          {sev ? (
+            <span className={cn("text-[11px] font-semibold uppercase tracking-wider", sev.cls)}>
+              {sev.label}
+            </span>
+          ) : null}
+          <span className="ml-auto text-xs text-muted-foreground">
+            {timeAgo(finding.createdAt)}
+          </span>
         </div>
-        <h3 className="mt-2.5 text-[16px] font-semibold leading-snug tracking-tight">{finding.title}</h3>
+        <h3 className="mt-2.5 text-[16px] font-semibold leading-snug tracking-tight">
+          {finding.title}
+        </h3>
         <div className="mt-2">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Why Orbit thinks this</div>
-          <p className="mt-1 line-clamp-3 text-sm leading-relaxed text-muted-foreground">{finding.detail}</p>
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Why Orbit thinks this
+          </div>
+          <p className="mt-1 line-clamp-3 text-sm leading-relaxed text-muted-foreground">
+            {finding.detail}
+          </p>
         </div>
         <div className="mt-3.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
           {owner ? (
@@ -312,18 +413,26 @@ function AttentionCard({ finding, onOpen }: { finding: Finding; onOpen: () => vo
             </span>
           ) : null}
           {related.map((e) => (
-            <span key={e.id} className="rounded-md bg-muted px-2 py-0.5">{e.name}</span>
+            <span key={e.id} className="rounded-md bg-muted px-2 py-0.5">
+              {e.name}
+            </span>
           ))}
           {sources.length > 0 ? (
             <span className="inline-flex items-center gap-1.5">
-              {sources.map((s) => <IntegrationLogo key={s} k={s} className="h-4 w-4 rounded-[4px]" />)}
-              <span>{finding.artifacts.length} evidence item{finding.artifacts.length === 1 ? "" : "s"}</span>
+              {sources.map((s) => (
+                <IntegrationLogo key={s} k={s} className="h-4 w-4 rounded-[4px]" />
+              ))}
+              <span>
+                {finding.artifacts.length} evidence item{finding.artifacts.length === 1 ? "" : "s"}
+              </span>
             </span>
           ) : null}
           <span className="ml-auto font-medium text-primary">
             {finding.status === "approved"
               ? `Approved · ${finding.action?.result?.identifier ?? "synced"}`
-              : finding.action ? "Review & approve →" : "Review evidence →"}
+              : finding.action
+                ? "Review & approve →"
+                : "Review evidence →"}
           </span>
         </div>
       </Card>
@@ -340,11 +449,17 @@ function FindingCard({ finding, onOpen }: { finding: Finding; onOpen: () => void
           <KindChip kind={finding.kind} />
           <span className="text-xs text-muted-foreground">{timeAgo(finding.createdAt)}</span>
         </div>
-        <h3 className="mt-3 text-[15px] font-semibold leading-snug tracking-tight">{finding.title}</h3>
+        <h3 className="mt-3 text-[15px] font-semibold leading-snug tracking-tight">
+          {finding.title}
+        </h3>
         <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{finding.detail}</p>
         <EvidenceChips finding={finding} />
         <div className="mt-4 text-xs font-medium text-primary">
-          {approved ? `Approved · ${finding.action?.result?.identifier ?? "synced"}` : finding.action ? "Review & approve →" : "Review →"}
+          {approved
+            ? `Approved · ${finding.action?.result?.identifier ?? "synced"}`
+            : finding.action
+              ? "Review & approve →"
+              : "Review →"}
         </div>
       </Card>
     </button>
@@ -360,9 +475,9 @@ export default function FeedPage() {
 
   const scan = useMutation({
     mutationFn: api.scanFeed,
-    onSuccess: () => {
+    onSuccess: (status) => {
+      qc.setQueryData(qk.heartbeat, status);
       qc.invalidateQueries({ queryKey: qk.feed });
-      qc.invalidateQueries({ queryKey: qk.heartbeat });  // surface the scanning state at once
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Scan failed"),
   });
@@ -379,7 +494,8 @@ export default function FeedPage() {
   }, [isLoading, data, scan]);
 
   // Keep the drawer's finding fresh after mutations.
-  const liveSelected = selected && data ? data.findings.find((f) => f.id === selected.id) ?? selected : selected;
+  const liveSelected =
+    selected && data ? (data.findings.find((f) => f.id === selected.id) ?? selected) : selected;
   const findings = data?.findings ?? [];
 
   // Rank by importance (kind) + evidence + recency; the top problems get the
@@ -397,20 +513,28 @@ export default function FeedPage() {
 
       {isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-44 rounded-xl" />)}
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-44 rounded-xl" />
+          ))}
         </div>
       ) : scanning ? (
         // While Orbit reads the tools, the sync IS the page — no half-built data.
         <SyncTheater sync={sync} />
       ) : (
         <>
-          {findings.length > 0 && data?.brief && (data.brief.detail || data.brief.title) ? <BriefCard brief={data.brief} findings={findings} /> : null}
+          {findings.length > 0 && data?.brief && (data.brief.detail || data.brief.title) ? (
+            <BriefCard brief={data.brief} findings={findings} />
+          ) : null}
           {findings.length === 0 ? (
             <EmptyState
               icon={Sparkles}
               title="Nothing needs attention"
               description="Orbit continuously compares what you promised and decided against what's actually being built. New findings appear here on their own."
-              action={<Button variant="outline" onClick={() => scan.mutate()}><RefreshCw className="h-4 w-4" /> Scan now</Button>}
+              action={
+                <Button variant="outline" onClick={() => scan.mutate()}>
+                  <RefreshCw className="h-4 w-4" /> Scan now
+                </Button>
+              }
             />
           ) : (
             <>
@@ -421,7 +545,11 @@ export default function FeedPage() {
                   </div>
                   <div className="flex flex-col gap-3">
                     {attention.map((f, i) => (
-                      <div key={f.id} className="animate-in fade-in-0 slide-in-from-bottom-2 fill-mode-backwards duration-500" style={{ animationDelay: `${i * 90}ms` }}>
+                      <div
+                        key={f.id}
+                        className="animate-in fade-in-0 slide-in-from-bottom-2 fill-mode-backwards duration-500"
+                        style={{ animationDelay: `${i * 90}ms` }}
+                      >
                         <AttentionCard finding={f} onOpen={() => setSelected(f)} />
                       </div>
                     ))}
@@ -435,7 +563,11 @@ export default function FeedPage() {
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     {rest.map((f, i) => (
-                      <div key={f.id} className="animate-in fade-in-0 slide-in-from-bottom-2 fill-mode-backwards duration-500" style={{ animationDelay: `${Math.min(i, 8) * 60}ms` }}>
+                      <div
+                        key={f.id}
+                        className="animate-in fade-in-0 slide-in-from-bottom-2 fill-mode-backwards duration-500"
+                        style={{ animationDelay: `${Math.min(i, 8) * 60}ms` }}
+                      >
                         <FindingCard finding={f} onOpen={() => setSelected(f)} />
                       </div>
                     ))}

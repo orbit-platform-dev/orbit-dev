@@ -1,4 +1,5 @@
 """Async SQLAlchemy engine + session factory."""
+
 import ssl
 from collections.abc import AsyncGenerator
 
@@ -31,6 +32,7 @@ elif _url.get_backend_name() == "postgresql":
 engine = create_async_engine(_url, echo=False, future=True, connect_args=_connect_args)
 
 if _is_sqlite:
+
     @event.listens_for(engine.sync_engine, "connect")
     def _sqlite_pragmas(dbapi_conn, _record):  # noqa: ANN001
         cur = dbapi_conn.cursor()
@@ -38,6 +40,7 @@ if _is_sqlite:
         cur.execute("PRAGMA busy_timeout=30000")
         cur.execute("PRAGMA synchronous=NORMAL")
         cur.close()
+
 
 SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -78,14 +81,16 @@ def _ensure_vector_indexes(conn) -> None:
         try:
             conn.execute(text("SAVEPOINT vec_idx"))
             conn.execute(text("SET LOCAL lock_timeout = '5s'"))
-            conn.execute(text(
-                f"CREATE INDEX IF NOT EXISTS ix_{table}_embedding ON {table} "
-                "USING hnsw (embedding vector_cosine_ops)"))
+            conn.execute(
+                text(
+                    f"CREATE INDEX IF NOT EXISTS ix_{table}_embedding ON {table} "
+                    "USING hnsw (embedding vector_cosine_ops)"
+                )
+            )
             conn.execute(text("RELEASE SAVEPOINT vec_idx"))
         except Exception:
             conn.execute(text("ROLLBACK TO SAVEPOINT vec_idx"))
-            logging.getLogger("orbit.db").warning(
-                "vector index on %s skipped (table busy); retrying next boot", table)
+            logging.getLogger("orbit.db").warning("vector index on %s skipped (table busy); retrying next boot", table)
     conn.execute(text("SET LOCAL lock_timeout = DEFAULT"))
 
 
@@ -126,8 +131,9 @@ def _migrate(conn) -> None:
     - Pre-Alembic DB (tables but no alembic_version): stamp baseline, upgrade.
     - Managed DB: plain upgrade to head.
     """
-    from alembic import command
     from sqlalchemy import inspect, text
+
+    from alembic import command
 
     is_pg = conn.dialect.name == "postgresql"
     if is_pg:

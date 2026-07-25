@@ -6,6 +6,7 @@ learning signal (Feedback), connectors (Integration), and a light audit trail
 (ActivityEvent). Rich nested data lives in JSON columns so the schema stays
 portable across SQLite (dev) and PostgreSQL (prod).
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -16,7 +17,6 @@ from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Tex
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
-
 
 EMBEDDING_DIM = 768
 
@@ -192,7 +192,9 @@ class Integration(Base):
     (workspace_id, key) is what isolates one company's connections from another's."""
 
     __tablename__ = "integrations"
-    workspace_id: Mapped[str] = mapped_column(String, primary_key=True, default="ws_default", server_default="ws_default")
+    workspace_id: Mapped[str] = mapped_column(
+        String, primary_key=True, default="ws_default", server_default="ws_default"
+    )
     key: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String)
     category: Mapped[str] = mapped_column(String)
@@ -261,8 +263,12 @@ class Memory(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     workspace_id: Mapped[str] = mapped_column(String, default="ws_default", index=True)
     fact: Mapped[str] = mapped_column(Text)
-    kind: Mapped[str] = mapped_column(String, default="fact", index=True)  # assignment|ownership|decision|blocker|deadline|status|context
-    subject: Mapped[str] = mapped_column(String, default="", index=True)   # normalized slot key (issue/project) for contradiction detection
+    kind: Mapped[str] = mapped_column(
+        String, default="fact", index=True
+    )  # assignment|ownership|decision|blocker|deadline|status|context
+    subject: Mapped[str] = mapped_column(
+        String, default="", index=True
+    )  # normalized slot key (issue/project) for contradiction detection
     subject_entity_id: Mapped[str | None] = mapped_column(String, nullable=True)
     confidence: Mapped[float] = mapped_column(default=0.7)
     importance: Mapped[float] = mapped_column(default=0.5)

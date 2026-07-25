@@ -4,8 +4,10 @@ The Understand layer over observed memory. Defensive DDL, same reason as
 0005/0006/0009: dev --reload plus the startup drift-repair can materialize the
 model tables before this migration runs.
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0010_company_model"
 down_revision = "0009_artifact_memory"

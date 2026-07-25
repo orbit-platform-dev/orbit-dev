@@ -4,6 +4,7 @@ Every business row carries workspace_id. Until Clerk organizations are wired in,
 all traffic lands on the seeded default workspace; the dependency below is the
 single place that changes when real org claims arrive.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -52,8 +53,7 @@ def workspace_id_for(user: dict[str, Any]) -> str:
     return DEFAULT_WORKSPACE_ID
 
 
-async def get_workspace_id(user: dict[str, Any] = Depends(get_current_user),
-                           db=Depends(get_db)) -> str:
+async def get_workspace_id(user: dict[str, Any] = Depends(get_current_user), db=Depends(get_db)) -> str:
     """Resolve the tenant AND materialize its Workspace row on first sight.
     Without the row, per-workspace state (auto_sync, embedding_model) and the
     heartbeat's workspace scan silently miss the tenant."""
@@ -86,6 +86,5 @@ async def ensure_workspace_rows(db) -> None:
 
 async def ensure_default_workspace(db) -> None:
     if not await db.get(Workspace, DEFAULT_WORKSPACE_ID):
-        db.add(Workspace(id=DEFAULT_WORKSPACE_ID, name="Orbit Workspace",
-                         created_at=datetime.now(timezone.utc)))
+        db.add(Workspace(id=DEFAULT_WORKSPACE_ID, name="Orbit Workspace", created_at=datetime.now(timezone.utc)))
         await db.flush()

@@ -3,8 +3,10 @@
 The graph was a per-meeting render, not company memory — removed everywhere
 (models, persistence, router, UI). Defensive DDL as usual for --reload drift.
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0007_drop_graph"
 down_revision = "0006_ai_os_loop"

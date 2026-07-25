@@ -2,6 +2,7 @@
 text for memory. Runs on the extractor model (vision-capable, high-quota);
 returns "" on any failure so callers skip honestly instead of ingesting noise.
 """
+
 from __future__ import annotations
 
 import ipaddress
@@ -41,6 +42,7 @@ def _public_host(host: str) -> bool:
 def _may_send_auth(host: str) -> bool:
     return any(host == h or host.endswith(h) for h in _AUTHED_HOSTS)
 
+
 _DOC_PROMPT = (
     "You transcribe documents. Output ONLY the text visible in the file, in reading "
     "order, rendering tables as plain aligned lines. No commentary, no translation, "
@@ -63,10 +65,12 @@ async def transcribe(data: bytes, mime: str, name: str = "") -> str:
     prompt = _IMAGE_PROMPT if mime.startswith("image/") else _DOC_PROMPT
     agent = Agent(build_model(settings.extractor_model), system_prompt=prompt, retries=1)
     try:
-        result = await agent.run([
-            f"Read this file ({name}).",
-            BinaryContent(data=data, media_type=mime),
-        ])
+        result = await agent.run(
+            [
+                f"Read this file ({name}).",
+                BinaryContent(data=data, media_type=mime),
+            ]
+        )
         return (result.output or "").strip()
     except Exception:
         return ""

@@ -4,6 +4,7 @@ When CLERK_JWKS_URL is unset, auth is disabled and a demo principal is returned
 so the API runs open in development. When set, bearer tokens are verified
 against Clerk's JWKS.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -50,8 +51,11 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
         if key is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown signing key")
         claims = jwt.decode(
-            token, key, algorithms=["RS256"],  
-            issuer=settings.clerk_issuer, options={"verify_aud": False},
+            token,
+            key,
+            algorithms=["RS256"],
+            issuer=settings.clerk_issuer,
+            options={"verify_aud": False},
         )
         return claims
     except HTTPException:

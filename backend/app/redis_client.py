@@ -3,6 +3,7 @@
 Redis backs response caching and the agent event stream. It is optional: when
 REDIS_URL is unset or unreachable, the helpers below no-op so the API still runs.
 """
+
 from __future__ import annotations
 
 import json

@@ -4,12 +4,14 @@ Two agents run the MVP loop: the Extractor (per artifact) and the Reasoner
 (workspace-wide brief + recommendation drafting). `build_agent` gets its model
 from the ModelService, which DEFAULT_MODEL selects; providers are lazy-imported.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
-from .model_service import build_model
 from pydantic_ai import Agent, NativeOutput
+
+from .model_service import build_model
 
 SYSTEM_PROMPTS: dict[str, str] = {
     "extractor": (
@@ -94,7 +96,6 @@ SYSTEM_PROMPTS: dict[str, str] = {
         "If the answer isn't in the company's data, answer from general knowledge, set grounded=false and "
         "say so plainly. Never fabricate ids, links or facts. Be concise — short paragraphs or bullet lines."
     ),
-
     "orbit-chat-stream": (
         "You are Orbit, the AI operating system for this company. You continuously monitor everything "
         "across ALL of its connected tools — issues, pull requests, tickets, chat threads, documents, "
@@ -110,7 +111,6 @@ SYSTEM_PROMPTS: dict[str, str] = {
         "from general knowledge. Never fabricate identifiers, links or facts. Respond in clean, compact "
         "markdown: short paragraphs, bullet lists where they help, bold for key names. No preamble."
     ),
-
     "orbit-agent": (
         "You are Orbit — the AI operating system and single brain for this company. You sit on top of "
         "the tools the company already uses (calls, meetings, documents, code, tickets, chat) and make "

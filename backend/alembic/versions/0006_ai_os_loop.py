@@ -4,8 +4,10 @@ plan draft snapshots (what the AI originally wrote).
 Defensive DDL, same reason as 0005: dev --reload plus the startup drift-repair
 can materialize model tables before this migration runs.
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0006_ai_os_loop"
 down_revision = "0005_intelligence"

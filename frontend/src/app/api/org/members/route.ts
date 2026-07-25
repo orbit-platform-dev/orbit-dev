@@ -6,10 +6,17 @@ export async function POST(req: Request) {
   if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
   if (!orgId) return NextResponse.json({ error: "No active workspace." }, { status: 400 });
   if (!has({ role: "org:admin" })) {
-    return NextResponse.json({ error: "Only workspace admins can invite members." }, { status: 403 });
+    return NextResponse.json(
+      { error: "Only workspace admins can invite members." },
+      { status: 403 },
+    );
   }
 
-  const body = (await req.json().catch(() => ({}))) as { emailAddress?: string; role?: string; origin?: string };
+  const body = (await req.json().catch(() => ({}))) as {
+    emailAddress?: string;
+    role?: string;
+    origin?: string;
+  };
   const email = body.emailAddress?.trim().toLowerCase();
   const role = body.role === "org:admin" ? "org:admin" : "org:member";
   if (!email) return NextResponse.json({ error: "An email address is required." }, { status: 400 });

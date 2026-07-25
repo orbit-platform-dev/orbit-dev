@@ -5,6 +5,7 @@ prepared Linear action. Approving a recommendation performs the one real
 outbound action (create a Linear issue) and marks the commitment tracked; edits
 and dismissals are captured as learning signal. Nothing acts without approval.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -18,7 +19,8 @@ from sqlalchemy import select
 from ..deps import Depends, get_current_user, get_db
 from ..models import ActivityEvent, Artifact, Entity, Feedback, Insight, Workspace
 from ..schemas import ArtifactOut, BriefOut, CorrectionOut, EntityOut, FeedOut, FindingOut
-from ..services import heartbeat, learning, memory, tickets
+from ..services import heartbeat, learning, memory, scheduler, tickets
+from ..services import linear as linear_svc
 from ..services.workspace import get_workspace_id
 
 router = APIRouter(tags=["feed"])
@@ -41,15 +43,20 @@ class AutoSyncIn(BaseModel):
 
 
 @router.post("/heartbeat/auto")
-async def set_auto_sync(body: AutoSyncIn, db=Depends(get_db), ws: str = Depends(get_workspace_id),
-                        _=Depends(get_current_user)):
+async def set_auto_sync(
+    body: AutoSyncIn, db=Depends(get_db), ws: str = Depends(get_workspace_id), _=Depends(get_current_user)
+):
     """Toggle auto-sync for this workspace. Persisted — gates the in-process loop
-    AND Cloud Scheduler ticks. Manual 'Pull now' works either way."""
+    AND Cloud Scheduler ticks. Manual 'Pull now' works either way. When
+    SCHEDULER_JOB is configured (prod), also pauses/resumes the Cloud Scheduler
+    job itself, so toggle-off means zero scheduled calls."""
     row = await db.get(Workspace, ws)
     if row:
         row.auto_sync = body.enabled
         await db.commit()
+    await scheduler.set_paused(not body.enabled)
     return heartbeat.status(ws, enabled=body.enabled)
+
 
 _RANK = {"gap": 0, "drift": 1, "win": 2, "trend": 3}
 
@@ -66,8 +73,14 @@ async def _to_finding_out(db, insight: Insight) -> FindingOut:
         if a:
             artifacts.append(ArtifactOut.model_validate(a))
     return FindingOut(
-        id=insight.id, kind=insight.kind, title=insight.title, detail=insight.detail,
-        status=insight.status, action=insight.action, entities=entities, artifacts=artifacts,
+        id=insight.id,
+        kind=insight.kind,
+        title=insight.title,
+        detail=insight.detail,
+        status=insight.status,
+        action=insight.action,
+        entities=entities,
+        artifacts=artifacts,
         proposal=(insight.evidence or {}).get("proposal"),
         created_at=insight.created_at,
     )
@@ -75,17 +88,41 @@ async def _to_finding_out(db, insight: Insight) -> FindingOut:
 
 @router.get("/feed", response_model=FeedOut)
 async def get_feed(db=Depends(get_db), ws: str = Depends(get_workspace_id)):
-    rows = (await db.execute(select(Insight).where(
-        Insight.workspace_id == ws, Insight.origin == "model",
-        Insight.kind != "brief", Insight.status.in_(("open", "approved")),
-    ))).scalars().all()
-    rows.sort(key=lambda i: (_RANK.get(i.kind, 9), i.status != "open",
-                             -(i.created_at.timestamp() if i.created_at else 0)))
+    rows = (
+        (
+            await db.execute(
+                select(Insight).where(
+                    Insight.workspace_id == ws,
+                    Insight.origin == "model",
+                    Insight.kind != "brief",
+                    Insight.status.in_(("open", "approved")),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    rows.sort(
+        key=lambda i: (_RANK.get(i.kind, 9), i.status != "open", -(i.created_at.timestamp() if i.created_at else 0))
+    )
     findings = [await _to_finding_out(db, i) for i in rows]
 
-    brief_row = (await db.execute(select(Insight).where(
-        Insight.workspace_id == ws, Insight.origin == "model", Insight.kind == "brief",
-    ).order_by(Insight.created_at.desc()).limit(1))).scalars().first()
+    brief_row = (
+        (
+            await db.execute(
+                select(Insight)
+                .where(
+                    Insight.workspace_id == ws,
+                    Insight.origin == "model",
+                    Insight.kind == "brief",
+                )
+                .order_by(Insight.created_at.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
     brief = BriefOut.model_validate(brief_row) if brief_row else None
     return FeedOut(brief=brief, findings=findings)
 
@@ -94,8 +131,18 @@ async def get_feed(db=Depends(get_db), ws: str = Depends(get_workspace_id)):
 async def list_learning(limit: int = 20, db=Depends(get_db), ws: str = Depends(get_workspace_id)):
     """What Orbit has learned: the recent human corrections (edits + dismissals)
     that now shape future extraction and recommendations."""
-    return (await db.execute(select(Feedback).where(Feedback.workspace_id == ws)
-            .order_by(Feedback.created_at.desc()).limit(min(limit, 50)))).scalars().all()
+    return (
+        (
+            await db.execute(
+                select(Feedback)
+                .where(Feedback.workspace_id == ws)
+                .order_by(Feedback.created_at.desc())
+                .limit(min(limit, 50))
+            )
+        )
+        .scalars()
+        .all()
+    )
 
 
 @router.post("/feed/scan")
@@ -125,9 +172,35 @@ async def _get_finding(db, ws: str, finding_id: str) -> Insight:
     return f
 
 
+async def _evidence_for_issue(db, f: Insight) -> tuple[str, list[tuple[str, str]]]:
+    """The finding's evidence, ready for the created issue: a markdown block to
+    append to the description, and (url, title) pairs for native attachments.
+    Empty when the finding carries no evidence — the description stays untouched."""
+    lines: list[str] = []
+    links: list[tuple[str, str]] = []
+    for eid in f.entity_ids or []:
+        e = await db.get(Entity, eid)
+        if e and e.kind == "commitment":
+            due = (e.meta or {}).get("due")
+            lines.append(f"- Commitment: {e.name}" + (f" (due {due})" if due else ""))
+    for aid in f.artifact_ids or []:
+        a = await db.get(Artifact, aid)
+        if not a:
+            continue
+        if a.url:
+            lines.append(f"- [{a.title}]({a.url})")
+            links.append((a.url, a.title))
+        else:
+            lines.append(f"- {a.title} ({a.source})")
+    if not lines:
+        return "", []
+    return "\n\n---\n**Evidence** (attached by Orbit)\n" + "\n".join(lines), links
+
+
 @router.post("/findings/{finding_id}/approve", response_model=FindingOut)
-async def approve_finding(finding_id: str, db=Depends(get_db), ws: str = Depends(get_workspace_id),
-                          user=Depends(get_current_user)):
+async def approve_finding(
+    finding_id: str, db=Depends(get_db), ws: str = Depends(get_workspace_id), user=Depends(get_current_user)
+):
     """Approve a recommendation: perform its prepared action, then record it.
     Actions: create a Linear issue, or remember an agent-proposed fact."""
     f = await _get_finding(db, ws, finding_id)
@@ -138,33 +211,50 @@ async def approve_finding(finding_id: str, db=Depends(get_db), ws: str = Depends
     if action.get("type") == "remember-fact":
         # An MCP agent proposed this fact; approval is the moment it becomes memory.
         mem = await memory.record(
-            db, ws, fact=action.get("title", ""), kind="note",
+            db,
+            ws,
+            fact=action.get("title", ""),
+            kind="note",
             subject=action.get("subject", ""),
             source_ref=f"MCP agent · approved by {user.get('name', 'a human')}",
-            importance=0.7, base_confidence=0.85)
+            importance=0.7,
+            base_confidence=0.85,
+        )
         if mem is None:
             raise HTTPException(422, "The proposed fact is empty")
         f.action = {**action, "result": {"memoryId": mem.id}}
         f.status = "approved"
-        db.add(ActivityEvent(
-            id=f"ac_{uuid.uuid4().hex[:8]}",
-            actor={"name": user.get("name", "You"), "isAgent": False}, action="approved",
-            target=f"Remembered: {action.get('title', '')[:80]}",
-            target_type="finding", at=datetime.now(timezone.utc),
-        ))
+        db.add(
+            ActivityEvent(
+                id=f"ac_{uuid.uuid4().hex[:8]}",
+                actor={"name": user.get("name", "You"), "isAgent": False},
+                action="approved",
+                target=f"Remembered: {action.get('title', '')[:80]}",
+                target_type="finding",
+                at=datetime.now(timezone.utc),
+            )
+        )
         await db.commit()
         return await _to_finding_out(db, f)
 
     if action.get("type") != "create-linear-issue":
         raise HTTPException(422, "This finding has no action to approve")
 
+    evidence_md, links = await _evidence_for_issue(db, f)
     try:
-        result = await tickets.create_ticket(db, ws, connector="linear",
-                                             title=action["title"], description=action.get("description", ""))
+        result = await tickets.create_ticket(
+            db, ws, connector="linear", title=action["title"], description=action.get("description", "") + evidence_md
+        )
     except PermissionError as exc:
         raise HTTPException(409, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, f"Linear did not create the issue: {exc}") from exc
+
+    if links and result.get("id"):
+        auth = await linear_svc.get_auth(db, ws)
+        if auth:
+            for url, title in links:
+                await linear_svc.attach_link(auth, result["id"], url, title)
 
     f.action = {**action, "result": result}
     f.status = "approved"
@@ -176,19 +266,22 @@ async def approve_finding(finding_id: str, db=Depends(get_db), ws: str = Depends
             e.state = "tracked"
             e.meta = {**(e.meta or {}), "linear": result}
             e.updated_at = datetime.now(timezone.utc)
-    db.add(ActivityEvent(
-        id=f"ac_{uuid.uuid4().hex[:8]}",
-        actor={"name": user.get("name", "You"), "isAgent": False}, action="approved",
-        target=f"Created {result.get('identifier', 'a Linear issue')}",
-        target_type="finding", at=datetime.now(timezone.utc),
-    ))
+    db.add(
+        ActivityEvent(
+            id=f"ac_{uuid.uuid4().hex[:8]}",
+            actor={"name": user.get("name", "You"), "isAgent": False},
+            action="approved",
+            target=f"Created {result.get('identifier', 'a Linear issue')}",
+            target_type="finding",
+            at=datetime.now(timezone.utc),
+        )
+    )
     await db.commit()
     return await _to_finding_out(db, f)
 
 
 @router.post("/findings/{finding_id}/edit", response_model=FindingOut)
-async def edit_finding(finding_id: str, body: EditFindingIn, db=Depends(get_db),
-                       ws: str = Depends(get_workspace_id)):
+async def edit_finding(finding_id: str, body: EditFindingIn, db=Depends(get_db), ws: str = Depends(get_workspace_id)):
     """Edit a recommendation's prepared action before approving. The edit is
     captured as learning signal."""
     f = await _get_finding(db, ws, finding_id)
@@ -202,8 +295,13 @@ async def edit_finding(finding_id: str, body: EditFindingIn, db=Depends(get_db),
         if value is not None and value != action.get(key, ""):
             # Capture + vectorize the correction (a learned behavioral rule).
             await learning.record_feedback(
-                db, ws, section="finding", field=key,
-                before=str(action.get(key, "")), after=str(value), context=f.title,
+                db,
+                ws,
+                section="finding",
+                field=key,
+                before=str(action.get(key, "")),
+                after=str(value),
+                context=f.title,
             )
             action[key] = value
     f.action = action
@@ -212,14 +310,20 @@ async def edit_finding(finding_id: str, body: EditFindingIn, db=Depends(get_db),
 
 
 @router.post("/findings/{finding_id}/dismiss", response_model=FindingOut)
-async def dismiss_finding(finding_id: str, body: DismissFindingIn, db=Depends(get_db),
-                          ws: str = Depends(get_workspace_id)):
+async def dismiss_finding(
+    finding_id: str, body: DismissFindingIn, db=Depends(get_db), ws: str = Depends(get_workspace_id)
+):
     """Dismiss a finding (a learning signal — this kind surfaces less)."""
     f = await _get_finding(db, ws, finding_id)
     f.status = "dismissed"
     await learning.record_feedback(
-        db, ws, section="finding", field="dismiss",
-        before=f"[{f.kind}] {f.title}", after=(body.reason or ""), context=f.title,
+        db,
+        ws,
+        section="finding",
+        field="dismiss",
+        before=f"[{f.kind}] {f.title}",
+        after=(body.reason or ""),
+        context=f.title,
     )
     await db.commit()
     return await _to_finding_out(db, f)

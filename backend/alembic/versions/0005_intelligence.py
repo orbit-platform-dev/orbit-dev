@@ -4,8 +4,10 @@ Defensive DDL: dev runs uvicorn --reload, and the startup drift-repair
 (create_all) can materialize new model tables BEFORE this migration executes,
 leaving the version pointer behind. Skip anything that already exists.
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0005_intelligence"
 down_revision = "0004_chat_history"

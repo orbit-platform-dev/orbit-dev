@@ -22,6 +22,7 @@ Auth — the bearer key IS the tenant credential:
   via X-Orbit-Workspace — never distribute it.
 - Both unset + Clerk off (local dev): open access to ws_default.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -86,15 +87,22 @@ async def _observed(tool: str, query: str, call) -> str:
         # Ledger = items a search actually returned; tools that don't use it
         # (graph, facts) signal a miss with a "No …" reply.
         hits = len(ctx.deps.ledger) or (0 if out.startswith("No ") else 1)
-        db.add(McpQuery(id=f"mq_{uuid.uuid4().hex[:10]}", workspace_id=_workspace.get(),
-                        tool=tool, query=query[:2000], hits=hits,
-                        created_at=datetime.now(timezone.utc)))
+        db.add(
+            McpQuery(
+                id=f"mq_{uuid.uuid4().hex[:10]}",
+                workspace_id=_workspace.get(),
+                tool=tool,
+                query=query[:2000],
+                hits=hits,
+                created_at=datetime.now(timezone.utc),
+            )
+        )
         await db.commit()
         cites = cite_dicts(ctx.deps, cap=8)
         if cites:
             out += "\n\nSOURCES (cite these links in your answer):\n" + "\n".join(
-                f"- {c['title']} ({c['source']})" + (f": {c['url']}" if c.get("url") else "")
-                for c in cites)
+                f"- {c['title']} ({c['source']})" + (f": {c['url']}" if c.get("url") else "") for c in cites
+            )
         return out
 
 
@@ -106,8 +114,7 @@ async def search_memory(query: str, sources: list[str] | None = None, k: int = 8
     with [id: …] and a snippet."""
     from .agents import orbit_agent
 
-    return await _observed("search_memory", query,
-                           lambda ctx: orbit_agent.search_memory(ctx, query, sources, k))
+    return await _observed("search_memory", query, lambda ctx: orbit_agent.search_memory(ctx, query, sources, k))
 
 
 @mcp.tool()
@@ -126,8 +133,7 @@ async def person_work(name: str) -> str:
     created — the reliable answer to 'what is X working on'."""
     from .agents import orbit_agent
 
-    return await _observed("person_work", name,
-                           lambda ctx: orbit_agent.person_work(ctx, name))
+    return await _observed("person_work", name, lambda ctx: orbit_agent.person_work(ctx, name))
 
 
 @mcp.tool()
@@ -137,8 +143,7 @@ async def graph_neighbors(entity: str) -> str:
     which commitment."""
     from .agents import orbit_agent
 
-    return await _observed("graph_neighbors", entity,
-                           lambda ctx: orbit_agent.graph_neighbors(ctx, entity))
+    return await _observed("graph_neighbors", entity, lambda ctx: orbit_agent.graph_neighbors(ctx, entity))
 
 
 @mcp.tool()
@@ -159,8 +164,7 @@ async def learned_facts(query: str) -> str:
     who-owns / who-decided / how-things-were questions."""
     from .agents import orbit_agent
 
-    return await _observed("learned_facts", query,
-                           lambda ctx: orbit_agent.learned_facts(ctx, query))
+    return await _observed("learned_facts", query, lambda ctx: orbit_agent.learned_facts(ctx, query))
 
 
 @mcp.tool()
@@ -191,29 +195,56 @@ async def propose_fact(fact: str, subject: str = "", why: str = "") -> str:
     dedupe = f"agent-fact:{hashlib.md5(fact.lower().encode()).hexdigest()[:12]}"
     async with SessionLocal() as db:
         ws = _workspace.get()
-        open_props = (await db.execute(select(func.count()).select_from(Insight).where(
-            Insight.workspace_id == ws, Insight.kind == "note",
-            Insight.status == "open"))).scalar_one()
+        open_props = (
+            await db.execute(
+                select(func.count())
+                .select_from(Insight)
+                .where(Insight.workspace_id == ws, Insight.kind == "note", Insight.status == "open")
+            )
+        ).scalar_one()
         if open_props >= _MAX_OPEN_PROPOSALS:
-            return ("Too many proposals are already awaiting review — "
-                    "ask a human to triage the Orbit feed first.")
-        existing = (await db.execute(select(Insight).where(
-            Insight.workspace_id == ws, Insight.dedupe_key == dedupe,
-            Insight.status.in_(("open", "approved", "dismissed"))))).scalars().first()
+            return "Too many proposals are already awaiting review — ask a human to triage the Orbit feed first."
+        existing = (
+            (
+                await db.execute(
+                    select(Insight).where(
+                        Insight.workspace_id == ws,
+                        Insight.dedupe_key == dedupe,
+                        Insight.status.in_(("open", "approved", "dismissed")),
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
         if existing:
-            return {"open": "Already proposed — awaiting human review on the feed.",
-                    "approved": "Already approved and remembered.",
-                    "dismissed": "A human already dismissed this exact proposal; do not re-propose it."
-                    }[existing.status]
-        db.add(Insight(
-            id=f"in_{uuid.uuid4().hex[:10]}", workspace_id=ws, origin="model", kind="note",
-            title=f"An agent proposed remembering: {fact[:150]}",
-            detail=(why or "").strip()[:500],
-            entity_ids=[], artifact_ids=[], evidence={}, status="open",
-            created_at=datetime.now(timezone.utc), dedupe_key=dedupe,
-            action={"type": "remember-fact", "title": fact,
-                    "description": (why or "").strip()[:500], "subject": (subject or "").strip()[:200]},
-        ))
+            return {
+                "open": "Already proposed — awaiting human review on the feed.",
+                "approved": "Already approved and remembered.",
+                "dismissed": "A human already dismissed this exact proposal; do not re-propose it.",
+            }[existing.status]
+        db.add(
+            Insight(
+                id=f"in_{uuid.uuid4().hex[:10]}",
+                workspace_id=ws,
+                origin="model",
+                kind="note",
+                title=f"An agent proposed remembering: {fact[:150]}",
+                detail=(why or "").strip()[:500],
+                entity_ids=[],
+                artifact_ids=[],
+                evidence={},
+                status="open",
+                created_at=datetime.now(timezone.utc),
+                dedupe_key=dedupe,
+                action={
+                    "type": "remember-fact",
+                    "title": fact,
+                    "description": (why or "").strip()[:500],
+                    "subject": (subject or "").strip()[:200],
+                },
+            )
+        )
         await db.commit()
     return "Staged for human approval on the Orbit feed. It becomes memory only if approved."
 
@@ -228,18 +259,27 @@ async def open_findings() -> str:
 
     async with SessionLocal() as db:
         ws = _workspace.get()
-        rows = (await db.execute(
-            select(Insight).where(
-                Insight.workspace_id == ws, Insight.origin == "model",
-                Insight.status == "open")
-            .order_by(Insight.created_at.desc()).limit(30))).scalars().all()
+        rows = (
+            (
+                await db.execute(
+                    select(Insight)
+                    .where(Insight.workspace_id == ws, Insight.origin == "model", Insight.status == "open")
+                    .order_by(Insight.created_at.desc())
+                    .limit(30)
+                )
+            )
+            .scalars()
+            .all()
+        )
         # Evidence artifacts for every finding in one query, so each finding
         # can cite its sources (title + link) like the in-app feed does.
         evidence_ids = [aid for r in rows for aid in (r.artifact_ids or [])[:4]]
         arts = {}
         if evidence_ids:
-            arts = {a.id: a for a in (await db.execute(select(Artifact).where(
-                Artifact.id.in_(evidence_ids)))).scalars().all()}
+            arts = {
+                a.id: a
+                for a in (await db.execute(select(Artifact).where(Artifact.id.in_(evidence_ids)))).scalars().all()
+            }
     brief = next((r for r in rows if r.kind == "brief"), None)
     findings = [r for r in rows if r.kind != "brief"]
     if not brief and not findings:
@@ -264,11 +304,13 @@ def _denied(status: int, message: str):
     body = json.dumps({"error": message}).encode()
 
     async def app(scope, receive, send):
-        await send({
-            "type": "http.response.start", "status": status,
-            "headers": [(b"content-type", b"application/json"),
-                        (b"content-length", str(len(body)).encode())],
-        })
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+            }
+        )
         await send({"type": "http.response.body", "body": body})
 
     return app
@@ -288,8 +330,9 @@ async def _resolve_workspace(headers: dict[str, str]) -> str | None:
         if settings.mcp_api_key and secrets.compare_digest(supplied, settings.mcp_api_key):
             return headers.get("x-orbit-workspace", "ws_default")
         async with SessionLocal() as db:
-            ws = (await db.execute(select(Workspace.id).where(
-                Workspace.mcp_key_hash == hash_key(supplied)))).scalar_one_or_none()
+            ws = (
+                await db.execute(select(Workspace.id).where(Workspace.mcp_key_hash == hash_key(supplied)))
+            ).scalar_one_or_none()
         if ws:
             return ws
     if not settings.mcp_api_key and not settings.clerk_jwks_url:
@@ -305,12 +348,12 @@ def build_asgi_app():
         if scope["type"] != "http":
             await inner(scope, receive, send)
             return
-        headers = {k.decode("latin-1").lower(): v.decode("latin-1")
-                   for k, v in scope.get("headers", [])}
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
         ws = await _resolve_workspace(headers)
         if ws is None:
-            await _denied(401, "Missing or invalid Authorization bearer key. "
-                               "Generate a workspace key in Orbit → Integrations.")(scope, receive, send)
+            await _denied(
+                401, "Missing or invalid Authorization bearer key. Generate a workspace key in Orbit → Integrations."
+            )(scope, receive, send)
             return
         _workspace.set(ws)
         await inner(scope, receive, send)
@@ -322,6 +365,7 @@ def session_manager():
     """The StreamableHTTP session manager's run() context — the parent app's
     lifespan must enter this (the sub-app's own lifespan never runs)."""
     return mcp.session_manager.run()
+
 
 asgi_app = build_asgi_app()
 
@@ -337,7 +381,7 @@ class MCPDispatch:
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http" and (scope["path"] == "/mcp" or scope["path"].startswith("/mcp/")):
             scope = dict(scope)
-            scope["path"] = "/"  
+            scope["path"] = "/"
             await asgi_app(scope, receive, send)
             return
         await self.app(scope, receive, send)

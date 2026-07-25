@@ -3,6 +3,7 @@
 Each agent returns a typed Pydantic object (enforced via constrained decoding)
 that serializes to camelCase for the frontend.
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field

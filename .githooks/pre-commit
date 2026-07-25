@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+root="$(git rev-parse --show-toplevel)"
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+py_files=$(echo "$staged" | grep -E '^backend/.*\.py$' | tr '\n' ' ' || true)
+if [ -n "${py_files% }" ]; then
+  echo "pre-commit: ruff on backend python..."
+  (cd "$root" && ./backend/.venv/bin/ruff format -q $py_files)
+  (cd "$root" && ./backend/.venv/bin/ruff check -q --fix $py_files)
+  git add $py_files
+fi
+
+fe_files=$(echo "$staged" | grep -E '^frontend/src/.*\.(ts|tsx|css|json)$' | tr '\n' ' ' || true)
+if [ -n "${fe_files% }" ]; then
+  echo "pre-commit: prettier on frontend..."
+  (cd "$root/frontend" && npx prettier --log-level warn --write $(echo "$fe_files" | sed 's|frontend/||g'))
+  git add $fe_files
+fi
+
+exit 0

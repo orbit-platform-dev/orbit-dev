@@ -7,6 +7,7 @@ issues. OAuth-only (no paste path). Exposes the same small OAuth interface as
 `linear` so the integrations router can drive both generically. Live calls;
 nothing fabricated.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -40,8 +41,7 @@ async def get_auth(db, workspace_id: str = "ws_default") -> str | None:
 
 async def _call(auth: str, method: str, params: dict | None = None) -> dict:
     async with httpx.AsyncClient(timeout=20) as client:
-        res = await client.get(f"{_API}/{method}", params=params or {},
-                               headers={"Authorization": auth})
+        res = await client.get(f"{_API}/{method}", params=params or {}, headers={"Authorization": auth})
     body = res.json() if res.headers.get("content-type", "").startswith("application/json") else {}
     if not body.get("ok"):
         raise RuntimeError(f"Slack API error: {body.get('error', res.text[:150])}")
@@ -75,22 +75,31 @@ def oauth_configured() -> bool:
 
 
 def oauth_url(state: str) -> str:
-    return _AUTHORIZE + "?" + urlencode({
-        "client_id": settings.slack_client_id,
-        "scope": _SCOPES,
-        "redirect_uri": settings.slack_redirect_uri,
-        "state": state,
-    })
+    return (
+        _AUTHORIZE
+        + "?"
+        + urlencode(
+            {
+                "client_id": settings.slack_client_id,
+                "scope": _SCOPES,
+                "redirect_uri": settings.slack_redirect_uri,
+                "state": state,
+            }
+        )
+    )
 
 
 async def exchange_code(code: str) -> str:
     async with httpx.AsyncClient(timeout=20) as client:
-        res = await client.post(f"{_API}/oauth.v2.access", data={
-            "client_id": settings.slack_client_id,
-            "client_secret": settings.slack_client_secret,
-            "code": code,
-            "redirect_uri": settings.slack_redirect_uri,
-        })
+        res = await client.post(
+            f"{_API}/oauth.v2.access",
+            data={
+                "client_id": settings.slack_client_id,
+                "client_secret": settings.slack_client_secret,
+                "code": code,
+                "redirect_uri": settings.slack_redirect_uri,
+            },
+        )
     body = res.json() if res.headers.get("content-type", "").startswith("application/json") else {}
     if not body.get("ok"):
         raise RuntimeError(f"Slack token exchange failed: {body.get('error', res.text[:150])}")
@@ -104,13 +113,17 @@ async def exchange_code(code: str) -> str:
 async def list_channels(auth: str, limit: int = 200) -> list[dict[str, Any]]:
     """Channels the bot is a member of (public + private) — you invite the bot to
     the channels you want Orbit to watch."""
-    data = await _call(auth, "users.conversations", {
-        "types": "public_channel,private_channel", "limit": limit, "exclude_archived": "true"})
+    data = await _call(
+        auth,
+        "users.conversations",
+        {"types": "public_channel,private_channel", "limit": limit, "exclude_archived": "true"},
+    )
     return [{"id": c["id"], "name": c.get("name", c["id"])} for c in data.get("channels", [])]
 
 
-async def fetch_threads(auth: str, channel_id: str, *, history_limit: int = 200,
-                        max_threads: int = 50, oldest: str | None = None) -> list[dict[str, Any]]:
+async def fetch_threads(
+    auth: str, channel_id: str, *, history_limit: int = 200, max_threads: int = 50, oldest: str | None = None
+) -> list[dict[str, Any]]:
     """Recent threads (root + replies) in a channel, newest first. Threads only —
     a rooted discussion is a coherent unit of intent, like a mini-call. Caps are
     generous because the sync time window (oldest) is the real bound on volume."""
@@ -127,11 +140,13 @@ async def fetch_threads(auth: str, channel_id: str, *, history_limit: int = 200,
         text = "\n\n".join((x.get("text") or "").strip() for x in msgs if x.get("text"))
         files = [
             {"name": f.get("name") or "image", "mime": f.get("mimetype"), "url": f.get("url_private")}
-            for x in msgs for f in (x.get("files") or [])
+            for x in msgs
+            for f in (x.get("files") or [])
             if (f.get("mimetype") or "").startswith("image/") and f.get("url_private")
         ]
-        threads.append({"ts": m["ts"], "channel": channel_id, "text": text,
-                        "reply_count": m.get("reply_count", 0), "files": files})
+        threads.append(
+            {"ts": m["ts"], "channel": channel_id, "text": text, "reply_count": m.get("reply_count", 0), "files": files}
+        )
         if len(threads) >= max_threads:
             break
     return threads

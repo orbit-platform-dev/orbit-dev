@@ -9,6 +9,7 @@ Auth: a per-workspace random token minted by GET /integrations/{key}/webhook
 (the URL itself is the credential). GitHub deliveries are additionally verified
 with HMAC-SHA256 when the hook is configured with the token as its secret.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -49,9 +50,7 @@ async def receive(key: str, token: str, request: Request, db=Depends(get_db)):
     match = next((i for i in integ if (i.credentials or {}).get("webhookToken") == token), None)
     if not match:
         raise HTTPException(404, "Unknown webhook")
-    if key == "github" and not _github_signature_ok(
-        token, body, request.headers.get("X-Hub-Signature-256")
-    ):
+    if key == "github" and not _github_signature_ok(token, body, request.headers.get("X-Hub-Signature-256")):
         raise HTTPException(401, "Bad signature")
 
     ws = match.workspace_id

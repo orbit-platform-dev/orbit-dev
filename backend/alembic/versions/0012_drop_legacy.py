@@ -5,8 +5,10 @@ entities, links, insights, goals, feedback, integrations and activity_events.
 
 Defensive: only drops tables that exist, so it is safe on any dev DB.
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0012_drop_legacy"
 down_revision = "0011_findings"
@@ -14,8 +16,17 @@ branch_labels = None
 depends_on = None
 
 _LEGACY = [
-    "meetings", "projects", "tasks", "timeline_events", "knowledge_items",
-    "customers", "agents", "members", "calendar_connections", "approvals", "sync_jobs",
+    "meetings",
+    "projects",
+    "tasks",
+    "timeline_events",
+    "knowledge_items",
+    "customers",
+    "agents",
+    "members",
+    "calendar_connections",
+    "approvals",
+    "sync_jobs",
 ]
 
 

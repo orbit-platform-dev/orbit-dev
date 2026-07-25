@@ -5,6 +5,7 @@ access tokens expire hourly, so credentials persist the refresh token and
 `get_auth` refreshes in place when needed. Read-only scope; all calls are live —
 failures raise, callers degrade.
 """
+
 from __future__ import annotations
 
 import time
@@ -50,28 +51,37 @@ def oauth_configured() -> bool:
 
 
 def oauth_url(state: str) -> str:
-    return _AUTHORIZE + "?" + urlencode({
-        "client_id": settings.google_client_id,
-        "redirect_uri": settings.gdrive_redirect_uri,
-        "response_type": "code",
-        "scope": _SCOPE,
-        "access_type": "offline",
-        "prompt": "consent",
-        "state": state,
-    })
+    return (
+        _AUTHORIZE
+        + "?"
+        + urlencode(
+            {
+                "client_id": settings.google_client_id,
+                "redirect_uri": settings.gdrive_redirect_uri,
+                "response_type": "code",
+                "scope": _SCOPE,
+                "access_type": "offline",
+                "prompt": "consent",
+                "state": state,
+            }
+        )
+    )
 
 
 async def exchange_code(code: str) -> dict[str, Any]:
     """Returns the full credential dict — access, refresh and expiry must all be
     persisted (unlike the single-token providers)."""
     async with httpx.AsyncClient(timeout=20) as client:
-        res = await client.post(_TOKEN, data={
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
-            "redirect_uri": settings.gdrive_redirect_uri,
-            "code": code,
-            "grant_type": "authorization_code",
-        })
+        res = await client.post(
+            _TOKEN,
+            data={
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "redirect_uri": settings.gdrive_redirect_uri,
+                "code": code,
+                "grant_type": "authorization_code",
+            },
+        )
     if res.status_code != 200:
         raise RuntimeError(f"Google token exchange failed: {res.text[:150]}")
     body = res.json()
@@ -87,12 +97,15 @@ async def exchange_code(code: str) -> dict[str, Any]:
 
 async def _refresh(refresh_token: str) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=20) as client:
-        res = await client.post(_TOKEN, data={
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
-            "refresh_token": refresh_token,
-            "grant_type": "refresh_token",
-        })
+        res = await client.post(
+            _TOKEN,
+            data={
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+        )
     if res.status_code != 200:
         raise RuntimeError(f"Google token refresh failed: {res.text[:150]}")
     body = res.json()
@@ -152,9 +165,11 @@ def _office_text(data: bytes, fmt: str) -> str:
     try:
         if fmt == "docx":
             from docx import Document
+
             return "\n".join(p.text for p in Document(buf).paragraphs if p.text).strip()
         if fmt == "xlsx":
             from openpyxl import load_workbook
+
             wb = load_workbook(buf, read_only=True, data_only=True)
             lines: list[str] = []
             for ws in wb.worksheets:
@@ -167,6 +182,7 @@ def _office_text(data: bytes, fmt: str) -> str:
             return "\n".join(lines).strip()
         if fmt == "pptx":
             from pptx import Presentation
+
             out: list[str] = []
             for i, slide in enumerate(Presentation(buf).slides, 1):
                 texts = [s.text for s in slide.shapes if s.has_text_frame and s.text.strip()]
@@ -182,8 +198,9 @@ async def file_exists(auth: str, file_id: str) -> bool:
     """False ONLY when the file is gone or trashed — the deletion signal for
     reconcile. Transient/API errors raise; deletion needs proof, not doubt."""
     async with httpx.AsyncClient(timeout=20) as client:
-        res = await client.get(f"{_API}/files/{file_id}", params={"fields": "id,trashed"},
-                               headers={"Authorization": auth})
+        res = await client.get(
+            f"{_API}/files/{file_id}", params={"fields": "id,trashed"}, headers={"Authorization": auth}
+        )
     if res.status_code == 404:
         return False
     if res.status_code != 200:
@@ -200,7 +217,9 @@ async def _get_bytes(auth: str, url: str, params: dict | None = None) -> bytes:
 
 
 async def fetch_documents(
-    auth: str, since: str | None = None, known: dict[str, str] | None = None,
+    auth: str,
+    since: str | None = None,
+    known: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], set[str]]:
     """The most recently modified Docs/Sheets/Slides + PDFs (text layer, else
     OCR) + images (read by the vision model). `since` (ISO) narrows to files
@@ -211,12 +230,16 @@ async def fetch_documents(
     q = f"({mimes}) and trashed=false"
     if since:
         q += f" and modifiedTime > '{since}'"
-    listing = await _get(auth, f"{_API}/files", {
-        "q": q,
-        "orderBy": "modifiedTime desc",
-        "pageSize": _MAX_FILES,
-        "fields": "files(id,name,mimeType,size,modifiedTime,createdTime,webViewLink,owners(displayName,emailAddress))",
-    })
+    listing = await _get(
+        auth,
+        f"{_API}/files",
+        {
+            "q": q,
+            "orderBy": "modifiedTime desc",
+            "pageSize": _MAX_FILES,
+            "fields": "files(id,name,mimeType,size,modifiedTime,createdTime,webViewLink,owners(displayName,emailAddress))",
+        },
+    )
     out: list[dict[str, Any]] = []
     listed: set[str] = set()
     budget = _VISION_PER_SYNC
@@ -272,13 +295,19 @@ async def fetch_documents(
             except Exception:
                 continue  # one unexportable file must not sink the sync
         owner = (f.get("owners") or [{}])[0]
-        out.append({
-            "id": f["id"], "source": source, "kind": kind,
-            "title": f.get("name") or "Untitled",
-            "content": (text or "").strip()[:_EXPORT_CLIP],
-            "url": f.get("webViewLink"),
-            "modifiedAt": f.get("modifiedTime"), "createdAt": f.get("createdTime"),
-            "owner": owner.get("displayName"), "ownerEmail": owner.get("emailAddress"),
-            "ocr": ocr,
-        })
+        out.append(
+            {
+                "id": f["id"],
+                "source": source,
+                "kind": kind,
+                "title": f.get("name") or "Untitled",
+                "content": (text or "").strip()[:_EXPORT_CLIP],
+                "url": f.get("webViewLink"),
+                "modifiedAt": f.get("modifiedTime"),
+                "createdAt": f.get("createdTime"),
+                "owner": owner.get("displayName"),
+                "ownerEmail": owner.get("emailAddress"),
+                "ocr": ocr,
+            }
+        )
     return out, listed

@@ -51,7 +51,12 @@ export function Topbar() {
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/70 px-4 backdrop-blur-xl">
-      <Button variant="ghost" size="icon-sm" className="lg:hidden" onClick={() => setMobileOpen(true)}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="lg:hidden"
+        onClick={() => setMobileOpen(true)}
+      >
         <Menu className="h-5 w-5" />
       </Button>
 
@@ -74,14 +79,21 @@ export function Topbar() {
       >
         <Search className="h-4 w-4" />
         <span className="flex-1 text-left">{t("topbar.search")}</span>
-        <kbd className="hidden rounded border border-border px-1.5 py-0.5 text-[10px] sm:inline">⌘K</kbd>
+        <kbd className="hidden rounded border border-border px-1.5 py-0.5 text-[10px] sm:inline">
+          ⌘K
+        </kbd>
       </button>
 
       <div className="flex items-center gap-1">
         <SyncControl />
         <div className="mx-1 hidden h-5 w-px bg-border md:block" />
         <LanguageSwitcher />
-        <Button variant="ghost" size="icon-sm" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={t("topbar.toggleTheme")}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          aria-label={t("topbar.toggleTheme")}
+        >
           <Sun className="hidden h-4 w-4 dark:block" />
           <Moon className="block h-4 w-4 dark:hidden" />
         </Button>
@@ -98,20 +110,29 @@ export function Topbar() {
               <UserAvatar name={name} className="h-9 w-9" />
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium">{name}</div>
-                {email ? <div className="truncate text-xs text-muted-foreground">{email}</div> : null}
+                {email ? (
+                  <div className="truncate text-xs text-muted-foreground">{email}</div>
+                ) : null}
               </div>
             </div>
 
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <Link href="/settings"><User className="h-4 w-4" />{t("topbar.profile")}</Link>
+              <Link href="/settings">
+                <User className="h-4 w-4" />
+                {t("topbar.profile")}
+              </Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
-              <Link href="/settings"><Settings className="h-4 w-4" />{t("topbar.settings")}</Link>
+              <Link href="/settings">
+                <Settings className="h-4 w-4" />
+                {t("topbar.settings")}
+              </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => signOut({ redirectUrl: "/sign-in" })}>
-              <LogOut className="h-4 w-4" />{t("topbar.signOut")}
+              <LogOut className="h-4 w-4" />
+              {t("topbar.signOut")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

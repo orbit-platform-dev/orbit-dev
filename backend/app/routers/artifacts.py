@@ -4,6 +4,7 @@ Ingest a customer call (paste), pull Linear issues as a sensor, and browse what
 Orbit has observed. This is the substrate the reasoning layer reads; it does not
 replace any system of record.
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
@@ -15,7 +16,8 @@ from ..deps import Depends, get_db
 from ..models import Artifact
 from ..schemas import ArtifactOut
 from ..services.ingestion import ingest_artifact, pull_all
-from ..services.sources import connected_keys as _connected_keys, source_visible as _source_visible
+from ..services.sources import connected_keys as _connected_keys
+from ..services.sources import source_visible as _source_visible
 from ..services.workspace import get_workspace_id
 
 router = APIRouter(prefix="/artifacts", tags=["artifacts"])
@@ -31,10 +33,18 @@ class IngestCallIn(BaseModel):
 @router.get("", response_model=list[ArtifactOut])
 async def list_artifacts(limit: int = 100, db=Depends(get_db), ws: str = Depends(get_workspace_id)):
     connected = await _connected_keys(db, ws)
-    rows = (await db.execute(
-        select(Artifact).where(Artifact.workspace_id == ws)
-        .order_by(Artifact.occurred_at.desc()).limit(min(limit, 200))
-    )).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(Artifact)
+                .where(Artifact.workspace_id == ws)
+                .order_by(Artifact.occurred_at.desc())
+                .limit(min(limit, 200))
+            )
+        )
+        .scalars()
+        .all()
+    )
     return [a for a in rows if _source_visible(a.source, connected)]
 
 
@@ -47,14 +57,20 @@ async def memory_counts(db=Depends(get_db), ws: str = Depends(get_workspace_id))
     from ..models import Entity, Insight, Memory
 
     connected = await _connected_keys(db, ws)
-    by_source = {s: c for s, c in (await db.execute(
-        select(Artifact.source, func.count()).where(Artifact.workspace_id == ws).group_by(Artifact.source)
-    )).all() if _source_visible(s, connected)}
+    by_source = {
+        s: c
+        for s, c in (
+            await db.execute(
+                select(Artifact.source, func.count()).where(Artifact.workspace_id == ws).group_by(Artifact.source)
+            )
+        ).all()
+        if _source_visible(s, connected)
+    }
 
     async def _count(model, *extra):
-        return (await db.execute(
-            select(func.count()).select_from(model).where(model.workspace_id == ws, *extra)
-        )).scalar_one()
+        return (
+            await db.execute(select(func.count()).select_from(model).where(model.workspace_id == ws, *extra))
+        ).scalar_one()
 
     return {
         "artifacts": sum(by_source.values()),
@@ -71,8 +87,12 @@ async def ingest_call(body: IngestCallIn, db=Depends(get_db), ws: str = Depends(
     if len(content.split()) < 6:
         raise HTTPException(422, "Paste at least a few sentences so Orbit has something to read")
     art = await ingest_artifact(
-        db, ws, source=body.source or "call", kind="call",
-        title=(body.title or "Customer call").strip(), content=content,
+        db,
+        ws,
+        source=body.source or "call",
+        kind="call",
+        title=(body.title or "Customer call").strip(),
+        content=content,
     )
     return art
 

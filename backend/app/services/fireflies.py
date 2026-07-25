@@ -5,6 +5,7 @@ summaries and action items over a GraphQL API. Auth is a personal API key
 (Bearer) — the same paste-a-key path as a Linear personal key. All calls are
 live GraphQL; failures raise, callers decide how to degrade.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -35,8 +36,11 @@ async def get_auth(db, workspace_id: str = "ws_default") -> str | None:
 
 async def _gql(auth: str, query: str, variables: dict | None = None) -> dict:
     async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.post(_API, json={"query": query, "variables": variables or {}},
-                                headers={"Authorization": auth, "Content-Type": "application/json"})
+        res = await client.post(
+            _API,
+            json={"query": query, "variables": variables or {}},
+            headers={"Authorization": auth, "Content-Type": "application/json"},
+        )
     body = res.json() if res.headers.get("content-type", "").startswith("application/json") else {}
     if res.status_code != 200 or body.get("errors"):
         detail = (body.get("errors") or [{}])[0].get("message", res.text[:150])
@@ -91,7 +95,8 @@ def _shape(t: dict[str, Any]) -> dict[str, Any]:
         "keywords": summary.get("keywords") or [],
         "sentences": [
             {"speaker": s.get("speaker_name"), "text": s.get("text")}
-            for s in (t.get("sentences") or []) if s.get("text")
+            for s in (t.get("sentences") or [])
+            if s.get("text")
         ],
     }
 
@@ -102,9 +107,17 @@ async def fetch_transcripts(auth: str, since: str | None = None) -> list[dict[st
     out: list[dict[str, Any]] = []
     skip = 0
     while len(out) < _MAX_TRANSCRIPTS:
-        page = (await _gql(auth, _TRANSCRIPTS_QUERY, {
-            "limit": _PAGE, "skip": skip, "fromDate": since,
-        })).get("transcripts") or []
+        page = (
+            await _gql(
+                auth,
+                _TRANSCRIPTS_QUERY,
+                {
+                    "limit": _PAGE,
+                    "skip": skip,
+                    "fromDate": since,
+                },
+            )
+        ).get("transcripts") or []
         out.extend(_shape(t) for t in page if t.get("id"))
         if len(page) < _PAGE:
             break

@@ -51,7 +51,11 @@ async function live<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function send<T>(path: string, method: "POST" | "PATCH" | "DELETE", body?: unknown): Promise<T> {
+async function send<T>(
+  path: string,
+  method: "POST" | "PATCH" | "DELETE",
+  body?: unknown,
+): Promise<T> {
   if (!API_URL) throw new Error(NEEDS_BACKEND);
   const res = await fetch(`${API_URL}${path}`, {
     method,
@@ -90,7 +94,7 @@ export interface FeedbackInput {
   category: "bug" | "feature" | "other";
   description: string;
   email?: string;
-  image?: string | null;      
+  image?: string | null;
   imageName?: string | null;
 }
 export const submitFeedback = (body: FeedbackInput) =>
@@ -100,7 +104,14 @@ export const getTicketTargets = () => live<TicketTargets>("/chat/ticket-targets"
 export const editChatAction = (
   cid: string,
   actionId: string,
-  patch: Partial<{ title: string; description: string; connector: string; target: string; targetLabel: string; discard: boolean }>,
+  patch: Partial<{
+    title: string;
+    description: string;
+    connector: string;
+    target: string;
+    targetLabel: string;
+    discard: boolean;
+  }>,
 ) => send<ChatDraft>(`/chat/conversations/${cid}/actions/${actionId}`, "PATCH", patch);
 export const approveChatAction = (cid: string, actionId: string) =>
   send<{ actionId: string; status: string; result: { identifier?: string; url?: string } }>(
@@ -108,7 +119,11 @@ export const approveChatAction = (cid: string, actionId: string) =>
     "POST",
   );
 export const rateChatAnswer = (cid: string, index: number, rating: "up" | "down") =>
-  send<{ index: number; rating: string }>(`/chat/conversations/${cid}/messages/${index}/rate`, "POST", { rating });
+  send<{ index: number; rating: string }>(
+    `/chat/conversations/${cid}/messages/${index}/rate`,
+    "POST",
+    { rating },
+  );
 
 export interface ChatStreamHandlers {
   onPhase?: (phase: string, connector?: string) => void;
@@ -139,7 +154,8 @@ export async function streamChat(
       signal,
     });
   } catch (e) {
-    if ((e as Error).name !== "AbortError") h.onError("Couldn't reach Orbit. Is the backend running?");
+    if ((e as Error).name !== "AbortError")
+      h.onError("Couldn't reach Orbit. Is the backend running?");
     return;
   }
   if (!res.ok || !res.body) {
@@ -168,7 +184,8 @@ export async function streamChat(
         }
         if (data.type === "delta") h.onDelta(data.text as string);
         else if (data.type === "thinking") h.onThinking?.(data.text as string);
-        else if (data.type === "phase") h.onPhase?.(data.phase as string, data.connector as string | undefined);
+        else if (data.type === "phase")
+          h.onPhase?.(data.phase as string, data.connector as string | undefined);
         else if (data.type === "draft") h.onDraft?.(data.draft as ChatDraft);
         else if (data.type === "error") h.onError(data.message as string);
         else if (data.type === "done")
@@ -186,8 +203,10 @@ export async function streamChat(
   }
 }
 export const listChatConversations = () => live<ChatConversationSummary[]>("/chat/conversations");
-export const getChatConversation = (id: string) => live<ChatConversationDetail>(`/chat/conversations/${id}`);
-export const deleteChatConversation = (id: string) => send<void>(`/chat/conversations/${id}`, "DELETE");
+export const getChatConversation = (id: string) =>
+  live<ChatConversationDetail>(`/chat/conversations/${id}`);
+export const deleteChatConversation = (id: string) =>
+  send<void>(`/chat/conversations/${id}`, "DELETE");
 
 // --- Feed (Reason, Recommend, Approve, Learn) ------------------------------
 export const getFeed = () => live<Feed>("/feed");

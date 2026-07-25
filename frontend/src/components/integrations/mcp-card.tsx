@@ -11,7 +11,15 @@ import { useMcpStatus, qk } from "@/lib/hooks";
 import * as api from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-function CopyField({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
+function CopyField({
+  label,
+  value,
+  mono = true,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     await navigator.clipboard.writeText(value);
@@ -20,9 +28,16 @@ function CopyField({ label, value, mono = true }: { label: string; value: string
   };
   return (
     <div className="space-y-1">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
       <div className="flex items-center gap-2">
-        <code className={cn("min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs", mono && "font-mono")}>
+        <code
+          className={cn(
+            "min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs",
+            mono && "font-mono",
+          )}
+        >
           {value}
         </code>
         <Button variant="outline" size="sm" onClick={copy} className="shrink-0">
@@ -44,7 +59,10 @@ export function McpCard() {
   const invalidate = () => qc.invalidateQueries({ queryKey: qk.mcp });
   const generate = useMutation({
     mutationFn: api.generateMcpKey,
-    onSuccess: (d) => { setIssued(d); invalidate(); },
+    onSuccess: (d) => {
+      setIssued(d);
+      invalidate();
+    },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Could not generate the key"),
   });
 
@@ -52,24 +70,35 @@ export function McpCard() {
     <Card className="p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <div className="rounded-lg border border-border bg-muted/50 p-2"><Bot className="h-5 w-5" /></div>
+          <div className="rounded-lg border border-border bg-muted/50 p-2">
+            <Bot className="h-5 w-5" />
+          </div>
           <div>
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold">AI agents (MCP)</span>
-              <span className={cn("rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                configured ? "border-success/30 bg-success/10 text-success" : "border-border text-muted-foreground")}>
+              <span
+                className={cn(
+                  "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                  configured
+                    ? "border-success/30 bg-success/10 text-success"
+                    : "border-border text-muted-foreground",
+                )}
+              >
                 {configured ? "Active" : "Not set up"}
               </span>
             </div>
             <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-              Give Claude Code, Cursor or any MCP client read access to this workspace&apos;s memory.
-              One key for the whole workspace. Rotating or revoking it disconnects every agent using the old one.
+              Give Claude Code, Cursor or any MCP client read access to this workspace&apos;s
+              memory. One key for the whole workspace. Rotating or revoking it disconnects every
+              agent using the old one.
             </p>
           </div>
         </div>
         <div className="flex gap-2">
           {configured && (
-            <Button variant="ghost" size="sm" onClick={() => setConfirmRevoke(true)}>Revoke</Button>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmRevoke(true)}>
+              Revoke
+            </Button>
           )}
           <Button size="sm" onClick={() => generate.mutate()} disabled={generate.isPending}>
             <KeyRound className="mr-1.5 h-3.5 w-3.5" />

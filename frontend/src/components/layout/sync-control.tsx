@@ -21,8 +21,8 @@ export function SyncControl() {
 
   const pull = useMutation({
     mutationFn: api.scanFeed,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.heartbeat });
+    onSuccess: (status) => {
+      qc.setQueryData(qk.heartbeat, status);
       qc.invalidateQueries({ queryKey: qk.feed });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Pull failed"),

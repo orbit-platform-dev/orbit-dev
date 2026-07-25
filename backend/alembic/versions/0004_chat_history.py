@@ -1,6 +1,8 @@
 """Persistent Ask-Orbit conversations (chat history)."""
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0004_chat_history"
 down_revision = "0003_pgvector_embeddings"

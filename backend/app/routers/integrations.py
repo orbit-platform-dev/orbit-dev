@@ -50,8 +50,9 @@ class ConnectKeyIn(BaseModel):
 
 
 @router.post("/{key}/connect", response_model=IntegrationOut)
-async def connect_with_key(key: str, body: ConnectKeyIn, db=Depends(get_db),
-                           ws: str = Depends(get_workspace_id), _=Depends(get_current_user)):
+async def connect_with_key(
+    key: str, body: ConnectKeyIn, db=Depends(get_db), ws: str = Depends(get_workspace_id), _=Depends(get_current_user)
+):
     """Connect with a pasted personal key/token — validated live, stored per workspace."""
     if key in COMING_SOON:
         raise HTTPException(404, "This integration isn't available yet")
@@ -106,8 +107,9 @@ async def oauth_url(key: str, db=Depends(get_db), ws: str = Depends(get_workspac
 
 
 @router.get("/{key}/oauth/callback")
-async def oauth_callback(key: str, code: str | None = None, state: str | None = None,
-                         error: str | None = None, db=Depends(get_db)):
+async def oauth_callback(
+    key: str, code: str | None = None, state: str | None = None, error: str | None = None, db=Depends(get_db)
+):
     prov = PROVIDERS.get(key)
     dest = f"{settings.frontend_url}/integrations"
     if not prov or error or not code or not state or "." not in state:
@@ -140,8 +142,7 @@ class WebhookUrlOut(BaseModel):
 
 
 @router.get("/{key}/webhook", response_model=WebhookUrlOut)
-async def webhook_url(key: str, db=Depends(get_db), ws: str = Depends(get_workspace_id),
-                      _=Depends(get_current_user)):
+async def webhook_url(key: str, db=Depends(get_db), ws: str = Depends(get_workspace_id), _=Depends(get_current_user)):
     """Mint (once) and return this workspace's inbound webhook URL for a
     connector. Paste it into the provider's webhook settings; for GitHub also
     set the token as the hook secret (enables HMAC verification)."""
@@ -165,18 +166,19 @@ async def webhook_url(key: str, db=Depends(get_db), ws: str = Depends(get_worksp
     notes = {
         "github": "GitHub: also set this token as the webhook secret.",
         "circleback": "Circleback → Automations → Send webhook request: paste this URL, "
-                      "then copy the signing secret Circleback gives you and connect it here.",
+        "then copy the signing secret Circleback gives you and connect it here.",
     }
     return WebhookUrlOut(
         url=f"{base}/webhooks/{key}?token={cred['webhookToken']}",
-        note=(notes.get(key, "Paste this URL into the provider's webhook settings.")
-              + " Dev needs a public URL (e.g. ngrok)."),
+        note=(
+            notes.get(key, "Paste this URL into the provider's webhook settings.")
+            + " Dev needs a public URL (e.g. ngrok)."
+        ),
     )
 
 
 @router.post("/{key}/disconnect", response_model=IntegrationOut)
-async def disconnect(key: str, db=Depends(get_db), ws: str = Depends(get_workspace_id),
-                     _=Depends(get_current_user)):
+async def disconnect(key: str, db=Depends(get_db), ws: str = Depends(get_workspace_id), _=Depends(get_current_user)):
     if key not in PROVIDERS and key not in KEY_PROVIDERS:
         raise HTTPException(404, "Integration not found")
     integ = await _get(db, ws, key)
@@ -199,15 +201,13 @@ def _mcp_endpoint() -> str:
 
 
 @router.get("/mcp")
-async def mcp_status(db=Depends(get_db), ws: str = Depends(get_workspace_id),
-                     _=Depends(get_current_user)):
+async def mcp_status(db=Depends(get_db), ws: str = Depends(get_workspace_id), _=Depends(get_current_user)):
     row = await db.get(Workspace, ws)
     return {"configured": bool(row and row.mcp_key_hash), "endpoint": _mcp_endpoint()}
 
 
 @router.post("/mcp/key")
-async def mcp_generate_key(db=Depends(get_db), ws: str = Depends(get_workspace_id),
-                           _=Depends(get_current_user)):
+async def mcp_generate_key(db=Depends(get_db), ws: str = Depends(get_workspace_id), _=Depends(get_current_user)):
     """Generate (or rotate) this workspace's MCP key. The key is the tenant
     credential — /mcp resolves the workspace from it. Stored hashed; the
     plaintext is returned ONCE and cannot be recovered, only rotated."""
@@ -220,14 +220,12 @@ async def mcp_generate_key(db=Depends(get_db), ws: str = Depends(get_workspace_i
     return {
         "key": key,
         "endpoint": _mcp_endpoint(),
-        "command": (f'claude mcp add --transport http orbit {_mcp_endpoint()} '
-                    f'--header "Authorization: Bearer {key}"'),
+        "command": (f'claude mcp add --transport http orbit {_mcp_endpoint()} --header "Authorization: Bearer {key}"'),
     }
 
 
 @router.delete("/mcp/key")
-async def mcp_revoke_key(db=Depends(get_db), ws: str = Depends(get_workspace_id),
-                         _=Depends(get_current_user)):
+async def mcp_revoke_key(db=Depends(get_db), ws: str = Depends(get_workspace_id), _=Depends(get_current_user)):
     row = await db.get(Workspace, ws)
     if row:
         row.mcp_key_hash = None

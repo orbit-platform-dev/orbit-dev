@@ -5,8 +5,10 @@ column existed). The startup guard compares it with the configured
 EMBEDDING_MODEL and nulls + re-embeds all vectors on mismatch, so switching
 models can never silently mix incompatible vector spaces.
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0016_workspace_embedding_model"
 down_revision = "0015_workspace_auto_sync"

@@ -1,4 +1,3 @@
-
 export const LOCALES = [
   { code: "en", label: "English" },
   { code: "ja", label: "日本語" },
@@ -7,7 +6,6 @@ export const LOCALES = [
 export type LocaleCode = (typeof LOCALES)[number]["code"];
 
 export const DEFAULT_LOCALE: LocaleCode = "en";
-
 
 export const LOCALE_COOKIE = "NEXT_LOCALE";
 

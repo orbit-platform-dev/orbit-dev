@@ -7,8 +7,10 @@ uses the header value returned by `get_auth`, so the rest of the pipeline is
 auth-mode agnostic. All calls are live GraphQL — nothing is fabricated. Failures
 raise; callers decide how to degrade.
 """
+
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 from urllib.parse import urlencode
@@ -18,10 +20,12 @@ import httpx
 from ..config import settings
 from ..models import Integration
 
+logger = logging.getLogger("orbit.linear")
+
 _API = "https://api.linear.app/graphql"
 _AUTHORIZE = "https://linear.app/oauth/authorize"
 _TOKEN = "https://api.linear.app/oauth/token"
-_SCOPES = "read,write"  
+_SCOPES = "read,write"
 
 
 def _auth_header(cred: dict[str, Any] | None) -> str | None:
@@ -53,17 +57,19 @@ async def get_auth(db, workspace_id: str = "ws_default") -> str | None:
 
 async def _refresh(refresh_token: str) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=20) as client:
-        res = await client.post(_TOKEN, data={
-            "client_id": settings.linear_client_id,
-            "client_secret": settings.linear_client_secret,
-            "refresh_token": refresh_token,
-            "grant_type": "refresh_token",
-        })
+        res = await client.post(
+            _TOKEN,
+            data={
+                "client_id": settings.linear_client_id,
+                "client_secret": settings.linear_client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+        )
     if res.status_code != 200:
         raise RuntimeError(f"Linear token refresh failed: {res.text[:150]}")
     body = res.json()
-    out = {"accessToken": body["access_token"],
-           "expiresAt": time.time() + body.get("expires_in", 86400) - 60}
+    out = {"accessToken": body["access_token"], "expiresAt": time.time() + body.get("expires_in", 86400) - 60}
     if body.get("refresh_token"):  # Linear rotates refresh tokens — always keep the new one
         out["refreshToken"] = body["refresh_token"]
     return out
@@ -73,9 +79,11 @@ async def _gql(auth: str, query: str, variables: dict | None = None) -> dict:
     # public-file-urls-expire-in: uploads.linear.app rejects API auth headers, so
     # image URLs in markdown must come back pre-signed to be downloadable at all.
     async with httpx.AsyncClient(timeout=20) as client:
-        res = await client.post(_API, json={"query": query, "variables": variables or {}},
-                                headers={"Authorization": auth,
-                                         "public-file-urls-expire-in": "86400"})
+        res = await client.post(
+            _API,
+            json={"query": query, "variables": variables or {}},
+            headers={"Authorization": auth, "public-file-urls-expire-in": "86400"},
+        )
     body = res.json() if res.headers.get("content-type", "").startswith("application/json") else {}
     if res.status_code != 200 or body.get("errors"):
         detail = (body.get("errors") or [{}])[0].get("message", res.text[:150])
@@ -100,13 +108,19 @@ def oauth_configured() -> bool:
 
 
 def oauth_url(state: str) -> str:
-    return _AUTHORIZE + "?" + urlencode({
-        "client_id": settings.linear_client_id,
-        "redirect_uri": settings.linear_redirect_uri,
-        "response_type": "code",
-        "scope": _SCOPES,
-        "state": state,
-    })
+    return (
+        _AUTHORIZE
+        + "?"
+        + urlencode(
+            {
+                "client_id": settings.linear_client_id,
+                "redirect_uri": settings.linear_redirect_uri,
+                "response_type": "code",
+                "scope": _SCOPES,
+                "state": state,
+            }
+        )
+    )
 
 
 async def exchange_code(code: str) -> dict[str, Any] | str:
@@ -114,13 +128,16 @@ async def exchange_code(code: str) -> dict[str, Any] | str:
     tokens with rotating refresh tokens — persist all three or the connection
     dies within a day. Plain string only for legacy non-expiring responses."""
     async with httpx.AsyncClient(timeout=20) as client:
-        res = await client.post(_TOKEN, data={
-            "client_id": settings.linear_client_id,
-            "client_secret": settings.linear_client_secret,
-            "redirect_uri": settings.linear_redirect_uri,
-            "code": code,
-            "grant_type": "authorization_code",
-        })
+        res = await client.post(
+            _TOKEN,
+            data={
+                "client_id": settings.linear_client_id,
+                "client_secret": settings.linear_client_secret,
+                "redirect_uri": settings.linear_redirect_uri,
+                "code": code,
+                "grant_type": "authorization_code",
+            },
+        )
     if res.status_code != 200:
         raise RuntimeError(f"Linear token exchange failed: {res.text[:150]}")
     body = res.json()
@@ -128,16 +145,19 @@ async def exchange_code(code: str) -> dict[str, Any] | str:
     if not token:
         raise RuntimeError("Linear returned no access token")
     if body.get("refresh_token"):
-        return {"accessToken": token, "refreshToken": body["refresh_token"],
-                "expiresAt": time.time() + body.get("expires_in", 86400) - 60}
+        return {
+            "accessToken": token,
+            "refreshToken": body["refresh_token"],
+            "expiresAt": time.time() + body.get("expires_in", 86400) - 60,
+        }
     return token
 
 
 # --- Sensor reads -----------------------------------------------------------
 # Read everything, not just a page: paginate the whole connection. Open issues
 # are the live execution reality; recently-completed ones drive loop closure.
-_MAX_OPEN = 2000       # effectively "all open work" with a safety ceiling
-_MAX_COMPLETED = 500   # recent completions are enough to close commitments
+_MAX_OPEN = 2000  # effectively "all open work" with a safety ceiling
+_MAX_COMPLETED = 500  # recent completions are enough to close commitments
 
 _OPEN_FILTER: dict[str, Any] = {"state": {"type": {"nin": ["completed", "canceled"]}}}
 _COMPLETED_FILTER: dict[str, Any] = {"state": {"type": {"eq": "completed"}}}
@@ -163,24 +183,37 @@ def _shape(n: dict[str, Any]) -> dict[str, Any]:
     team = n.get("team") or {}
     labels = [lbl["name"] for lbl in (n.get("labels") or {}).get("nodes", []) if lbl.get("name")]
     comments = [
-        {"author": (c.get("user") or {}).get("name"), "createdAt": c.get("createdAt"),
-         "body": (c.get("body") or "").strip()[:600]}
-        for c in (n.get("comments") or {}).get("nodes", []) if (c.get("body") or "").strip()
+        {
+            "author": (c.get("user") or {}).get("name"),
+            "createdAt": c.get("createdAt"),
+            "body": (c.get("body") or "").strip()[:600],
+        }
+        for c in (n.get("comments") or {}).get("nodes", [])
+        if (c.get("body") or "").strip()
     ]
     return {
-        "identifier": n["identifier"], "title": n["title"],
+        "identifier": n["identifier"],
+        "title": n["title"],
         "description": (n.get("description") or "").strip(),
         "url": n["url"],
-        "createdAt": n.get("createdAt"), "updatedAt": n.get("updatedAt"),
-        "startedAt": n.get("startedAt"), "completedAt": n.get("completedAt"),
-        "canceledAt": n.get("canceledAt"), "dueDate": n.get("dueDate"),
-        "priority": n.get("priority"), "priorityLabel": n.get("priorityLabel"),
+        "createdAt": n.get("createdAt"),
+        "updatedAt": n.get("updatedAt"),
+        "startedAt": n.get("startedAt"),
+        "completedAt": n.get("completedAt"),
+        "canceledAt": n.get("canceledAt"),
+        "dueDate": n.get("dueDate"),
+        "priority": n.get("priority"),
+        "priorityLabel": n.get("priorityLabel"),
         "estimate": n.get("estimate"),
-        "state": n["state"]["name"], "stateType": n["state"]["type"],
-        "assignee": assignee.get("name"), "assigneeEmail": assignee.get("email"),
+        "state": n["state"]["name"],
+        "stateType": n["state"]["type"],
+        "assignee": assignee.get("name"),
+        "assigneeEmail": assignee.get("email"),
         "creator": (n.get("creator") or {}).get("name"),
-        "team": team.get("name"), "teamKey": team.get("key"),
-        "project": project.get("name"), "projectState": project.get("state"),
+        "team": team.get("name"),
+        "teamKey": team.get("key"),
+        "project": project.get("name"),
+        "projectState": project.get("state"),
         "labels": labels,
         "comments": comments,
     }
@@ -193,10 +226,12 @@ def _with_since(filt: dict, since: str | None) -> dict:
 async def _fetch_issues(auth: str, filt: dict, max_total: int, newest_first: bool = False) -> list[dict[str, Any]]:
     """Cursor-paginate the issues connection until exhausted or the cap is hit."""
     order = ", orderBy: updatedAt" if newest_first else ""
-    query = ("query($n: Int!, $after: String, $filter: IssueFilter!) {"
-             f" issues(first: $n, after: $after, filter: $filter{order}) {{"
-             f" nodes {{ {_ISSUE_FIELDS} }}"
-             " pageInfo { hasNextPage endCursor } } }")
+    query = (
+        "query($n: Int!, $after: String, $filter: IssueFilter!) {"
+        f" issues(first: $n, after: $after, filter: $filter{order}) {{"
+        f" nodes {{ {_ISSUE_FIELDS} }}"
+        " pageInfo { hasNextPage endCursor } } }"
+    )
     out: list[dict[str, Any]] = []
     cursor: str | None = None
     while len(out) < max_total:
@@ -215,7 +250,9 @@ async def fetch_open_issues(auth: str, limit: int = _MAX_OPEN, since: str | None
     return await _fetch_issues(auth, _with_since(_OPEN_FILTER, since), limit)
 
 
-async def fetch_completed_issues(auth: str, limit: int = _MAX_COMPLETED, since: str | None = None) -> list[dict[str, Any]]:
+async def fetch_completed_issues(
+    auth: str, limit: int = _MAX_COMPLETED, since: str | None = None
+) -> list[dict[str, Any]]:
     """Recently completed issues (newest first) — what loop closure checks
     open commitments against (promised work that actually shipped)."""
     return await _fetch_issues(auth, _with_since(_COMPLETED_FILTER, since), limit, newest_first=True)
@@ -235,21 +272,48 @@ async def list_teams(auth: str) -> list[dict[str, str]]:
     return [{"id": t["id"], "name": t["name"], "key": t.get("key", "")} for t in data["teams"]["nodes"]]
 
 
-async def create_issue(auth: str, title: str, description: str, team_id: str | None = None,
-                       label_ids: list[str] | None = None) -> dict[str, str]:
+async def create_issue(
+    auth: str, title: str, description: str, team_id: str | None = None, label_ids: list[str] | None = None
+) -> dict[str, str]:
     """Really creates the issue (in team_id, or the first team). Returns identifier + URL."""
     team_id = team_id or await _first_team_id(auth)
     issue_input: dict[str, Any] = {"teamId": team_id, "title": title[:255], "description": description}
     if label_ids:
         issue_input["labelIds"] = label_ids
-    data = await _gql(auth, """
+    data = await _gql(
+        auth,
+        """
       mutation($input: IssueCreateInput!) {
-        issueCreate(input: $input) { success issue { identifier url } }
-      }""", {"input": issue_input})
+        issueCreate(input: $input) { success issue { id identifier url } }
+      }""",
+        {"input": issue_input},
+    )
     created = data["issueCreate"]
     if not created["success"]:
         raise RuntimeError("Linear refused to create the issue")
-    return {"identifier": created["issue"]["identifier"], "url": created["issue"]["url"]}
+    return {
+        "id": created["issue"]["id"],
+        "identifier": created["issue"]["identifier"],
+        "url": created["issue"]["url"],
+    }
+
+
+async def attach_link(auth: str, issue_id: str, url: str, title: str) -> bool:
+    """Attach a URL to an issue (shows in Linear's attachment section). Best-effort:
+    returns False on failure so evidence attachment never blocks issue creation."""
+    try:
+        data = await _gql(
+            auth,
+            """
+          mutation($issueId: String!, $url: String!, $title: String) {
+            attachmentLinkURL(issueId: $issueId, url: $url, title: $title) { success }
+          }""",
+            {"issueId": issue_id, "url": url, "title": title[:255]},
+        )
+        return bool(data["attachmentLinkURL"]["success"])
+    except Exception:
+        logger.warning("Linear attachment failed for %s", url, exc_info=True)
+        return False
 
 
 async def find_or_create_label(auth: str, team_id: str, name: str) -> str | None:
@@ -260,10 +324,14 @@ async def find_or_create_label(auth: str, team_id: str, name: str) -> str | None
         for n in data["issueLabels"]["nodes"]:
             if (n.get("name") or "").strip().lower() == name.strip().lower():
                 return n["id"]
-        created = await _gql(auth, """
+        created = await _gql(
+            auth,
+            """
           mutation($input: IssueLabelCreateInput!) {
             issueLabelCreate(input: $input) { success issueLabel { id } }
-          }""", {"input": {"name": name, "teamId": team_id}})
+          }""",
+            {"input": {"name": name, "teamId": team_id}},
+        )
         lbl = created["issueLabelCreate"]
         return lbl["issueLabel"]["id"] if lbl.get("success") else None
     except Exception:
@@ -274,12 +342,16 @@ async def upload_file(auth: str, filename: str, content_type: str, data: bytes) 
     """Upload bytes to Linear's asset store (2-step: reserve URL → PUT), returning
     the asset URL to embed as `![](url)` in an issue. None on any failure."""
     try:
-        res = await _gql(auth, """
+        res = await _gql(
+            auth,
+            """
           mutation($contentType: String!, $filename: String!, $size: Int!) {
             fileUpload(contentType: $contentType, filename: $filename, size: $size) {
               success uploadFile { uploadUrl assetUrl headers { key value } }
             }
-          }""", {"contentType": content_type, "filename": filename, "size": len(data)})
+          }""",
+            {"contentType": content_type, "filename": filename, "size": len(data)},
+        )
         up = res.get("fileUpload") or {}
         if not up.get("success"):
             return None

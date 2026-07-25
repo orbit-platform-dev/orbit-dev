@@ -156,8 +156,15 @@ function FeedbackDialog({
           <div className="flex items-center gap-3 rounded-lg border border-border p-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={image.dataUrl} alt={image.name} className="h-12 w-12 rounded object-cover" />
-            <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{image.name}</span>
-            <Button variant="ghost" size="icon-sm" onClick={() => setImage(null)} aria-label={t("feedback.remove")}>
+            <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+              {image.name}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setImage(null)}
+              aria-label={t("feedback.remove")}
+            >
               <X className="h-4 w-4" />
             </Button>
           </div>
@@ -180,8 +187,18 @@ function FeedbackDialog({
             <Button variant="ghost" onClick={() => onOpenChange(false)}>
               {t("feedback.cancel")}
             </Button>
-            <Button onClick={submit} disabled={busy || description.trim().length < 3} className="gap-2">
-              {busy ? t("feedback.sending") : <>{t("feedback.send")} <Send className="h-4 w-4" /></>}
+            <Button
+              onClick={submit}
+              disabled={busy || description.trim().length < 3}
+              className="gap-2"
+            >
+              {busy ? (
+                t("feedback.sending")
+              ) : (
+                <>
+                  {t("feedback.send")} <Send className="h-4 w-4" />
+                </>
+              )}
             </Button>
           </div>
         </div>
@@ -189,7 +206,6 @@ function FeedbackDialog({
     </Dialog>
   );
 }
-
 
 function CoachMark({ onOpen }: { onOpen: () => void }) {
   const { t } = useTranslation();

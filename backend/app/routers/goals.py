@@ -2,6 +2,7 @@
 against. Deliberately minimal: a goal is a sentence, optionally a date. The
 intelligence comes from the detectors comparing signals and Linear state to it,
 not from the CRUD."""
+
 from __future__ import annotations
 
 import uuid
@@ -28,9 +29,7 @@ async def _owned_goal(db, ws: str, goal_id: str) -> Goal:
     probe whether another workspace's goal id exists (IDOR). get_workspace_id
     already requires an authenticated principal, so this also enforces auth.
     """
-    goal = (await db.execute(
-        select(Goal).where(Goal.id == goal_id, Goal.workspace_id == ws)
-    )).scalars().first()
+    goal = (await db.execute(select(Goal).where(Goal.id == goal_id, Goal.workspace_id == ws))).scalars().first()
     if not goal:
         raise HTTPException(404, "Goal not found")
     return goal
@@ -53,18 +52,24 @@ class PatchGoalIn(BaseModel):
 
 @router.get("", response_model=list[GoalOut])
 async def list_goals(db=Depends(get_db), ws: str = Depends(get_workspace_id)):
-    return (await db.execute(
-        select(Goal).where(Goal.workspace_id == ws).order_by(Goal.created_at.desc())
-    )).scalars().all()
+    return (
+        (await db.execute(select(Goal).where(Goal.workspace_id == ws).order_by(Goal.created_at.desc()))).scalars().all()
+    )
 
 
 @router.post("", response_model=GoalOut, status_code=201)
 async def create_goal(body: GoalIn, db=Depends(get_db), ws: str = Depends(get_workspace_id)):
     if not body.title.strip():
         raise HTTPException(422, "A goal needs a title")
-    g = Goal(id=f"gl_{uuid.uuid4().hex[:8]}", workspace_id=ws, title=body.title.strip()[:200],
-             detail=body.detail.strip(), target_date=body.target_date,
-             status="open", created_at=datetime.now(timezone.utc))
+    g = Goal(
+        id=f"gl_{uuid.uuid4().hex[:8]}",
+        workspace_id=ws,
+        title=body.title.strip()[:200],
+        detail=body.detail.strip(),
+        target_date=body.target_date,
+        status="open",
+        created_at=datetime.now(timezone.utc),
+    )
     db.add(g)
     await db.commit()
     await db.refresh(g)

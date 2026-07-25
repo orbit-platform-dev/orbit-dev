@@ -6,9 +6,11 @@ just recency. On Postgres it is a real pgvector column (the extension is ensured
 in database._migrate); on SQLite it is plain JSON. Defensive/idempotent so it is
 safe on dev DBs that may have materialized the column via startup drift-repair.
 """
-from alembic import op
+
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
+
+from alembic import op
 
 revision = "0014_feedback_embedding"
 down_revision = "0013_integration_workspace"

@@ -7,6 +7,7 @@ None whenever embeddings are unavailable (AI off, no key, API error) so every
 caller degrades to keyword/recency ranking — embedding failures must never
 break ingestion or retrieval.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -20,8 +21,7 @@ from ..models import EMBEDDING_DIM
 
 logger = logging.getLogger("orbit.embeddings")
 
-_GEMINI_URL = ("https://generativelanguage.googleapis.com/v1beta/models/"
-               "{model}:embedContent?key={key}")
+_GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent?key={key}"
 _MAX_CHARS = 6000  # embedding models truncate anyway; keep requests lean
 
 # Circuit breaker. After a 429 (quota / rate limit) we PAUSE embedding calls for
@@ -32,11 +32,24 @@ _MAX_CHARS = 6000  # embedding models truncate anyway; keep requests lean
 _QUOTA_COOLDOWN_S = 60.0
 _paused_until = 0.0
 
-# Same text → same vector (deterministic), so a bounded cache lets one question
-# be embedded once even though recall, per-team + per-user directives and the
-# agent's first search all ask for it — cutting 3-4 identical round-trips a turn.
 _CACHE_MAX = 512
 _vec_cache: dict[tuple[str, str], list[float]] = {}
+
+_EMBED_CONCURRENCY = 16
+_http: httpx.AsyncClient | None = None
+_http_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _client() -> httpx.AsyncClient:
+    global _http, _http_loop
+    loop = asyncio.get_running_loop()
+    if _http is None or _http.is_closed or _http_loop is not loop:
+        _http = httpx.AsyncClient(
+            timeout=20,
+            limits=httpx.Limits(max_connections=_EMBED_CONCURRENCY, max_keepalive_connections=8),
+        )
+        _http_loop = loop
+    return _http
 
 
 def _paused() -> bool:
@@ -61,12 +74,9 @@ def _request_body(text: str, task: str) -> dict:
     startup backfill rebuild them)."""
     model = settings.embedding_model or ""
     if model.startswith("gemini-embedding-") and model != "gemini-embedding-001":
-        prefix = ("task: search result | query: " if task == "RETRIEVAL_QUERY"
-                  else "title: none | text: ")
-        return {"content": {"parts": [{"text": prefix + text}]},
-                "outputDimensionality": EMBEDDING_DIM}
-    return {"content": {"parts": [{"text": text}]}, "taskType": task,
-            "outputDimensionality": EMBEDDING_DIM}
+        prefix = "task: search result | query: " if task == "RETRIEVAL_QUERY" else "title: none | text: "
+        return {"content": {"parts": [{"text": prefix + text}]}, "outputDimensionality": EMBEDDING_DIM}
+    return {"content": {"parts": [{"text": text}]}, "taskType": task, "outputDimensionality": EMBEDDING_DIM}
 
 
 async def embed_text(text: str, *, task: str = "RETRIEVAL_DOCUMENT") -> list[float] | None:
@@ -78,11 +88,10 @@ async def embed_text(text: str, *, task: str = "RETRIEVAL_DOCUMENT") -> list[flo
     if cached is not None:
         return cached
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            res = await client.post(
-                _GEMINI_URL.format(model=settings.embedding_model, key=settings.llm_api_key),
-                json=_request_body(text[:_MAX_CHARS], task),
-            )
+        res = await _client().post(
+            _GEMINI_URL.format(model=settings.embedding_model, key=settings.llm_api_key),
+            json=_request_body(text[:_MAX_CHARS], task),
+        )
         if res.status_code == 429:
             _trip_breaker()  # quota/rate limited — stop hammering for a cooldown
             logger.warning("embedding quota/rate limit (429); pausing embeddings for %.0fs", _QUOTA_COOLDOWN_S)
@@ -108,7 +117,13 @@ async def embed_query(text: str) -> list[float] | None:
 
 
 async def embed_many(texts: list[str]) -> list[list[float] | None]:
-    return list(await asyncio.gather(*[embed_text(t) for t in texts]))
+    sem = asyncio.Semaphore(_EMBED_CONCURRENCY)
+
+    async def one(t: str) -> list[float] | None:
+        async with sem:
+            return await embed_text(t)
+
+    return list(await asyncio.gather(*[one(t) for t in texts]))
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -136,18 +151,20 @@ async def ensure_vector_space(db) -> None:
     for ws in (await db.execute(select(Workspace))).scalars().all():
         marker = ws.embedding_model
         if marker is None:
-            has_vectors = (await db.execute(
-                select(Artifact.id).where(Artifact.workspace_id == ws.id,
-                                          Artifact.embedding.is_not(None)).limit(1))).scalar_one_or_none()
+            has_vectors = (
+                await db.execute(
+                    select(Artifact.id).where(Artifact.workspace_id == ws.id, Artifact.embedding.is_not(None)).limit(1)
+                )
+            ).scalar_one_or_none()
             marker = _LEGACY_MODEL if has_vectors else configured
         if marker != configured:
-            logger.warning("workspace %s: embedding model %s → %s; clearing stored vectors for re-embed",
-                           ws.id, marker, configured)
+            logger.warning(
+                "workspace %s: embedding model %s → %s; clearing stored vectors for re-embed", ws.id, marker, configured
+            )
             # sa.null(), not None: a Python None through the JSON column type can
             # land as the JSON text 'null', which "IS NULL" queries (backfill,
             # retrieval) would miss. null() always emits SQL NULL.
             for table in (Artifact, ArtifactChunk, Feedback, Memory):
-                await db.execute(update(table).where(table.workspace_id == ws.id)
-                                 .values(embedding=null()))
+                await db.execute(update(table).where(table.workspace_id == ws.id).values(embedding=null()))
         ws.embedding_model = configured
     await db.commit()

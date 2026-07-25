@@ -13,6 +13,7 @@ permanent repository of behavioral preferences & rules. Two retrieval modes:
 Writes are synchronous on the request path (a human action, not high-frequency);
 reads are strictly read-only.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -51,7 +52,14 @@ def rule_text(section: str, field: str, before: str, after: str, context: str = 
 
 
 async def record_feedback(
-    db, workspace_id: str, *, section: str, field: str, before: str, after: str, context: str = "",
+    db,
+    workspace_id: str,
+    *,
+    section: str,
+    field: str,
+    before: str,
+    after: str,
+    context: str = "",
     user_id: str | None = None,
 ) -> Feedback:
     """Persist one correction AND its embedding, synchronously (the write path).
@@ -82,9 +90,18 @@ async def backfill_embeddings(db, workspace_id: str, limit: int = 100) -> int:
     retrievable. Caller commits."""
     if not embeddings.available():
         return 0
-    rows = (await db.execute(select(Feedback).where(
-        Feedback.workspace_id == workspace_id, Feedback.embedding.is_(None))
-        .order_by(Feedback.created_at.desc()).limit(limit))).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(Feedback)
+                .where(Feedback.workspace_id == workspace_id, Feedback.embedding.is_(None))
+                .order_by(Feedback.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
     done = 0
     for r in rows:
         vec = await embeddings.embed_text(rule_text(r.section, r.field, r.before, r.after))
@@ -98,20 +115,32 @@ async def backfill_embeddings(db, workspace_id: str, limit: int = 100) -> int:
 async def render_corrections(db, workspace_id: str) -> str:
     """The most recent human corrections as a compact prompt block, or '' when
     there's nothing learned yet. (Recency-based; used where there's no query.)"""
-    rows = (await db.execute(
-        select(Feedback).where(Feedback.workspace_id == workspace_id)
-        .order_by(Feedback.created_at.desc()).limit(_MAX_CORRECTIONS))).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(Feedback)
+                .where(Feedback.workspace_id == workspace_id)
+                .order_by(Feedback.created_at.desc())
+                .limit(_MAX_CORRECTIONS)
+            )
+        )
+        .scalars()
+        .all()
+    )
     if not rows:
         return ""
-    lines = ["LEARNED CORRECTIONS — how humans edited or dismissed Orbit's recent output. "
-             "Match these preferences (tone, specificity, what's worth surfacing):"]
+    lines = [
+        "LEARNED CORRECTIONS — how humans edited or dismissed Orbit's recent output. "
+        "Match these preferences (tone, specificity, what's worth surfacing):"
+    ]
     for r in rows:
         lines.append(f'- [{r.section}.{r.field}] "{r.before}" → "{r.after}"')
     return "\n".join(lines)
 
 
-async def relevant_rules(db, workspace_id: str, query_text: str, k: int = 3,
-                         *, user_id: str | None = None) -> list[Feedback]:
+async def relevant_rules(
+    db, workspace_id: str, query_text: str, k: int = 3, *, user_id: str | None = None
+) -> list[Feedback]:
     """The behavioral rules most relevant to `query_text` — STRICTLY READ-ONLY.
     `user_id` None → team-wide rules (Feedback.user_id IS NULL); set → that one
     person's rules (their chat answer ratings).
@@ -127,15 +156,28 @@ async def relevant_rules(db, workspace_id: str, query_text: str, k: int = 3,
 
     if engine.dialect.name == "postgresql":
         distance = cast(Feedback.embedding, Vector(EMBEDDING_DIM)).cosine_distance(qv)
-        stmt = (select(Feedback).where(
-            Feedback.workspace_id == workspace_id, scope,
-            Feedback.embedding.isnot(None),
-            distance <= _RULE_MAX_DISTANCE,
-        ).order_by(distance).limit(k))
+        stmt = (
+            select(Feedback)
+            .where(
+                Feedback.workspace_id == workspace_id,
+                scope,
+                Feedback.embedding.isnot(None),
+                distance <= _RULE_MAX_DISTANCE,
+            )
+            .order_by(distance)
+            .limit(k)
+        )
         return list((await db.execute(stmt)).scalars().all())
 
-    rows = (await db.execute(select(Feedback).where(
-        Feedback.workspace_id == workspace_id, scope, Feedback.embedding.isnot(None)))).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(Feedback).where(Feedback.workspace_id == workspace_id, scope, Feedback.embedding.isnot(None))
+            )
+        )
+        .scalars()
+        .all()
+    )
     floor = 1.0 - _RULE_MAX_DISTANCE
     scored = [(r, embeddings.cosine(qv, r.embedding)) for r in rows if r.embedding]
     scored = [(r, s) for r, s in scored if s >= floor]
@@ -143,8 +185,7 @@ async def relevant_rules(db, workspace_id: str, query_text: str, k: int = 3,
     return [r for r, _ in scored[:k]]
 
 
-async def directives_block(db, workspace_id: str, query_text: str, k: int = 3,
-                           *, user_id: str | None = None) -> str:
+async def directives_block(db, workspace_id: str, query_text: str, k: int = 3, *, user_id: str | None = None) -> str:
     """The relevant behavioral rules formatted as a <System_Directives> block for
     system-prompt injection, or '' when there are none. `user_id` set → that
     person's own feedback (e.g. chat answer ratings); None → team corrections."""
@@ -153,5 +194,7 @@ async def directives_block(db, workspace_id: str, query_text: str, k: int = 3,
         return ""
     body = "\n".join(f"- {rule_text(r.section, r.field, r.before, r.after)}" for r in rules)
     whose = "your own past feedback" if user_id else "this team's past corrections"
-    return (f"\n\n<System_Directives> (learned from {whose} — honor them "
-            f"unless the user explicitly overrides)\n{body}\n</System_Directives>")
+    return (
+        f"\n\n<System_Directives> (learned from {whose} — honor them "
+        f"unless the user explicitly overrides)\n{body}\n</System_Directives>"
+    )

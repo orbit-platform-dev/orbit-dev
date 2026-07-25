@@ -7,6 +7,7 @@ Fresh databases are still bootstrapped with create_all and then stamped to
 head; this revision exists so pre-Alembic databases have a starting point to
 upgrade from.
 """
+
 revision = "0001_baseline"
 down_revision = None
 branch_labels = None

@@ -1,4 +1,12 @@
-import { ArrowUpRight, Building2, Handshake, Lightbulb, Target, User, type LucideIcon } from "lucide-react";
+import {
+  ArrowUpRight,
+  Building2,
+  Handshake,
+  Lightbulb,
+  Target,
+  User,
+  type LucideIcon,
+} from "lucide-react";
 import type { Entity } from "@/lib/types";
 
 // Shared presentation for company-model entities, reused by the Memory list and

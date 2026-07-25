@@ -3,6 +3,7 @@
 Field names are snake_case (Pythonic) but serialize to camelCase via an alias
 generator, so responses match the frontend's TypeScript types exactly.
 """
+
 from __future__ import annotations
 
 from datetime import datetime

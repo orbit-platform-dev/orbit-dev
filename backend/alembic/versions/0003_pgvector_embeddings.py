@@ -5,9 +5,11 @@ columns with HNSW cosine indexes — similarity search stays fast at thousands+
 of rows. On SQLite the same columns are plain JSON and ranking happens in
 Python (dev-scale only).
 """
-from alembic import op
+
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
+
+from alembic import op
 
 revision = "0003_pgvector_embeddings"
 down_revision = "0002_execution_platform"
@@ -30,10 +32,10 @@ def upgrade() -> None:
     with op.batch_alter_table("knowledge_items") as batch:
         batch.add_column(_col())
     if is_pg:
-        op.execute("CREATE INDEX ix_meetings_embedding ON meetings "
-                   "USING hnsw (embedding vector_cosine_ops)")
-        op.execute("CREATE INDEX ix_knowledge_items_embedding ON knowledge_items "
-                   "USING hnsw (embedding vector_cosine_ops)")
+        op.execute("CREATE INDEX ix_meetings_embedding ON meetings USING hnsw (embedding vector_cosine_ops)")
+        op.execute(
+            "CREATE INDEX ix_knowledge_items_embedding ON knowledge_items USING hnsw (embedding vector_cosine_ops)"
+        )
 
 
 def downgrade() -> None:

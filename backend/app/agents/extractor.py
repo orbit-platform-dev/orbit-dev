@@ -5,6 +5,7 @@ structured company memory. Degrades gracefully: with AI off or on any failure it
 falls back to a deterministic, content-derived extraction so ingestion never
 breaks and the product runs with no LLM at all.
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,7 +38,7 @@ async def extract(kind: str, title: str, content: str, corrections: str = "") ->
     try:
         agent = build_agent(SYSTEM_PROMPTS["extractor"], ArtifactExtraction, model=settings.extractor_model)
         prefix = f"{corrections}\n\n" if corrections else ""
-        prompt = f"{prefix}ARTIFACT (kind: {kind}) titled \"{title}\":\n\n{(content or '')[:_MAX_CONTENT]}"
+        prompt = f'{prefix}ARTIFACT (kind: {kind}) titled "{title}":\n\n{(content or "")[:_MAX_CONTENT]}'
         result = await agent.run(prompt)
         return result.output
     except Exception:

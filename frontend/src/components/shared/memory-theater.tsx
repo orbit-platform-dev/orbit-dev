@@ -9,7 +9,14 @@ import type { SyncProgress } from "@/lib/types";
 // draw in between them, and pulses travel the connections while Orbit distils
 // what it read into memory. Shown instead of data while a sync runs.
 
-type Node = { x: number; y: number; r: number; cls: string; label?: string; side?: "left" | "right" };
+type Node = {
+  x: number;
+  y: number;
+  r: number;
+  cls: string;
+  label?: string;
+  side?: "left" | "right";
+};
 
 const NODES: Node[] = [
   { x: 80, y: 62, r: 7, cls: "fill-info", label: "Customer", side: "left" },
@@ -24,11 +31,26 @@ const NODES: Node[] = [
 ];
 
 const EDGES: [number, number][] = [
-  [0, 1], [1, 2], [2, 3], [0, 4], [4, 5], [1, 5], [5, 7], [6, 4], [7, 8], [5, 2], [6, 0], [3, 8],
+  [0, 1],
+  [1, 2],
+  [2, 3],
+  [0, 4],
+  [4, 5],
+  [1, 5],
+  [5, 7],
+  [6, 4],
+  [7, 8],
+  [5, 2],
+  [6, 0],
+  [3, 8],
 ];
 
 // Edges that carry a traveling pulse once the graph has grown.
-const PULSED: [number, number][] = [[0, 1], [5, 2], [4, 5]];
+const PULSED: [number, number][] = [
+  [0, 1],
+  [5, 2],
+  [4, 5],
+];
 
 export function MemoryTheater({ sync }: { sync?: SyncProgress | null }) {
   const phase = sync?.phase ?? "reading";
@@ -41,13 +63,20 @@ export function MemoryTheater({ sync }: { sync?: SyncProgress | null }) {
       transition={{ duration: 0.5 }}
       className="flex min-h-[460px] flex-col items-center justify-center rounded-2xl border border-border bg-card/40 px-4 py-12 backdrop-blur-xl sm:px-8"
     >
-      <svg viewBox="0 0 460 250" className="h-auto w-full max-w-xl" role="img"
-           aria-label="Orbit is connecting what it read into a growing company knowledge graph.">
+      <svg
+        viewBox="0 0 460 250"
+        className="h-auto w-full max-w-xl"
+        role="img"
+        aria-label="Orbit is connecting what it read into a growing company knowledge graph."
+      >
         <g className="stroke-border" strokeWidth={1}>
           {EDGES.map(([a, b], i) => (
             <motion.line
               key={i}
-              x1={NODES[a].x} y1={NODES[a].y} x2={NODES[b].x} y2={NODES[b].y}
+              x1={NODES[a].x}
+              y1={NODES[a].y}
+              x2={NODES[b].x}
+              y2={NODES[b].y}
               initial={{ pathLength: 0, opacity: 0 }}
               animate={{ pathLength: 1, opacity: 1 }}
               transition={{ duration: 0.6, delay: 0.5 + i * 0.18, ease: "easeOut" }}
@@ -59,13 +88,23 @@ export function MemoryTheater({ sync }: { sync?: SyncProgress | null }) {
           <g key={i}>
             {/* soft halo that keeps breathing after the graph has grown */}
             <motion.circle
-              cx={n.x} cy={n.y} className={n.cls} opacity={0.15}
+              cx={n.x}
+              cy={n.y}
+              className={n.cls}
+              opacity={0.15}
               initial={{ r: 0 }}
               animate={{ r: [n.r + 3, n.r + 8, n.r + 3] }}
-              transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut", delay: i * 0.4 + 1.5 }}
+              transition={{
+                duration: 3.2,
+                repeat: Infinity,
+                ease: "easeInOut",
+                delay: i * 0.4 + 1.5,
+              }}
             />
             <motion.circle
-              cx={n.x} cy={n.y} className={n.cls}
+              cx={n.x}
+              cy={n.y}
+              className={n.cls}
               initial={{ r: 0, opacity: 0 }}
               animate={{ r: n.r, opacity: 1 }}
               transition={{ duration: 0.45, delay: i * 0.16, ease: "backOut" }}
@@ -101,13 +140,20 @@ export function MemoryTheater({ sync }: { sync?: SyncProgress | null }) {
               cy: [NODES[a].y, NODES[b].y],
               opacity: [0, 1, 0],
             }}
-            transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut", delay: 2.2 + i * 0.7 }}
+            transition={{
+              duration: 1.6,
+              repeat: Infinity,
+              ease: "easeInOut",
+              delay: 2.2 + i * 0.7,
+            }}
           />
         ))}
       </svg>
 
       <h2 className="mt-8 text-lg font-semibold tracking-tight">
-        {phase === "error" ? "Sync hit a snag — retrying shortly" : "Orbit is building your company memory"}
+        {phase === "error"
+          ? "Sync hit a snag — retrying shortly"
+          : "Orbit is building your company memory"}
       </h2>
       <p className="mt-1 max-w-md text-center text-sm text-muted-foreground">
         {sync?.message ?? "Connecting people, commitments and work into one living graph…"}

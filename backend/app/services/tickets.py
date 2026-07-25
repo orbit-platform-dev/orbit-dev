@@ -3,6 +3,7 @@
 One place decides how each connector creates an issue and how the created issue
 folds back into memory, so a new connector slots in here, not in each caller.
 """
+
 from __future__ import annotations
 
 import logging
@@ -15,8 +16,9 @@ logger = logging.getLogger("orbit.tickets")
 _SOURCE = {"linear": "linear-issue", "github": "github-issue"}
 
 
-async def create_ticket(db, ws: str, *, connector: str, title: str, description: str,
-                        target: str | None = None) -> dict[str, str]:
+async def create_ticket(
+    db, ws: str, *, connector: str, title: str, description: str, target: str | None = None
+) -> dict[str, str]:
     """Create a real issue in `connector` (Linear team id / GitHub owner-repo in
     `target`). Returns {identifier, url}. Raises PermissionError (not connected),
     ValueError (bad target/connector), or the connector's own error (API refusal)."""
@@ -41,11 +43,14 @@ async def ingest_created(db, ws: str, connector: str, result: dict, title: str, 
     from .ingestion import ingest_artifact
 
     await ingest_artifact(
-        db, ws, source=_SOURCE.get(connector, "linear-issue"), kind="issue",
+        db,
+        ws,
+        source=_SOURCE.get(connector, "linear-issue"),
+        kind="issue",
         title=f"{result['identifier']} · {title}"[:300],
         content=f"{title}\n\n{description}",
-        external_ref=result["identifier"], url=result["url"],
+        external_ref=result["identifier"],
+        url=result["url"],
         occurred_at=datetime.now(timezone.utc),
-        meta={"identifier": result["identifier"], "state": "open", "stateType": "started",
-              "createdInOrbit": True},
+        meta={"identifier": result["identifier"], "state": "open", "stateType": "started", "createdInOrbit": True},
     )

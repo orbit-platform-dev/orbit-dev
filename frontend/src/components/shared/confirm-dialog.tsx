@@ -58,7 +58,11 @@ export function ConfirmDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
             {cancelLabel}
           </Button>
-          <Button variant={destructive ? "destructive" : "default"} onClick={confirm} disabled={busy}>
+          <Button
+            variant={destructive ? "destructive" : "default"}
+            onClick={confirm}
+            disabled={busy}
+          >
             {busy ? "Working…" : confirmLabel}
           </Button>
         </DialogFooter>
