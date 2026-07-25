@@ -1,10 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { RefreshCw } from "lucide-react";
 import { useAuth, useOrganization, useOrganizationList } from "@clerk/nextjs";
 import { clerkEnabled } from "@/lib/auth";
 import { OrbitWordmark } from "@/components/shared/logo";
+import { PageLoader } from "@/components/shared/page-loader";
 import { CreateWorkspace } from "@/components/workspace/create-workspace";
 
 export function RequireWorkspace({ children }: { children: React.ReactNode }) {
@@ -47,9 +47,5 @@ export function RequireWorkspace({ children }: { children: React.ReactNode }) {
 }
 
 function GateSpinner() {
-  return (
-    <div className="flex min-h-[60vh] items-center justify-center">
-      <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
-    </div>
-  );
+  return <PageLoader label="Opening your workspace…" />;
 }
