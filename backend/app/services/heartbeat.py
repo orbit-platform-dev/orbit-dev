@@ -26,7 +26,7 @@ from .reasoning import detect_findings, generate_brief
 
 logger = logging.getLogger("orbit.heartbeat")
 
-_STARTUP_DELAY_S = 20  # let migrations/seed settle before the first tick
+_STARTUP_DELAY_S = 20  
 
 _state: dict = {
     "interval_minutes": settings.heartbeat_interval_minutes,
@@ -84,16 +84,21 @@ def _done_message(s: dict) -> str:
     return f"Analysed {', '.join(parts)}" if parts else "Nothing to analyse yet — connect a tool or add a call."
 
 
-async def run_now(workspace_id: str, trigger: str = "manual") -> None:
-    """Run the full Observe → Reason path immediately (not on the next tick) and
-    stream coarse progress into `_sync` for the UI. Uses its own DB session."""
-    if _sync.get(workspace_id, {}).get("active"):
-        return  # a sync is already in flight; don't stack
+def _prime(workspace_id: str, trigger: str) -> None:
     _sync[workspace_id] = {
         "active": True, "phase": "reading", "trigger": trigger,
         "message": "",
         "counts": {}, "startedAt": datetime.now(timezone.utc).isoformat(), "finishedAt": None,
     }
+
+
+async def run_now(workspace_id: str, trigger: str = "manual", *, primed: bool = False) -> None:
+    """Run the full Observe → Reason path immediately (not on the next tick) and
+    stream coarse progress into `_sync` for the UI. Uses its own DB session."""
+    if not primed:
+        if _sync.get(workspace_id, {}).get("active"):
+            return  
+        _prime(workspace_id, trigger)
     try:
         async with SessionLocal() as db:
             counts = await pull_all(db, workspace_id)
@@ -101,18 +106,17 @@ async def run_now(workspace_id: str, trigger: str = "manual") -> None:
                 phase="reasoning",
                 message="Building your company model and reasoning across it…",
                 counts={"issues": counts.get("linear", 0)})
-            await backfill_embeddings(db, workspace_id, limit=300)  # embed anything not yet vectorized
-            await backfill_chunks(db, workspace_id)  # chunk-embed long docs so deep passages are searchable
+            await backfill_embeddings(db, workspace_id, limit=300)  
+            await backfill_chunks(db, workspace_id)  
             await backfill_memory_embeddings(db, workspace_id)
             await backfill_feedback_embeddings(db, workspace_id)
-            await decay_memories(db, workspace_id)       # age-out facts not seen this sync
+            await decay_memories(db, workspace_id)       
             await detect_findings(db, workspace_id)
             signal_count = (await db.execute(select(func.count()).select_from(Artifact)
                             .where(Artifact.workspace_id == workspace_id))).scalar_one()
             if signal_count:
                 await generate_brief(db, workspace_id)
                 _state["last_brief_at"] = datetime.now(timezone.utc).isoformat()
-            # Act: autonomously draft proposals for new high-priority findings (human reviews).
             await dispatch_for_workspace(db, workspace_id)
             await db.commit()
             summary = await _summarize(db, workspace_id)
@@ -128,8 +132,13 @@ async def run_now(workspace_id: str, trigger: str = "manual") -> None:
 
 
 def start_sync(workspace_id: str, trigger: str = "manual") -> None:
-    """Fire-and-forget an immediate sync (safe to call from a request handler)."""
-    asyncio.get_event_loop().create_task(run_now(workspace_id, trigger))
+    """Fire-and-forget an immediate sync (safe to call from a request handler).
+    Primes the sync state SYNCHRONOUSLY so the caller's response already reports
+    active=true — the UI reacts on the click, not one poll later."""
+    if _sync.get(workspace_id, {}).get("active"):
+        return
+    _prime(workspace_id, trigger)
+    asyncio.get_event_loop().create_task(run_now(workspace_id, trigger, primed=True))
 
 
 async def _brief_is_stale(db, ws: str) -> bool:
@@ -164,20 +173,18 @@ async def _tick() -> None:
 
             if _sync.get(ws, {}).get("active"):
                 continue
-            # No connected tool → nothing new to pull or reason about → skip (no charge).
             if not await _has_live_connector(db, ws):
                 continue
-            # Observe: auto-pull new artifacts from every connected sensor, then reason.
             try:
                 await pull_all(db, ws)
             except Exception:
                 logger.warning("auto-pull failed; reasoning on existing memory", exc_info=True)
             try:
-                await backfill_embeddings(db, ws, limit=300)  # keep the vector index populated
+                await backfill_embeddings(db, ws, limit=300)  
                 await backfill_chunks(db, ws)  # chunk-embed long docs so deep passages are searchable
                 await backfill_memory_embeddings(db, ws)
                 await backfill_feedback_embeddings(db, ws)
-                await decay_memories(db, ws)        # age-out unverified facts
+                await decay_memories(db, ws)        
             except Exception:
                 logger.warning("embedding backfill / decay failed; continuing", exc_info=True)
             open_findings = await detect_findings(db, ws)
@@ -190,7 +197,6 @@ async def _tick() -> None:
                 await generate_brief(db, ws)
                 _state["last_brief_at"] = datetime.now(timezone.utc).isoformat()
 
-            # Act: draft proposals for new high-priority findings (bounded per tick).
             try:
                 await dispatch_for_workspace(db, ws)
             except Exception:

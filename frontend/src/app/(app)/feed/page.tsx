@@ -360,9 +360,9 @@ export default function FeedPage() {
 
   const scan = useMutation({
     mutationFn: api.scanFeed,
-    onSuccess: () => {
+    onSuccess: (status) => {
+      qc.setQueryData(qk.heartbeat, status); 
       qc.invalidateQueries({ queryKey: qk.feed });
-      qc.invalidateQueries({ queryKey: qk.heartbeat });  // surface the scanning state at once
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Scan failed"),
   });

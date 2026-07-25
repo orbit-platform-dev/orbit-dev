@@ -13,12 +13,13 @@ import type { IntegrationKey, SyncProgress } from "@/lib/types";
 // a sync is running: connected tools flow into the Orbit core, outputs flow
 // out, and a stage tracker mirrors the live sync phase.
 
-const FALLBACK_TOOLS: IntegrationKey[] = ["linear", "slack", "github", "google-drive"];
+const PULLED_TOOLS: IntegrationKey[] = ["linear", "slack", "github", "google-drive", "fireflies"];
 const TOOL_NAME: Record<string, string> = {
   linear: "Linear",
   slack: "Slack",
   github: "GitHub",
   "google-drive": "Google Drive",
+  fireflies: "Fireflies",
 };
 
 const STAGES = ["Reading", "Understanding", "Reasoning", "Ready"];
@@ -93,10 +94,9 @@ function Core() {
 
 export function SyncTheater({ sync }: { sync?: SyncProgress | null }) {
   const { data: integrations } = useIntegrations();
-  const connected = (integrations ?? [])
-    .filter((i) => i.status === "connected")
+  const tools = (integrations ?? [])
+    .filter((i) => i.status === "connected" && PULLED_TOOLS.includes(i.key))
     .map((i) => i.key);
-  const tools = connected.length ? connected : FALLBACK_TOOLS;
   const phase = sync?.phase ?? "reading";
   const stage = PHASE_STAGE[phase] ?? 0;
 
@@ -109,21 +109,29 @@ export function SyncTheater({ sync }: { sync?: SyncProgress | null }) {
     >
       <div className="flex w-full max-w-3xl items-center">
         <div className="flex flex-1 flex-col gap-5">
-          {tools.map((k, i) => (
-            <motion.div
-              key={k}
-              className="flex items-center gap-2.5"
-              initial={{ opacity: 0, x: -8 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.12 }}
-            >
-              <IntegrationLogo k={k} className="h-9 w-9 rounded-xl" />
-              <span className="hidden w-24 truncate text-sm font-medium md:block">
-                {TOOL_NAME[k] ?? k}
-              </span>
-              <Lane delay={i * 0.45} />
-            </motion.div>
-          ))}
+          {tools.length
+            ? tools.map((k, i) => (
+                <motion.div
+                  key={k}
+                  className="flex items-center gap-2.5"
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.12 }}
+                >
+                  <IntegrationLogo k={k} className="h-9 w-9 rounded-xl" />
+                  <span className="hidden w-24 truncate text-sm font-medium md:block">
+                    {TOOL_NAME[k] ?? k}
+                  </span>
+                  <Lane delay={i * 0.45} />
+                </motion.div>
+              ))
+            : Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-2.5">
+                  <div className="h-9 w-9 animate-pulse rounded-xl border border-border/60 bg-muted/60" />
+                  <span className="hidden h-3 w-20 animate-pulse rounded bg-muted/60 md:block" />
+                  <Lane delay={i * 0.45} />
+                </div>
+              ))}
         </div>
 
         <Core />
