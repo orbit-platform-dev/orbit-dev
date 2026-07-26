@@ -8,6 +8,7 @@ REST — nothing fabricated. Failures raise; callers decide how to degrade.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 from urllib.parse import urlencode
 
@@ -15,6 +16,8 @@ import httpx
 
 from ..config import settings
 from ..models import Integration
+
+logger = logging.getLogger("orbit.github")
 
 _API = "https://api.github.com"
 _AUTHORIZE = "https://github.com/login/oauth/authorize"
@@ -248,6 +251,48 @@ async def item_state(auth: str, identifier: str, is_pr: bool) -> str | None:
         raise RuntimeError(f"GitHub API error {res.status_code}: {res.text[:150]}")
     d = res.json()
     return "merged" if d.get("merged_at") else (d.get("state") or "open")
+
+
+_HOOK_EVENTS = ["issues", "issue_comment", "pull_request", "pull_request_review"]
+
+
+async def register_webhooks(auth: str, url: str, secret: str) -> int:
+    """Create (idempotently) Orbit's webhook on every synced repo via the API —
+    zero manual setup for the customer. Per-repo and best-effort: repos where
+    the connecting user lacks admin are skipped; polling covers them. Returns
+    how many repos now deliver events."""
+    try:
+        repos = await _get(
+            auth,
+            "/user/repos",
+            {"sort": "pushed", "per_page": _MAX_REPOS, "affiliation": "owner,collaborator,organization_member"},
+        )
+    except Exception:
+        logger.warning("GitHub webhook auto-registration: repo list failed", exc_info=True)
+        return 0
+    wired = 0
+    for r in repos:
+        full = r.get("full_name")
+        if not full:
+            continue
+        try:
+            hooks = await _get(auth, f"/repos/{full}/hooks", {"per_page": 50})
+            if any((h.get("config") or {}).get("url") == url for h in hooks):
+                wired += 1
+                continue
+            await _post(
+                auth,
+                f"/repos/{full}/hooks",
+                {
+                    "config": {"url": url, "content_type": "json", "secret": secret},
+                    "events": _HOOK_EVENTS,
+                    "active": True,
+                },
+            )
+            wired += 1
+        except Exception:
+            continue
+    return wired
 
 
 async def fetch_work(
