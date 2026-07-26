@@ -136,7 +136,7 @@ async def set_source_stale(db, workspace_id: str, integration_key: str, stale: b
 _FULL_SYNC_EVERY_HOURS = 24
 _CURSOR_OVERLAP_MINUTES = 5
 _RECONCILE_CHECKS = 50
-_INITIAL_BACKFILL_DAYS = 7
+_INITIAL_BACKFILL_DAYS = 3
 
 _IMAGE_MD = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
 _IMAGES_PER_SYNC = 5  # vision reads spend model quota — bounded per pull
@@ -540,6 +540,7 @@ async def pull_linear(
             if not changes:
                 continue
             changed += 1
+            existing.title = f"{issue['identifier']} · {issue['title']}"[:300]
             existing.content = content
             await _refresh_embedding(existing, content, changes, imgs, prev_imgs)
             await _write_chunks(db, existing)  # rebuild chunks if the discussion grew long
@@ -731,6 +732,7 @@ async def pull_github(
             if not changes:
                 continue
             changed += 1
+            existing.title = f"{item['identifier']} · {item['title']}"[:300]
             existing.content = content
             await _refresh_embedding(existing, content, changes, imgs, prev_imgs)
             await _write_chunks(db, existing)  # rebuild chunks if the discussion grew long
@@ -895,6 +897,7 @@ async def pull_gdrive(
         if existing:
             if meta.get("modifiedAt") and (existing.meta or {}).get("modifiedAt") != meta["modifiedAt"]:
                 changed += 1
+                existing.title = d["title"][:300]
                 existing.content = content
                 existing.meta = meta
                 existing.occurred_at = _parse_ts(d.get("modifiedAt")) or existing.occurred_at
