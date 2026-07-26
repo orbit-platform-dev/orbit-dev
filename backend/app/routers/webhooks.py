@@ -36,6 +36,13 @@ def _github_signature_ok(token: str, body: bytes, header: str | None) -> bool:
     return hmac.compare_digest(expected, header)
 
 
+def _linear_signature_ok(token: str, body: bytes, header: str | None) -> bool:
+    if not header:
+        return True  # token-in-URL is the baseline auth; HMAC is defense-in-depth
+    expected = hmac.new(token.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header)
+
+
 @router.post("/{key}")
 async def receive(key: str, token: str, request: Request, db=Depends(get_db)):
     body = await request.body()
@@ -52,6 +59,10 @@ async def receive(key: str, token: str, request: Request, db=Depends(get_db)):
         raise HTTPException(404, "Unknown webhook")
     if key == "github" and not _github_signature_ok(token, body, request.headers.get("X-Hub-Signature-256")):
         raise HTTPException(401, "Bad signature")
+    if key == "linear":
+        secret = (match.credentials or {}).get("linearWebhookSecret")
+        if secret and not _linear_signature_ok(secret, body, request.headers.get("Linear-Signature")):
+            raise HTTPException(401, "Bad signature")
 
     ws = match.workspace_id
 
@@ -68,7 +79,10 @@ async def receive(key: str, token: str, request: Request, db=Depends(get_db)):
         return {"ok": True}
 
     now = time.time()
-    if now - _last_trigger.get(ws, 0) >= _DEBOUNCE_SECONDS:
-        _last_trigger[ws] = now
-        heartbeat.start_sync(ws, f"{key}-webhook")
+    if now - _last_trigger.get(f"{ws}:{key}", 0) >= _DEBOUNCE_SECONDS:
+        _last_trigger[f"{ws}:{key}"] = now
+        if key in ("linear", "github"):
+            ingestion.start_connector_pull(ws, key)
+        else:
+            heartbeat.start_sync(ws, f"{key}-webhook")
     return {"ok": True}

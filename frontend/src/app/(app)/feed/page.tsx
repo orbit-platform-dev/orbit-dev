@@ -16,7 +16,6 @@ import {
   TrendingUp,
   type LucideIcon,
 } from "lucide-react";
-import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
