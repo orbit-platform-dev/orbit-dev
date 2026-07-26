@@ -43,8 +43,14 @@ _HISTORY_CLIP = 600
 _STOPWORDS = frozenset(
     "what is are our the a an of for in on to and or with about show me tell give list how many much who whats".split()
 )
-_PULLABLE = ("linear", "github", "slack", "google-drive")
-_PULL_LABEL = {"linear": "Linear", "github": "GitHub", "slack": "Slack", "google-drive": "Google Drive"}
+_PULLABLE = ("linear", "github", "slack", "google-drive", "fireflies")
+_PULL_LABEL = {
+    "linear": "Linear",
+    "github": "GitHub",
+    "slack": "Slack",
+    "google-drive": "Google Drive",
+    "fireflies": "Fireflies",
+}
 
 
 @dataclass
@@ -194,8 +200,72 @@ async def _run_pull(db, ws: str, connector: str) -> int:
         "github": ingestion.pull_github,
         "slack": ingestion.pull_slack,
         "google-drive": ingestion.pull_gdrive,
+        "fireflies": ingestion.pull_fireflies,
     }.get(connector)
     return (await fn(db, ws)) if fn else 0
+
+
+async def _stale_connectors(db, ws: str, threshold_min: int = 10) -> list[tuple[str, int]]:
+    from datetime import datetime, timezone
+
+    rows = (
+        (
+            await db.execute(
+                select(Integration).where(
+                    Integration.workspace_id == ws, Integration.key.in_(_PULLABLE), Integration.status == "connected"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out: list[tuple[str, int]] = []
+    now = datetime.now(timezone.utc)
+    for i in rows:
+        cursor = (i.sync_state or {}).get("cursor")
+        if not cursor:
+            continue
+        age = int((now - datetime.fromisoformat(cursor)).total_seconds() // 60)
+        if age >= threshold_min:
+            out.append((i.key, age))
+    return out
+
+
+async def latest_activity(ctx: RunContext[ChatDeps], sources: list[str] | None = None, k: int = 8) -> str:
+    """The newest items in company memory ordered by time. ALWAYS use this (not
+    search_memory) for questions about the latest / most recent / newest things,
+    what just happened, or today's activity — semantic search cannot rank by
+    time. Optionally restrict to `sources`."""
+    deps = ctx.deps
+    try:
+        connected = await connected_keys(deps.db, deps.ws)
+        src = (await _expand_sources(deps.db, deps.ws, sources)) if sources else None
+        stmt = select(Artifact).where(Artifact.workspace_id == deps.ws)
+        if src:
+            stmt = stmt.where(Artifact.source.in_(src))
+        stmt = stmt.order_by(Artifact.occurred_at.desc()).limit(max(1, min(k or _TOP_K, 12)))
+        rows = (await deps.db.execute(stmt)).scalars().all()
+    except Exception:
+        logger.warning("latest_activity failed", exc_info=True)
+        return "Could not read recent activity; try again."
+    rows = [a for a in rows if source_visible(a.source, connected)]
+    if not rows:
+        return "No matching items in memory."
+    deps.touched = True
+    for a in rows:
+        _record(deps, a, 1.0)
+    out = "\n\n".join(
+        f"[id: {a.id}] ({a.source}, {a.occurred_at:%Y-%m-%d %H:%M} UTC) {a.title}\n{(a.content or '')[:_SNIPPET]}"
+        for a in rows
+    )
+    stale = await _stale_connectors(deps.db, deps.ws)
+    if stale:
+        out += (
+            "\n\nFRESHNESS WARNING: not synced recently — "
+            + ", ".join(f"{k} ({m} min ago)" for k, m in stale)
+            + ". Newer items may exist upstream: call pull_connector for the relevant source, then call latest_activity again."
+        )
+    return out
 
 
 async def search_memory(ctx: RunContext[ChatDeps], query: str, sources: list[str] | None = None, k: int = 8) -> str:
@@ -355,7 +425,7 @@ async def pull_connector(ctx: RunContext[ChatDeps], name: str) -> str:
     """Fetch FRESH data from a connected tool when memory can't answer the question,
     or whenever the user explicitly asks to pull / refresh / re-check / re-sync —
     their instruction always wins over tool-economy rules. `name` is one of
-    linear | github | slack | google-drive. After it succeeds, call search_memory
+    linear | github | slack | google-drive | fireflies. After it succeeds, call search_memory
     again to use the newly-ingested data."""
     name = (name or "").strip().lower()
     connected = await _connected_pullable(ctx.deps.db, ctx.deps.ws)
@@ -427,6 +497,7 @@ async def remember_fact(ctx: RunContext[ChatDeps], fact: str, subject: str = "")
 
 _TOOLS = [
     search_memory,
+    latest_activity,
     list_sources,
     person_work,
     graph_neighbors,
