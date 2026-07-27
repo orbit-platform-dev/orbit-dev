@@ -268,6 +268,29 @@ async def latest_activity(ctx: RunContext[ChatDeps], sources: list[str] | None =
     return out
 
 
+_FULL_READ = 12000
+
+
+async def read_item(ctx: RunContext[ChatDeps], id: str) -> str:
+    """Read ONE item from memory in full by its `[id: …]` — the whole PR or issue
+    including its diffs, commit messages, review comments and discussion. Search
+    results are truncated, so call this whenever the question is about DETAIL:
+    what changed in a PR, why a decision was made, what someone objected to."""
+    deps = ctx.deps
+    art = await deps.db.get(Artifact, (id or "").strip())
+    if art is None or art.workspace_id != deps.ws:
+        return f"No item with id '{id}' in this workspace."
+    connected = await connected_keys(deps.db, deps.ws)
+    if not source_visible(art.source, connected):
+        return "That item's source is not connected, so it is not readable."
+    _record(deps, art, 1.0)
+    deps.touched = True
+    head = f"[id: {art.id}] ({art.source}) {art.title}"
+    if art.url:
+        head += f"\n{art.url}"
+    return f"{head}\n\n{(art.content or '')[:_FULL_READ]}"
+
+
 async def search_memory(ctx: RunContext[ChatDeps], query: str, sources: list[str] | None = None, k: int = 8) -> str:
     """Search the company's memory for artifacts relevant to `query`. Optionally
     restrict to specific `sources` (call list_sources first to see them) so the answer
@@ -497,6 +520,7 @@ async def remember_fact(ctx: RunContext[ChatDeps], fact: str, subject: str = "")
 
 _TOOLS = [
     search_memory,
+    read_item,
     latest_activity,
     list_sources,
     person_work,
