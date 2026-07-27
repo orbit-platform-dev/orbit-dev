@@ -15,17 +15,18 @@ import uuid
 from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import cast, or_, select
+from sqlalchemy import cast, delete, or_, select
 
 from ..database import engine
 from ..models import EMBEDDING_DIM, Artifact, ArtifactChunk, Entity, Link
 from . import embeddings
 
+TICKET_REF = re.compile(r"\b([A-Z][A-Z0-9]{1,9}-\d{1,6})\b")
+
 _SEMANTIC_THRESHOLD = 0.75
 
 _SEMANTIC_MAX_DISTANCE = 1.0 - _SEMANTIC_THRESHOLD
 
-# Corporate suffixes that shouldn't affect identity ("Acme Inc" == "Acme").
 _SUFFIXES = ("inc", "llc", "ltd", "gmbh", "corp", "corporation", "co", "kk", "sa", "srl", "plc")
 
 
@@ -39,8 +40,6 @@ def normalize_name(name: str) -> str:
     return " ".join(words)
 
 
-# Short but meaningful tokens; acronyms like SSO/API matter, so keep len >= 3
-# but drop common filler so overlap stays signal.
 _STOP = {
     "the",
     "and",
@@ -234,12 +233,6 @@ async def resolve_entity(db, ws: str, kind: str, name: str, *, meta: dict | None
     return e
 
 
-# --- Person identity unification across connectors --------------------------
-# A human shows up as different handles in different tools (GitHub login
-# `VijayBharathi27`, Linear name `Bharathi Vijaya`, an email on a call). We unify
-# on the one deterministic key that survives every connector — email — and
-# accumulate names as aliases and logins as handles. We deliberately do NOT merge
-# on name similarity alone (a wrong merge is worse than a duplicate).
 def _emails(e: Entity) -> set[str]:
     ids = e.identifiers or {}
     out = {x.lower() for x in (ids.get("emails") or []) if x}
@@ -528,8 +521,6 @@ async def link_work_entities(db, ws: str, artifact: Artifact) -> None:
     if artifact.source not in WORK_SOURCES:
         return
     m = artifact.meta or {}
-    # GitHub's assignee/creator are logins (a handle); Linear's are display names
-    # carrying a separate email. resolve_person unifies both onto one identity.
     is_gh = artifact.source in ("github-pr", "github-issue")
     assignee_ent = None
     if m.get("assignee") and not is_bot(m.get("assignee")):
@@ -567,13 +558,101 @@ async def link_work_entities(db, ws: str, artifact: Artifact) -> None:
                 await ensure_link(db, ws, "entity", assignee_ent.id, "entity", pr.id, "works_on")
 
 
+_MAX_TICKET_LINKS = 10
+
+
+def ticket_refs(text: str) -> list[str]:
+    """Ticket ids (ENG-231, POLAR-88) named anywhere in a piece of text."""
+    return list(dict.fromkeys(TICKET_REF.findall(text or "")))
+
+
+async def link_ticket_refs(db, ws: str, artifact: Artifact) -> None:
+    """Link an artifact to the tickets it names — for EVERY connector, so a Slack
+    thread, a spec, a call transcript and a PR branch all reach the same ticket,
+    and through it the commitment and customer it serves. A branch-derived ref
+    (meta.ticketRefs) is a claim to deliver → `implements`; a mention anywhere in
+    the text is context → `references`. Idempotent; caller commits."""
+    strong = list((artifact.meta or {}).get("ticketRefs") or [])
+    weak = [r for r in ticket_refs(artifact.content or "") if r not in strong]
+    for ref in (strong + weak)[:_MAX_TICKET_LINKS]:
+        ticket = (
+            (
+                await db.execute(
+                    select(Artifact).where(
+                        Artifact.workspace_id == ws, Artifact.source == "linear-issue", Artifact.external_ref == ref
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if ticket and ticket.id != artifact.id:
+            await ensure_link(
+                db,
+                ws,
+                "artifact",
+                artifact.id,
+                "artifact",
+                ticket.id,
+                "implements" if ref in strong else "references",
+                source_artifact_id=artifact.id,
+            )
+
+
+# Few, strong edges: the similarity floor is retrieval's (_SEMANTIC_THRESHOLD) and
+# every link stores its score, so consumers can filter tighter without a re-link.
+_NEIGHBOURS = 3
+
+
+async def link_semantic_neighbours(db, ws: str, artifact: Artifact) -> None:
+    """Meaning-based edges: connect this artifact to whatever it is actually about,
+    whether or not anyone typed an id. A Slack thread about "the bulk import script"
+    reaches the ticket, the spec and the PR that share its meaning.
+
+    The neighbourhood is REPLACED on every pass, not appended: as memory grows a
+    closer item can displace an older neighbour, so the graph keeps re-arranging
+    itself instead of freezing at whatever existed on the day of ingest."""
+    if not artifact.embedding:
+        return
+    hits = await search_artifacts(db, ws, artifact.embedding, k=_NEIGHBOURS, exclude_ids=[artifact.id])
+    await db.execute(
+        delete(Link).where(
+            Link.workspace_id == ws,
+            Link.from_type == "artifact",
+            Link.from_id == artifact.id,
+            Link.type == "relates_to",
+        )
+    )
+    for other, similarity in hits:
+        await ensure_link(
+            db,
+            ws,
+            "artifact",
+            artifact.id,
+            "artifact",
+            other.id,
+            "relates_to",
+            source_artifact_id=artifact.id,
+            meta={"similarity": round(similarity, 3)},
+        )
+
+
+async def update_graph_for(db, ws: str, artifact: Artifact) -> None:
+    """Everything the graph learns from one artifact. Shared by first ingest and
+    every refresh, so no connector drifts from the others: who owns it, the tickets
+    it explicitly claims, and what it means (its nearest memories)."""
+    await link_work_entities(db, ws, artifact)
+    await link_ticket_refs(db, ws, artifact)
+    await link_semantic_neighbours(db, ws, artifact)
+
+
 async def build_from_artifact(db, ws: str, artifact: Artifact) -> None:
     """Resolve the entities and links implied by one artifact's extraction, then
     try to match any new commitments to Linear. Commits once at the end."""
     ex = artifact.extracted or {}
 
-    # Deterministic ownership graph from the work item's structured fields.
-    await link_work_entities(db, ws, artifact)
+    # Deterministic graph from the artifact's structured fields (all connectors).
+    await update_graph_for(db, ws, artifact)
 
     customer_ents: dict[str, Entity] = {}
     for ent in ex.get("entities", []) or []:

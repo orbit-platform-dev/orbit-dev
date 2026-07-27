@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Bot, Plug, Search } from "lucide-react";
+import { Bot, Plug, Search, Zap } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
 import { McpCard } from "@/components/integrations/mcp-card";
 import { useIntegrations, qk } from "@/lib/hooks";
@@ -204,6 +205,47 @@ function CirclebackConnectDialog({
   );
 }
 
+/** Connected is not the same as live. A registered webhook means seconds; without
+ *  one the connector is still synced on schedule — say which, never imply live. */
+function SyncMode({ integration }: { integration: Integration }) {
+  const enable = useMutation({
+    mutationFn: async () => {
+      const { url } = await api.getOAuthUrl(integration.key, true);
+      window.location.href = url;
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not start the upgrade"),
+  });
+
+  if (integration.liveEvents) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-success">
+        <span className="h-1.5 w-1.5 rounded-full bg-success" /> Live
+      </span>
+    );
+  }
+  if (integration.canEnableLive) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-[11px]"
+            onClick={() => enable.mutate()}
+            disabled={enable.isPending}
+          >
+            <Zap className="h-3.5 w-3.5" /> Enable live
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          Syncing on schedule. Live updates need a workspace admin to re-authorize.
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+  return <span className="text-[11px] text-muted-foreground">Scheduled sync</span>;
+}
+
 function IntegrationRow({
   integration,
   onConnect,
@@ -226,10 +268,23 @@ function IntegrationRow({
       toast.success(`${integration.name} disconnected`);
     },
   });
+  const comingSoon = !canConnectNow && !connected;
   return (
     <Card
-      className={cn("flex items-center gap-4 p-4", !canConnectNow && !connected && "opacity-80")}
+      className={cn(
+        "relative flex items-center gap-4 overflow-hidden p-4",
+        comingSoon && "select-none",
+      )}
     >
+      {/* Frosted glass reads as "visible but not yet yours" — the connector stays
+          legible underneath, so the roadmap still communicates what is coming. */}
+      {comingSoon && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/40 backdrop-blur-[3px] supports-[not(backdrop-filter:blur(0))]:bg-card/80">
+          <span className="rounded-full border border-border/60 bg-background/70 px-3 py-1 text-[11px] font-medium tracking-wide text-foreground/80 shadow-sm backdrop-blur-md">
+            Coming soon
+          </span>
+        </div>
+      )}
       <IntegrationLogo k={integration.key} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -241,14 +296,17 @@ function IntegrationRow({
         <p className="mt-0.5 truncate text-sm text-muted-foreground">{integration.description}</p>
       </div>
       {connected ? (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => disconnect.mutate()}
-          disabled={disconnect.isPending}
-        >
-          Disconnect
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <SyncMode integration={integration} />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => disconnect.mutate()}
+            disabled={disconnect.isPending}
+          >
+            Disconnect
+          </Button>
+        </div>
       ) : needsReconnect && canConnectNow ? (
         <div className="flex shrink-0 items-center gap-2">
           <span className="text-[11px] font-medium text-warning">Session expired</span>
@@ -260,11 +318,7 @@ function IntegrationRow({
         <Button size="sm" onClick={() => onConnect(integration.key)}>
           <Plug className="h-4 w-4" /> Connect
         </Button>
-      ) : (
-        <span className="shrink-0 rounded-full border border-border px-2.5 py-0.5 text-[11px] text-muted-foreground">
-          Coming soon
-        </span>
-      )}
+      ) : null}
     </Card>
   );
 }
@@ -274,6 +328,36 @@ const OAUTH_ERROR_MSG: Record<string, string> = {
   state: "Sign-in expired, please try again",
   exchange: "The provider rejected the sign-in, please try again",
 };
+
+function ConnectorSection({
+  label,
+  count,
+  note,
+  className,
+  children,
+}: {
+  label: string;
+  count: number;
+  note?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className={className}>
+      <div className="mb-3 flex items-center gap-3">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {label}
+        </span>
+        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+          {count}
+        </span>
+        <span className="h-px flex-1 bg-border" />
+        {note && <span className="hidden text-[11px] text-muted-foreground sm:inline">{note}</span>}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">{children}</div>
+    </section>
+  );
+}
 
 export default function IntegrationsPage() {
   const qc = useQueryClient();
@@ -324,10 +408,12 @@ export default function IntegrationsPage() {
   const filtered = (data ?? [])
     .filter((i) => category === "All" || i.category === category)
     .filter((i) => !query || i.name.toLowerCase().includes(query.toLowerCase()))
-    // Connectable first, then alphabetical.
-    .sort(
-      (a, b) => Number(!!b.connectable) - Number(!!a.connectable) || a.name.localeCompare(b.name),
-    );
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Two different decisions, so two sections: what you can wire up now, and what
+  // is on the way. Sorting alone left them interleaved and unreadable.
+  const available = filtered.filter((i) => i.connectable || i.status === "connected");
+  const upcoming = filtered.filter((i) => !i.connectable && i.status !== "connected");
 
   return (
     <div>
@@ -385,11 +471,27 @@ export default function IntegrationsPage() {
           No integrations in this category.
         </p>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {filtered.map((i) => (
-            <IntegrationRow key={i.key} integration={i} onConnect={onConnect} />
-          ))}
-        </div>
+        <>
+          {available.length > 0 && (
+            <ConnectorSection label="Available now" count={available.length}>
+              {available.map((i) => (
+                <IntegrationRow key={i.key} integration={i} onConnect={onConnect} />
+              ))}
+            </ConnectorSection>
+          )}
+          {upcoming.length > 0 && (
+            <ConnectorSection
+              label="Coming soon"
+              count={upcoming.length}
+              note="Built and on the way. Nothing for you to set up."
+              className={available.length > 0 ? "mt-9" : undefined}
+            >
+              {upcoming.map((i) => (
+                <IntegrationRow key={i.key} integration={i} onConnect={onConnect} />
+              ))}
+            </ConnectorSection>
+          )}
+        </>
       )}
 
       <KeyConnectDialog

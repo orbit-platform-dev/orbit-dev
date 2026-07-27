@@ -118,6 +118,17 @@ async def search_memory(query: str, sources: list[str] | None = None, k: int = 8
 
 
 @mcp.tool()
+async def read_item(id: str) -> str:
+    """Read ONE memory item in full by its `[id: …]` — a whole PR or issue including
+    its diffs, commit messages, review comments and discussion. Search results are
+    truncated, so use this for any question about detail: what changed in a PR, why
+    a decision was made, what a reviewer objected to."""
+    from .agents import orbit_agent
+
+    return await _observed("read_item", id, lambda ctx: orbit_agent.read_item(ctx, id))
+
+
+@mcp.tool()
 async def list_sources() -> str:
     """List the kinds of memory available (connector source types) with item counts,
     so you can pick the right `sources` for a targeted search_memory call."""

@@ -25,7 +25,11 @@ logger = logging.getLogger("orbit.linear")
 _API = "https://api.linear.app/graphql"
 _AUTHORIZE = "https://linear.app/oauth/authorize"
 _TOKEN = "https://api.linear.app/oauth/token"
-_SCOPES = "read,write,admin"
+_SCOPES = "read,write"
+# Webhook creation needs admin. Linear BLOCKS authorization outright when a
+# non-admin is asked for this scope, so it is only ever requested on an explicit
+# "enable live updates" upgrade — never on a first connect.
+_ADMIN_SCOPES = "read,write,admin"
 
 
 def _auth_header(cred: dict[str, Any] | None) -> str | None:
@@ -107,7 +111,7 @@ def oauth_configured() -> bool:
     return bool(settings.linear_client_id and settings.linear_client_secret)
 
 
-def oauth_url(state: str) -> str:
+def oauth_url(state: str, *, admin: bool = False) -> str:
     return (
         _AUTHORIZE
         + "?"
@@ -116,7 +120,7 @@ def oauth_url(state: str) -> str:
                 "client_id": settings.linear_client_id,
                 "redirect_uri": settings.linear_redirect_uri,
                 "response_type": "code",
-                "scope": _SCOPES,
+                "scope": _ADMIN_SCOPES if admin else _SCOPES,
                 "state": state,
             }
         )

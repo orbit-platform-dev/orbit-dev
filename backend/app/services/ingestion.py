@@ -545,9 +545,9 @@ async def pull_linear(
             await _refresh_embedding(existing, content, changes, imgs, prev_imgs)
             await _write_chunks(db, existing)  # rebuild chunks if the discussion grew long
             # Enrich the ownership graph on every refresh (backfills existing issues).
-            from .model import link_work_entities
+            from .model import update_graph_for
 
-            await link_work_entities(db, workspace_id, existing)
+            await update_graph_for(db, workspace_id, existing)
             # Re-derive facts so reassignments supersede the prior owner.
             from .memory import derive_from_artifact
 
@@ -602,6 +602,23 @@ async def pull_linear(
     return ingested
 
 
+def _ticket_refs(s: dict) -> list[str]:
+    """Ticket ids a PR claims to serve — read from the branch name, title, body and
+    commit messages (where teams actually put them). This is the hop that turns a
+    diff into 'this code delivers the promise we made to a customer'."""
+    haystack = " ".join(
+        [
+            (s.get("branch") or "").upper().replace("/", " ").replace("_", "-"),
+            s.get("title") or "",
+            s.get("description") or "",
+            " ".join(s.get("commitMessages") or []),
+        ]
+    )
+    from .model import ticket_refs
+
+    return ticket_refs(haystack)
+
+
 def _github_content_meta(s: dict) -> tuple[str, dict]:
     """Shaped GitHub PR/issue → memory text + structured meta. Meta reuses the
     Linear key vocabulary (assignee/creator/project/stateType) so the knowledge
@@ -621,6 +638,11 @@ def _github_content_meta(s: dict) -> tuple[str, dict]:
         facts.append("Labels: " + ", ".join(s["labels"]))
     if s.get("draft"):
         facts.append("Draft PR")
+    if s.get("branch"):
+        facts.append(f"Branch: {s['branch']}")
+    refs = _ticket_refs(s)
+    if refs:
+        facts.append("Implements: " + ", ".join(refs))
     if s.get("createdAt"):
         facts.append(f"Created: {s['createdAt']}")
     if s.get("mergedAt"):
@@ -650,6 +672,32 @@ def _github_content_meta(s: dict) -> tuple[str, dict]:
             + "\n".join(f"- {c.get('author') or 'someone'}: {c.get('body')}" for c in comments if c.get("body"))
         )
 
+    commit_msgs = s.get("commitMessages") or []
+    if commit_msgs:
+        blocks.append("Commits:\n" + "\n".join(f"- {m}" for m in commit_msgs))
+    files = s.get("files") or []
+    if files:
+        summary = "\n".join(
+            f"- {f['path']} ({f.get('status', 'modified')}, +{f.get('additions', 0)}/-{f.get('deletions', 0)})"
+            for f in files
+            if f.get("path")
+        )
+        blocks.append("Files changed:\n" + summary)
+        diffs = [f"{f['path']}\n```diff\n{f['patch']}\n```" for f in files if f.get("patch")]
+        if diffs:
+            blocks.append("Code changes:\n" + "\n\n".join(diffs))
+    review_comments = s.get("reviewComments") or []
+    if review_comments:
+        blocks.append(
+            "Review comments:\n"
+            + "\n".join(
+                f"- {c.get('author') or 'someone'} on {c.get('path')}"
+                + (f":{c['line']}" if c.get("line") else "")
+                + f" — {c.get('body')}"
+                for c in review_comments
+            )
+        )
+
     meta = {
         "identifier": s.get("identifier"),
         "state": s.get("state"),
@@ -666,6 +714,11 @@ def _github_content_meta(s: dict) -> tuple[str, dict]:
         "comments": comments,
         "commentCount": len(comments),
         "reviews": reviews,
+        "reviewComments": review_comments,
+        "branch": s.get("branch"),
+        "ticketRefs": refs,
+        "files": [{k: v for k, v in f.items() if k != "patch"} for f in files],
+        "commitMessages": commit_msgs,
         "additions": s.get("additions"),
         "deletions": s.get("deletions"),
         "changedFiles": s.get("changedFiles"),
@@ -736,9 +789,9 @@ async def pull_github(
             existing.content = content
             await _refresh_embedding(existing, content, changes, imgs, prev_imgs)
             await _write_chunks(db, existing)  # rebuild chunks if the discussion grew long
-            from .model import link_work_entities
+            from .model import update_graph_for
 
-            await link_work_entities(db, workspace_id, existing)
+            await update_graph_for(db, workspace_id, existing)
             from .memory import derive_from_artifact
 
             await derive_from_artifact(db, workspace_id, existing)

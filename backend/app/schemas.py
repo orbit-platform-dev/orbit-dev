@@ -133,3 +133,9 @@ class IntegrationOut(CamelModel):
     # one-click button can appear (else API-key fallback / coming soon).
     connectable: bool = False
     oauth_available: bool = False
+    # live_events: the provider pushes changes to Orbit (a webhook is registered),
+    # so memory updates in seconds instead of on the sync schedule.
+    # can_enable_live: live events are possible but need a re-authorization with
+    # wider scope — the UI offers it; polling covers the connector meanwhile.
+    live_events: bool = False
+    can_enable_live: bool = False
