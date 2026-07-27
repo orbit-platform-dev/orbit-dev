@@ -123,7 +123,7 @@ function FeedbackDialog({
               type="button"
               onClick={() => setCategory(key)}
               className={cn(
-                "flex flex-col items-center gap-1.5 rounded-lg border px-2 py-3 text-xs font-medium transition-colors",
+                "flex min-w-0 flex-col items-center gap-1.5 rounded-lg border px-2 py-3 text-center text-xs font-medium leading-tight transition-colors",
                 category === key
                   ? "border-primary bg-primary/10 text-primary"
                   : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
