@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
 
@@ -26,8 +27,9 @@ _SCOPES = "repo read:org"
 
 _MAX_REPOS = 8
 
-_PER_REPO = 20
-_ENRICH_PER_REPO = 10
+_PER_REPO = 50  # listing depth; must exceed what a busy repo moves inside _ENRICH_DAYS
+_ENRICH_DAYS = 3
+_ENRICH_MAX_PER_REPO = 40
 _REPO_CONCURRENCY = 4
 _CONTRIBUTORS_PER_REPO = 10
 _COMMENTS_MAX = 50
@@ -170,6 +172,9 @@ def _shape(repo: str, n: dict[str, Any], is_pr: bool) -> dict[str, Any]:
         "updatedAt": n.get("updated_at"),
         "closedAt": n.get("closed_at"),
         "mergedAt": n.get("merged_at"),
+        # The branch name is where teams put the ticket id (feature/eng-231-…), so
+        # it is the strongest signal for linking code back to the promise it serves.
+        "branch": ((n.get("head") or {}).get("ref") if is_pr else None),
         "commentCount": n.get("comments"),
         "comments": [],
         "reviews": [],
@@ -199,10 +204,16 @@ async def _fetch_comments(auth: str, repo: str, number: str) -> list[dict[str, A
     return out[:_COMMENTS_MAX]
 
 
+_FILES_PER_PR = 10
+_PATCH_CHARS = 1200 
+_COMMITS_PER_PR = 20
+
+
 async def _enrich_pr(auth: str, repo: str, item: dict[str, Any]) -> None:
-    """Deep-read one open PR: code stats and reviews (comments are fetched for
-    every item separately). Each part is independent so a single failed call
-    never drops the rest."""
+    """Deep-read one PR: stats, reviews, the actual changed files with their
+    diffs, commit messages, and line-level review comments. This is what makes
+    "what changed in this PR / why" answerable instead of just "+120/-30".
+    Each part is independent so a single failed call never drops the rest."""
     number = item["identifier"].rsplit("#", 1)[-1]
     try:
         d = await _get(auth, f"/repos/{repo}/pulls/{number}")
@@ -227,6 +238,42 @@ async def _enrich_pr(auth: str, repo: str, item: dict[str, Any]) -> None:
         ]
     except Exception:
         item.setdefault("reviews", [])
+    try:
+        files = await _get(auth, f"/repos/{repo}/pulls/{number}/files", {"per_page": _FILES_PER_PR})
+        item["files"] = [
+            {
+                "path": f.get("filename"),
+                "status": f.get("status"),
+                "additions": f.get("additions"),
+                "deletions": f.get("deletions"),
+                "patch": (f.get("patch") or "")[:_PATCH_CHARS],
+            }
+            for f in files
+        ]
+    except Exception:
+        item.setdefault("files", [])
+    try:
+        commits = await _get(auth, f"/repos/{repo}/pulls/{number}/commits", {"per_page": _COMMITS_PER_PR})
+        item["commitMessages"] = [
+            ((c.get("commit") or {}).get("message") or "").strip().splitlines()[0][:200] for c in commits
+        ]
+    except Exception:
+        item.setdefault("commitMessages", [])
+    try:
+        # Line-level review comments — where the actual technical objections live.
+        rc = await _get(auth, f"/repos/{repo}/pulls/{number}/comments", {"per_page": 30})
+        item["reviewComments"] = [
+            {
+                "author": (c.get("user") or {}).get("login"),
+                "path": c.get("path"),
+                "line": c.get("line") or c.get("original_line"),
+                "body": (c.get("body") or "").strip()[:400],
+            }
+            for c in rc
+            if c.get("body")
+        ]
+    except Exception:
+        item.setdefault("reviewComments", [])
 
 
 async def item_state(auth: str, identifier: str, is_pr: bool) -> str | None:
@@ -326,17 +373,18 @@ async def fetch_work(
                 pr_items = [_shape(full, p, True) for p in prs]
                 if since:
                     pr_items = [x for x in pr_items if (x.get("updatedAt") or "") > since]
-                for pr in [s for s in pr_items if s["state"] == "open"][:_ENRICH_PER_REPO]:
-                    await _enrich_pr(auth, full, pr)  # stats + reviews (open PRs only)
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=_ENRICH_DAYS)).isoformat()
+                recent = [s for s in pr_items if s["state"] == "open" or (s.get("updatedAt") or "") >= cutoff]
+                recent.sort(key=lambda s: s.get("updatedAt") or "", reverse=True)
+                for pr in recent[:_ENRICH_MAX_PER_REPO]:
+                    await _enrich_pr(auth, full, pr)
 
                 issue_params = {"state": "all", "sort": "updated", "direction": "desc", "per_page": _PER_REPO}
                 if since:
                     issue_params["since"] = since
                 issues = await _get(auth, f"/repos/{full}/issues", issue_params)
-                # The issues endpoint interleaves PRs; keep only real issues.
                 issue_items = [_shape(full, i, False) for i in issues if "pull_request" not in i]
 
-                # Full discussion on every item; a 0-comment item skips the API call.
                 for it in (*pr_items, *issue_items):
                     if it.get("commentCount") == 0:
                         continue
