@@ -25,7 +25,7 @@ from ..agents import orbit_agent
 from ..config import settings
 from ..deps import get_current_user, get_db
 from ..models import ActivityEvent, ChatConversation
-from ..services import github, heartbeat, learning, linear, memory, tickets
+from ..services import credits, github, heartbeat, learning, linear, memory, tickets
 from ..services.workspace import get_workspace_id
 
 logger = logging.getLogger(__name__)
@@ -95,6 +95,15 @@ def _sync_notice(sync: dict) -> str:
         f"(currently: {sync.get('phase', 'reading')}). {sync.get('message', '')} "
         "Ask me again in a moment and I'll answer from the full picture."
     ).strip()
+
+
+async def _gate(db, ws: str, uid: str) -> None:
+    """One credit per answered question. 402 is the signal the UI turns into the
+    out-of-credits state, so the message here is user-facing copy."""
+    try:
+        await credits.check(db, ws, uid)
+    except credits.OutOfCredits as exc:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, str(exc)) from exc
 
 
 async def _owned(db, ws: str, uid: str, cid: str) -> ChatConversation:
@@ -183,6 +192,7 @@ async def ask(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_workspace_
     question = (body.message or "").strip()
     if not question:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Message is required.")
+    await _gate(db, ws, uid)
     conv = await _get_or_create(db, ws, uid, body.conversation_id, question)
     history = list(conv.messages or [])
     deps = orbit_agent.ChatDeps(
@@ -207,6 +217,9 @@ async def ask(body: ChatIn, db=Depends(get_db), ws: str = Depends(get_workspace_
         grounded = deps.touched
         draft = deps.staged_drafts[0] if deps.staged_drafts else None
 
+    # The sync notice is not an answer (no agent ran), so it costs nothing.
+    if not sync.get("active"):
+        await credits.consume(db, ws, uid)
     _persist(conv, question, text, citations, grounded, draft)
     await db.commit()
     return ChatOut(
@@ -226,6 +239,7 @@ async def ask_stream(
     question = (body.message or "").strip()
     if not question:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Message is required.")
+    await _gate(db, ws, uid)
     conv = await _get_or_create(db, ws, uid, body.conversation_id, question)
     history = list(conv.messages or [])
 
@@ -262,6 +276,8 @@ async def ask_stream(
                     yield _sse({"type": "draft", "draft": d})
                 draft = deps.staged_drafts[0] if deps.staged_drafts else None
 
+            if not sync.get("active"):
+                await credits.consume(db, ws, uid)
             _persist(conv, question, text, citations, grounded, draft)
             await db.commit()
             yield _sse(

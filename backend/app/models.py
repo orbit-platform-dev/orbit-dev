@@ -45,6 +45,9 @@ class Workspace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     auto_sync: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
     embedding_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Chat credits each NEW member starts with: raising it lifts the whole tenant,
+    # while one person is topped up on their own user_credits row.
+    credit_default: Mapped[int] = mapped_column(Integer, nullable=False, default=5, server_default=text("5"))
     # SHA-256 of this workspace's MCP key. The key IS the tenant credential:
     # /mcp resolves the workspace from it and trusts no client-supplied header.
     mcp_key_hash: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
@@ -249,6 +252,22 @@ class McpQuery(Base):
     query: Mapped[str] = mapped_column(Text, default="")
     hits: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class UserCredit(Base):
+    """One person's chat allowance in a workspace (beta metering). Balance is
+    `granted - used`, one credit per answered question. Keyed per (workspace, user)
+    so one teammate running out never blocks the team; `requested_at` holds their
+    last top-up request and rate-limits the next one."""
+
+    __tablename__ = "user_credits"
+    workspace_id: Mapped[str] = mapped_column(String, primary_key=True, default="ws_default")
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    granted: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class Memory(Base):

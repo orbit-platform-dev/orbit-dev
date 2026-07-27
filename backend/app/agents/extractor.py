@@ -18,6 +18,11 @@ logger = logging.getLogger("orbit.extractor")
 
 _MAX_CONTENT = 8000  # keep prompts lean; long transcripts are clipped
 
+# Diffs are stored and embedded so answers can quote them, but they carry no
+# commitments or customer intent — sending them here would multiply the prompt
+# (a PR's patches dwarf its description) for nothing.
+_DIFF_MARKER = "Code changes:"
+
 
 def _fallback(title: str, content: str) -> ArtifactExtraction:
     """No-LLM extraction: a truthful summary snippet, nothing invented."""
@@ -38,7 +43,8 @@ async def extract(kind: str, title: str, content: str, corrections: str = "") ->
     try:
         agent = build_agent(SYSTEM_PROMPTS["extractor"], ArtifactExtraction, model=settings.extractor_model)
         prefix = f"{corrections}\n\n" if corrections else ""
-        prompt = f'{prefix}ARTIFACT (kind: {kind}) titled "{title}":\n\n{(content or "")[:_MAX_CONTENT]}'
+        body = (content or "").split(_DIFF_MARKER)[0]
+        prompt = f'{prefix}ARTIFACT (kind: {kind}) titled "{title}":\n\n{body[:_MAX_CONTENT]}'
         result = await agent.run(prompt)
         return result.output
     except Exception:

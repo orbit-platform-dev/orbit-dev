@@ -22,6 +22,25 @@
     "toSelect": "to select",
     "title": "Orbit Command"
   },
+  "credits": {
+    "title": "Chat credits",
+    "tooltip": "{{balance}} of {{granted}} chats left in this beta",
+    "outTooltip": "You're out of chat credits",
+    "aria": "{{balance}} of {{granted}} chat credits left",
+    "usage": "You've used {{used}} of {{granted}} chats.",
+    "explainer": "Orbit is in beta, so chats are rationed per person. Ask for more and we'll top you up.",
+    "outTitle": "You're out of chat credits",
+    "outBody": "Your {{granted}} beta chats are used up. Everything else keeps running: Orbit still reads your tools and updates memory.",
+    "request": "Request credits",
+    "requested": "Request sent",
+    "sending": "Sending…",
+    "sent": "Request sent. We'll top you up shortly.",
+    "sendFailed": "Couldn't send your request. Please try again.",
+    "close": "Close",
+    "tipTitle": "You have {{balance}} chat credits",
+    "tipBody": "Orbit is in beta, so each person gets {{granted}} chats. Check what's left here, and request more any time.",
+    "tipCta": "Got it"
+  },
   "feedback": {
     "open": "Send feedback",
     "title": "Send feedback",

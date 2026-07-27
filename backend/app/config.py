@@ -6,7 +6,11 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEV_DEFAULT_MODEL = "google-gla:gemini-3.5-flash-lite"
-_PROD_DEFAULT_MODEL = "google-gla:gemini-3.6-flash"
+# Cost tiering, not one model: everything structured (extraction, briefs, issue
+# and proposal drafts) runs on flash-lite — 5x cheaper input, 3x cheaper output —
+# while CHAT, the only surface a human judges, keeps the stronger model.
+_PROD_DEFAULT_MODEL = "google-gla:gemini-3.5-flash-lite"
+_PROD_AGENT_MODEL = "google-gla:gemini-3.6-flash"
 _DEV_EMBEDDING_MODEL = "gemini-embedding-001"
 _PROD_EMBEDDING_MODEL = "gemini-embedding-2"
 
@@ -56,6 +60,12 @@ class Settings(BaseSettings):
     github_client_secret: str | None = None
     github_redirect_uri: str = "http://localhost:8000/integrations/github/oauth/callback"
 
+    # Outbound alerts to US (beta credit requests). Without a key Orbit files the
+    # request in our Linear instead — never a silent drop.
+    resend_api_key: str | None = None
+    mail_from: str = "Orbit <notifications@tryorbit.pro>"
+    alert_email: str | None = None
+
     orbit_linear_api_key: str | None = None
     orbit_linear_team_id: str | None = None
     orbit_linear_label: str = "MVP Requests"
@@ -101,8 +111,10 @@ class Settings(BaseSettings):
             self.default_model = _PROD_DEFAULT_MODEL if self.is_production else _DEV_DEFAULT_MODEL
         if not self.embedding_model:
             self.embedding_model = _PROD_EMBEDDING_MODEL if self.is_production else _DEV_EMBEDDING_MODEL
+        if not self.agent_model and self.is_production:
+            self.agent_model = _PROD_AGENT_MODEL
         if self.agent_request_limit is None:
-            self.agent_request_limit = 12 if self.is_production else 5
+            self.agent_request_limit = 8 if self.is_production else 5
         return self
 
     @property

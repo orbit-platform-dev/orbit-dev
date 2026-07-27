@@ -15,6 +15,7 @@ export const qk = {
   integrations: ["integrations"] as const,
   heartbeat: ["heartbeat"] as const,
   mcp: ["mcp"] as const,
+  credits: ["credits"] as const,
 };
 
 export const useFeed = () =>
@@ -28,6 +29,7 @@ export const useEntity = (id: string) =>
 export const useIntegrations = () =>
   useQuery({ queryKey: qk.integrations, queryFn: api.getIntegrations });
 export const useMcpStatus = () => useQuery({ queryKey: qk.mcp, queryFn: api.getMcpStatus });
+export const useCredits = () => useQuery({ queryKey: qk.credits, queryFn: api.getCredits });
 export const useHeartbeat = () =>
   useQuery({
     queryKey: qk.heartbeat,
