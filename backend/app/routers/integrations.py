@@ -29,7 +29,7 @@ WEBHOOK_FIRST = {"circleback"}
 
 # Built end-to-end but not yet launched — surfaced as roadmap ("coming soon")
 # and not connectable via any path. Remove a key here to flip it live.
-COMING_SOON = {"fireflies", "circleback"}
+COMING_SOON = {"fireflies", "circleback", "slack"}
 
 
 async def _get(db, ws: str, key: str) -> Integration | None:
@@ -44,6 +44,11 @@ async def list_integrations(db=Depends(get_db), ws: str = Depends(get_workspace_
         prov = PROVIDERS.get(r.key)
         r.connectable = (prov is not None or r.key in KEY_PROVIDERS) and r.key not in COMING_SOON
         r.oauth_available = bool(prov and prov.oauth_configured() and r.key not in COMING_SOON)
+        cred = r.credentials or {}
+        r.live_events = bool(cred.get("linearWebhookId") or cred.get("githubHooksWired"))
+        # Linear only grants webhook rights with the admin scope, which must be
+        # asked for explicitly (it blocks authorization for non-admins otherwise).
+        r.can_enable_live = r.key == "linear" and r.status == "connected" and not r.live_events
     return rows
 
 
@@ -126,11 +131,23 @@ class OAuthUrlOut(BaseModel):
 
 
 @router.post("/{key}/oauth/url", response_model=OAuthUrlOut)
-async def oauth_url(key: str, db=Depends(get_db), ws: str = Depends(get_workspace_id), _=Depends(get_current_user)):
+async def oauth_url(
+    key: str,
+    admin: bool = False,
+    db=Depends(get_db),
+    ws: str = Depends(get_workspace_id),
+    _=Depends(get_current_user),
+):
     """Mint the provider's authorize URL with a workspace-bound `state`. The
     workspace comes from the signed-in user (never a query param); the callback
     reads it back from `state`, so an unauthenticated browser redirect can never
-    land a connection in the wrong tenant."""
+    land a connection in the wrong tenant.
+
+    `admin=true` requests the extra scope that lets Orbit create the webhook for
+    live updates. Only offer it to users the tool reports as admins: Linear
+    refuses the whole authorization for everyone else."""
+    if key in COMING_SOON:
+        raise HTTPException(404, "This integration isn't available yet")
     prov = PROVIDERS.get(key)
     if not prov or not prov.oauth_configured():
         raise HTTPException(503, f"{key} OAuth is not configured.")
@@ -141,7 +158,10 @@ async def oauth_url(key: str, db=Depends(get_db), ws: str = Depends(get_workspac
     nonce = secrets.token_urlsafe(24)
     integ.credentials = {**(integ.credentials or {}), "oauthState": nonce}
     await db.commit()
-    return OAuthUrlOut(url=prov.oauth_url(f"{ws}.{nonce}"))
+    state = f"{ws}.{nonce}"
+    # Only Linear distinguishes an admin scope; others ignore the flag.
+    url = prov.oauth_url(state, admin=True) if (admin and key == "linear") else prov.oauth_url(state)
+    return OAuthUrlOut(url=url)
 
 
 @router.get("/{key}/oauth/callback")
