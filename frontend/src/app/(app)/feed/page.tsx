@@ -16,7 +16,6 @@ import {
   TrendingUp,
   type LucideIcon,
 } from "lucide-react";
-import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -528,12 +527,18 @@ export default function FeedPage() {
           {findings.length === 0 ? (
             <EmptyState
               icon={Sparkles}
-              title="Nothing needs attention"
-              description="Orbit continuously compares what you promised and decided against what's actually being built. New findings appear here on their own."
+              title={scanning ? "Orbit is looking right now" : "Nothing needs attention"}
+              description={
+                scanning
+                  ? "Reading your tools and comparing promises against what's actually being built — findings will appear here on their own."
+                  : "Orbit continuously compares what you promised and decided against what's actually being built. New findings appear here on their own."
+              }
               action={
-                <Button variant="outline" onClick={() => scan.mutate()}>
-                  <RefreshCw className="h-4 w-4" /> Scan now
-                </Button>
+                scanning ? undefined : (
+                  <Button variant="outline" onClick={() => scan.mutate()}>
+                    <RefreshCw className="h-4 w-4" /> Scan now
+                  </Button>
+                )
               }
             />
           ) : (

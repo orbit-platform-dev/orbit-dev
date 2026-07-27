@@ -25,7 +25,7 @@ logger = logging.getLogger("orbit.linear")
 _API = "https://api.linear.app/graphql"
 _AUTHORIZE = "https://linear.app/oauth/authorize"
 _TOKEN = "https://api.linear.app/oauth/token"
-_SCOPES = "read,write"
+_SCOPES = "read,write,admin"
 
 
 def _auth_header(cred: dict[str, Any] | None) -> str | None:
@@ -296,6 +296,41 @@ async def create_issue(
         "identifier": created["issue"]["identifier"],
         "url": created["issue"]["url"],
     }
+
+
+_WEBHOOK_RESOURCES = ["Issue", "Comment", "IssueLabel", "Project", "ProjectUpdate", "Document"]
+
+
+async def register_webhook(auth: str, url: str, secret: str) -> str | None:
+    """Create (idempotently) Orbit's webhook in the customer's Linear workspace so
+    connecting requires zero manual setup. Returns the webhook id, or None on any
+    failure — callers treat this as best-effort; polling still covers the gap."""
+    try:
+        data = await _gql(auth, "{ webhooks { nodes { id url } } }")
+        for n in data["webhooks"]["nodes"]:
+            if n.get("url") == url:
+                return n["id"]
+        data = await _gql(
+            auth,
+            """
+          mutation($input: WebhookCreateInput!) {
+            webhookCreate(input: $input) { success webhook { id } }
+          }""",
+            {
+                "input": {
+                    "url": url,
+                    "label": "Orbit",
+                    "allPublicTeams": True,
+                    "resourceTypes": _WEBHOOK_RESOURCES,
+                    "secret": secret,
+                }
+            },
+        )
+        created = data["webhookCreate"]
+        return created["webhook"]["id"] if created.get("success") else None
+    except Exception:
+        logger.warning("Linear webhook auto-registration failed", exc_info=True)
+        return None
 
 
 async def attach_link(auth: str, issue_id: str, url: str, title: str) -> bool:

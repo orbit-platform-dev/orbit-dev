@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import datetime, timezone
 
@@ -14,6 +15,8 @@ from ..schemas import IntegrationOut
 from ..seed import ensure_integrations
 from ..services import circleback, fireflies, github, google_drive, heartbeat, ingestion, linear, slack
 from ..services.workspace import get_workspace_id
+
+logger = logging.getLogger("orbit.integrations")
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -78,8 +81,43 @@ async def connect_with_key(
     await ingestion.set_source_stale(db, ws, key, False)
     await db.commit()
     await db.refresh(integ)
+    await _auto_register_webhook(db, integ, key)
     heartbeat.start_sync(ws, f"{key}-connect")
     return integ
+
+
+async def _auto_register_webhook(db, integ, key: str) -> None:
+    """Zero-plumbing webhooks: on connect, Orbit registers its own webhook in the
+    customer's tool via its API — URL, events and signing secret included, no
+    manual steps. Best-effort: needs a public HTTPS base; without one (bare dev)
+    polling covers everything."""
+    if key not in ("linear", "github"):
+        return
+    base = str(settings.public_api_url or "").rstrip("/")
+    if not base.startswith("https://"):
+        return
+    try:
+        cred = dict(integ.credentials or {})
+        if not cred.get("webhookToken"):
+            cred["webhookToken"] = secrets.token_urlsafe(24)
+        url = f"{base}/webhooks/{key}?token={cred['webhookToken']}"
+        if key == "linear":
+            auth = await linear.get_auth(db, integ.workspace_id)
+            if not auth:
+                return
+            hook_id = await linear.register_webhook(auth, url, cred["webhookToken"])
+            if hook_id:
+                cred["linearWebhookSecret"] = cred["webhookToken"]
+                cred["linearWebhookId"] = hook_id
+        else:
+            auth = await github.get_auth(db, integ.workspace_id)
+            if not auth:
+                return
+            cred["githubHooksWired"] = await github.register_webhooks(auth, url, cred["webhookToken"])
+        integ.credentials = cred
+        await db.commit()
+    except Exception:
+        logger.warning("%s webhook auto-registration skipped", key, exc_info=True)
 
 
 # --- Generic OAuth (Linear, Slack, …), tenant-safe --------------------------
@@ -132,6 +170,7 @@ async def oauth_callback(
     integ.last_sync = datetime.now(timezone.utc)
     await ingestion.set_source_stale(db, ws, key, False)
     await db.commit()
+    await _auto_register_webhook(db, integ, key)
     heartbeat.start_sync(ws, f"{key}-connect")
     return RedirectResponse(f"{dest}?connected={key}")
 

@@ -136,7 +136,7 @@ async def set_source_stale(db, workspace_id: str, integration_key: str, stale: b
 _FULL_SYNC_EVERY_HOURS = 24
 _CURSOR_OVERLAP_MINUTES = 5
 _RECONCILE_CHECKS = 50
-_INITIAL_BACKFILL_DAYS = 7
+_INITIAL_BACKFILL_DAYS = 3
 
 _IMAGE_MD = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
 _IMAGES_PER_SYNC = 5  # vision reads spend model quota — bounded per pull
@@ -452,12 +452,25 @@ def _linear_content_meta(s: dict) -> tuple[str, dict]:
     return content, meta
 
 
-async def _reembed_if_images_changed(existing, content: str, imgs: dict, prev_imgs: dict) -> None:
-    """Re-embed a refreshed artifact ONLY when new image text was folded in, so
-    image content becomes semantically searchable. Routine refreshes still never
-    re-embed (that would be a storm) — this fires only on the rare tick that
-    actually read a new image."""
-    if imgs and imgs != prev_imgs and embeddings.available():
+def _classify_change(old_content: str, new_content: str) -> set[str]:
+    """Typed change detection: 'window' = the embedded head changed (vector is
+    stale), 'tail' = only deep content moved (chunks cover it). Empty = no state
+    change — graph-relevant fields (assignee/status/labels) are folded into
+    content, so they classify too."""
+    old, new = old_content or "", new_content or ""
+    if old == new:
+        return set()
+    if old[:_EMBED_WINDOW] != new[:_EMBED_WINDOW]:
+        return {"window"}
+    return {"tail"}
+
+
+async def _refresh_embedding(existing, content: str, changes: set[str], imgs: dict, prev_imgs: dict) -> None:
+    """Keep the opening vector faithful to current content; unchanged items never
+    re-embed, so routine refreshes still cost nothing."""
+    if not embeddings.available():
+        return
+    if "window" in changes or (imgs and imgs != prev_imgs):
         vec = await embeddings.embed_text(_embed_input(existing.title, content))
         if vec:
             existing.embedding = vec
@@ -477,7 +490,9 @@ async def _plan_linear(db, workspace_id: str) -> _Prefetch:
     return _Prefetch(auth=auth, since=since, integ=integ, fetch=fetch)
 
 
-async def pull_linear(db, workspace_id: str, pre: _Prefetch | None = None) -> int:
+async def pull_linear(
+    db, workspace_id: str, pre: _Prefetch | None = None, *, match_commitments: bool = True, stats: dict | None = None
+) -> int:
     """Ingest Linear issues as full-context artifacts. Returns the count of NEW
     artifacts (existing ones are REFRESHED in place, so a re-pull enriches the
     whole backlog with new fields — owner, project, labels, cycle time).
@@ -497,6 +512,7 @@ async def pull_linear(db, workspace_id: str, pre: _Prefetch | None = None) -> in
     issues = pre.data
 
     ingested = 0
+    changed = 0
     img_budget = _image_budget(integ)
     for issue in issues:
         content, meta = _linear_content_meta(issue)
@@ -518,10 +534,15 @@ async def pull_linear(db, workspace_id: str, pre: _Prefetch | None = None) -> in
         if imgs:
             meta["imageTexts"] = imgs
         if existing:
-            existing.content = content
+            changes = _classify_change(existing.content, content)
             existing.meta = meta
             existing.occurred_at = _parse_ts(issue.get("updatedAt")) or existing.occurred_at
-            await _reembed_if_images_changed(existing, content, imgs, prev_imgs)
+            if not changes:
+                continue
+            changed += 1
+            existing.title = f"{issue['identifier']} · {issue['title']}"[:300]
+            existing.content = content
+            await _refresh_embedding(existing, content, changes, imgs, prev_imgs)
             await _write_chunks(db, existing)  # rebuild chunks if the discussion grew long
             # Enrich the ownership graph on every refresh (backfills existing issues).
             from .model import link_work_entities
@@ -572,11 +593,12 @@ async def pull_linear(db, workspace_id: str, pre: _Prefetch | None = None) -> in
     await _note_sync_health(db, integ, None)
     _advance_cursor(integ, full=since is None, at=pre.fetched_at)
     await db.commit()
+    if stats is not None:
+        stats["changed"] = stats.get("changed", 0) + changed
+    if match_commitments and (ingested or changed):
+        from .model import match_open_commitments
 
-    # A new issue may fulfill an earlier untracked commitment — re-match once.
-    from .model import match_open_commitments
-
-    await match_open_commitments(db, workspace_id)
+        await match_open_commitments(db, workspace_id)
     return ingested
 
 
@@ -664,7 +686,9 @@ async def _plan_github(db, workspace_id: str) -> _Prefetch:
     return _Prefetch(auth=auth, since=since, integ=integ, fetch=fetch)
 
 
-async def pull_github(db, workspace_id: str, pre: _Prefetch | None = None) -> int:
+async def pull_github(
+    db, workspace_id: str, pre: _Prefetch | None = None, *, match_commitments: bool = True, stats: dict | None = None
+) -> int:
     """Ingest GitHub PRs + issues as artifacts — same idempotent refresh-in-place
     contract as pull_linear. Honest when not connected (0) / on failure."""
     if pre is None:
@@ -679,6 +703,7 @@ async def pull_github(db, workspace_id: str, pre: _Prefetch | None = None) -> in
     items, contributors = pre.data
 
     ingested = 0
+    changed = 0
     img_budget = _image_budget(integ)
     for item in items:
         source = "github-pr" if item.get("isPr") else "github-issue"
@@ -701,10 +726,15 @@ async def pull_github(db, workspace_id: str, pre: _Prefetch | None = None) -> in
         if imgs:
             meta["imageTexts"] = imgs
         if existing:
-            existing.content = content
+            changes = _classify_change(existing.content, content)
             existing.meta = meta
             existing.occurred_at = _parse_ts(item.get("updatedAt")) or existing.occurred_at
-            await _reembed_if_images_changed(existing, content, imgs, prev_imgs)
+            if not changes:
+                continue
+            changed += 1
+            existing.title = f"{item['identifier']} · {item['title']}"[:300]
+            existing.content = content
+            await _refresh_embedding(existing, content, changes, imgs, prev_imgs)
             await _write_chunks(db, existing)  # rebuild chunks if the discussion grew long
             from .model import link_work_entities
 
@@ -790,6 +820,8 @@ async def pull_github(db, workspace_id: str, pre: _Prefetch | None = None) -> in
     await _note_sync_health(db, integ, None)  # a clean pull clears any prior 'reconnect'
     _advance_cursor(integ, full=since is None, at=pre.fetched_at)
     await db.commit()
+    if stats is not None:
+        stats["changed"] = stats.get("changed", 0) + changed
     return ingested
 
 
@@ -821,7 +853,9 @@ async def _plan_gdrive(db, workspace_id: str) -> _Prefetch:
     return _Prefetch(auth=auth, since=since, integ=integ, fetch=fetch)
 
 
-async def pull_gdrive(db, workspace_id: str, pre: _Prefetch | None = None) -> int:
+async def pull_gdrive(
+    db, workspace_id: str, pre: _Prefetch | None = None, *, match_commitments: bool = True, stats: dict | None = None
+) -> int:
     """Ingest recently-modified Google Docs/Sheets/Slides + PDFs (text layer,
     scanned ones via OCR) as document artifacts. Content refreshes in place when
     a file changes (modifiedTime moves). Honest when not connected (0) / on failure."""
@@ -837,6 +871,7 @@ async def pull_gdrive(db, workspace_id: str, pre: _Prefetch | None = None) -> in
     docs, listed = pre.data
 
     ingested = 0
+    changed = 0
     for d in docs:
         content = d["content"]
         if not content:
@@ -861,6 +896,8 @@ async def pull_gdrive(db, workspace_id: str, pre: _Prefetch | None = None) -> in
         )
         if existing:
             if meta.get("modifiedAt") and (existing.meta or {}).get("modifiedAt") != meta["modifiedAt"]:
+                changed += 1
+                existing.title = d["title"][:300]
                 existing.content = content
                 existing.meta = meta
                 existing.occurred_at = _parse_ts(d.get("modifiedAt")) or existing.occurred_at
@@ -914,9 +951,12 @@ async def pull_gdrive(db, workspace_id: str, pre: _Prefetch | None = None) -> in
     await _note_sync_health(db, integ, None)  # a clean pull clears any prior 'reconnect'
     _advance_cursor(integ, full=since is None, at=pre.fetched_at)
     await db.commit()
-    from .model import match_open_commitments
+    if stats is not None:
+        stats["changed"] = stats.get("changed", 0) + changed
+    if match_commitments and (ingested or changed):
+        from .model import match_open_commitments
 
-    await match_open_commitments(db, workspace_id)
+        await match_open_commitments(db, workspace_id)
     return ingested
 
 
@@ -944,7 +984,9 @@ async def _plan_slack(db, workspace_id: str) -> _Prefetch:
     return _Prefetch(auth=auth, since=since, integ=integ, fetch=fetch)
 
 
-async def pull_slack(db, workspace_id: str, pre: _Prefetch | None = None) -> int:
+async def pull_slack(
+    db, workspace_id: str, pre: _Prefetch | None = None, *, match_commitments: bool = True, stats: dict | None = None
+) -> int:
     """Ingest Slack threads (root + replies) from the channels the bot is in as
     artifacts. Threads are conversational, so they extract like calls. Honest when
     not connected (0) and on failure (logs, returns what it managed)."""
@@ -960,6 +1002,7 @@ async def pull_slack(db, workspace_id: str, pre: _Prefetch | None = None) -> int
     team, channel_threads = pre.data
 
     ingested = 0
+    changed = 0
     img_budget = _image_budget(integ)
     for ch, threads in channel_threads:
         for t in threads:
@@ -1033,10 +1076,12 @@ async def pull_slack(db, workspace_id: str, pre: _Prefetch | None = None) -> int
     await _note_sync_health(db, integ, None)  # a clean pull clears any prior 'reconnect'
     _advance_cursor(integ, full=since is None, at=pre.fetched_at)
     await db.commit()
+    if stats is not None:
+        stats["changed"] = stats.get("changed", 0) + changed
+    if match_commitments and (ingested or changed):
+        from .model import match_open_commitments
 
-    from .model import match_open_commitments
-
-    await match_open_commitments(db, workspace_id)
+        await match_open_commitments(db, workspace_id)
     return ingested
 
 
@@ -1081,7 +1126,9 @@ async def _plan_fireflies(db, workspace_id: str) -> _Prefetch:
     return _Prefetch(auth=auth, since=since, integ=integ, fetch=fetch)
 
 
-async def pull_fireflies(db, workspace_id: str, pre: _Prefetch | None = None) -> int:
+async def pull_fireflies(
+    db, workspace_id: str, pre: _Prefetch | None = None, *, match_commitments: bool = True, stats: dict | None = None
+) -> int:
     """Ingest Fireflies meeting transcripts as call artifacts. Transcripts are
     immutable once written, so existing ones are left untouched (no refresh
     churn). Honest when not connected (0) / on failure."""
@@ -1097,6 +1144,7 @@ async def pull_fireflies(db, workspace_id: str, pre: _Prefetch | None = None) ->
     transcripts = pre.data
 
     ingested = 0
+    changed = 0
     for t in transcripts:
         ext = t.get("identifier")
         if not ext:
@@ -1136,10 +1184,12 @@ async def pull_fireflies(db, workspace_id: str, pre: _Prefetch | None = None) ->
     await _note_sync_health(db, integ, None)  # a clean pull clears any prior 'reconnect'
     _advance_cursor(integ, full=since is None, at=pre.fetched_at)
     await db.commit()
-    # A meeting can create a commitment; re-match against Linear.
-    from .model import match_open_commitments
+    if stats is not None:
+        stats["changed"] = stats.get("changed", 0) + changed
+    if match_commitments and (ingested or changed):
+        from .model import match_open_commitments
 
-    await match_open_commitments(db, workspace_id)
+        await match_open_commitments(db, workspace_id)
     return ingested
 
 
@@ -1220,6 +1270,31 @@ async def ingest_circleback_meeting(db, workspace_id: str, payload: dict) -> Art
         occurred_at=_parse_ts(payload.get("createdAt")),
         meta=meta,
     )
+
+
+def start_connector_pull(workspace_id: str, key: str) -> None:
+    """Webhook-driven targeted sync: pull ONE connector incrementally (the cursor
+    fetches only what changed), then run the full reason loop only if something
+    actually changed — bot-noise pings cost a single cheap fetch."""
+    asyncio.get_event_loop().create_task(_connector_pull_bg(workspace_id, key))
+
+
+async def _connector_pull_bg(workspace_id: str, key: str) -> None:
+    from ..database import SessionLocal
+
+    fn = {"linear": pull_linear, "github": pull_github}.get(key)
+    if fn is None:
+        return
+    try:
+        async with SessionLocal() as db:
+            stats: dict = {}
+            ingested = await fn(db, workspace_id, stats=stats)
+        if ingested or stats.get("changed"):
+            from .heartbeat import start_sync
+
+            start_sync(workspace_id, f"{key}-webhook")
+    except Exception:
+        logger.warning("webhook-triggered %s pull failed", key, exc_info=True)
 
 
 def start_circleback_ingest(workspace_id: str, payload: dict) -> None:
@@ -1319,4 +1394,13 @@ async def pull_all(db, workspace_id: str) -> dict[str, int]:
     )
     plans = [await plan(db, workspace_id) for _, plan, _ in connectors]
     resolved = await asyncio.gather(*(_resolve(p) for p in plans))
-    return {key: await run(db, workspace_id, pre) for (key, _, run), pre in zip(connectors, resolved)}
+    stats: dict = {}
+    counts = {
+        key: await run(db, workspace_id, pre, match_commitments=False, stats=stats)
+        for (key, _, run), pre in zip(connectors, resolved)
+    }
+    if sum(counts.values()) or stats.get("changed"):
+        from .model import match_open_commitments
+
+        await match_open_commitments(db, workspace_id)
+    return counts
