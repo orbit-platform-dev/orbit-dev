@@ -11,6 +11,7 @@ import { allNavItems } from "@/lib/nav";
 import { Button } from "@/components/ui/button";
 import { UserAvatar } from "@/components/ui/avatar";
 import { LanguageSwitcher } from "@/components/shared/language-switcher";
+import { CreditsChip } from "@/components/shared/credits";
 import { OrbitWordmark } from "@/components/shared/logo";
 import {
   DropdownMenu,
@@ -97,6 +98,8 @@ export function Topbar() {
           <Sun className="hidden h-4 w-4 dark:block" />
           <Moon className="block h-4 w-4 dark:hidden" />
         </Button>
+
+        <CreditsChip />
 
         {/* User menu — Orbit's own control, backed by the Clerk session. */}
         <DropdownMenu>

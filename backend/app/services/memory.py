@@ -277,7 +277,7 @@ async def decay(db, ws: str) -> int:
 
 
 # --- Phase 4: ranked retrieval ---------------------------------------------
-def _aware(ts: datetime | None) -> datetime:
+def aware(ts: datetime | None) -> datetime:
     """SQLite returns naive datetimes; treat them as UTC so arithmetic is safe."""
     if ts is None:
         return _now()
@@ -285,7 +285,7 @@ def _aware(ts: datetime | None) -> datetime:
 
 
 def _recency(m: Memory) -> float:
-    days = (_now() - _aware(m.last_verified_at or m.created_at)).days
+    days = (_now() - aware(m.last_verified_at or m.created_at)).days
     return max(0.0, 1.0 - days / 180.0)  # 1.0 now → 0 at ~6 months
 
 

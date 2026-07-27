@@ -16,6 +16,7 @@ _CATEGORIES = {
     "bug": ("Bug", "Bug"),
     "feature": ("Feature", "Feature request"),
     "other": ("Feedback", "Other"),
+    "credits": ("Credits", "Credit request"),
 }
 
 

@@ -10,6 +10,7 @@ import type {
   ChatConversationSummary,
   ChatDraft,
   Correction,
+  Credits,
   Entity,
   EntityDetail,
   Feed,
@@ -219,9 +220,13 @@ export const getChatConversation = (id: string) =>
 export const deleteChatConversation = (id: string) =>
   send<void>(`/chat/conversations/${id}`, "DELETE");
 
+// --- Credits (beta chat allowance, per person) ------------------------------
+export const getCredits = () => live<Credits>("/credits");
+export const requestCredits = (who: { email?: string; name?: string } = {}) =>
+  send<{ requested: boolean; channel?: string; url?: string }>("/credits/request", "POST", who);
+
 // --- Feed (Reason, Recommend, Approve, Learn) ------------------------------
 export const getFeed = () => live<Feed>("/feed");
-// Kicks off an immediate read + reason; progress streams via GET /heartbeat.
 export const scanFeed = () => send<HeartbeatStatus>("/feed/scan", "POST");
 export const approveFinding = (id: string) => send<Finding>(`/findings/${id}/approve`, "POST");
 export const editFinding = (id: string, body: { title?: string; description?: string }) =>

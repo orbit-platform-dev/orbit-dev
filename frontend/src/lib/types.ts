@@ -1,9 +1,3 @@
-// ============================================================================
-// Orbit domain model (MVP)
-// The single source of truth shared by the API layer and the UI. Mirrors the
-// backend's camelCase response shapes.
-// ============================================================================
-
 export type ID = string;
 
 // ---------------------------------------------------------------------------
@@ -164,6 +158,14 @@ export interface HeartbeatStatus {
   lastBriefAt: string | null;
   ticks: number;
   sync?: SyncProgress | null;
+}
+
+export interface Credits {
+  balance: number;
+  granted: number;
+  used: number;
+  exhausted: boolean;
+  requestedAt?: string | null;
 }
 
 export interface ChatCitation {

@@ -24,8 +24,9 @@ import * as api from "@/lib/api";
 import { OrbitMark } from "@/components/shared/logo";
 import type { ChatCitation, ChatDraft, ChatMessage } from "@/lib/types";
 import { rankFinding, sourceKey } from "@/lib/sources";
-import { useFeed } from "@/lib/hooks";
+import { qk, useCredits, useFeed } from "@/lib/hooks";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
+import { OutOfCreditsNotice } from "@/components/shared/credits";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -532,6 +533,8 @@ export default function ChatPage() {
     queryFn: api.listChatConversations,
   });
   const { data: feed } = useFeed();
+  const { data: credits } = useCredits();
+  const outOfCredits = !!credits?.exhausted;
 
   // Live suggestions: what Orbit's radar flagged right now beats canned prompts.
   const suggestions: { title: string; hint: string; ask?: string }[] = React.useMemo(() => {
@@ -590,6 +593,7 @@ export default function ChatPage() {
       setStreaming(false);
       setActiveId(final.conversationId);
       qc.invalidateQueries({ queryKey: ["chat", "conversations"] });
+      qc.invalidateQueries({ queryKey: qk.credits });
     },
     [qc],
   );
@@ -639,6 +643,10 @@ export default function ChatPage() {
   const send = (text: string) => {
     const q = text.trim();
     if (!q || streaming) return;
+    if (outOfCredits) {
+      toast.error("You're out of chat credits. Request more to keep asking Orbit.");
+      return;
+    }
     setInput("");
     if (inputRef.current) inputRef.current.style.height = "auto";
     setMessages((m) => [
@@ -690,6 +698,8 @@ export default function ChatPage() {
           resetStream();
           finishLast({ content: msg, grounded: false });
           setStreaming(false);
+          // The server is the authority on the balance (another tab may have spent it).
+          qc.invalidateQueries({ queryKey: qk.credits });
         },
       },
       ctrl.signal,
@@ -880,12 +890,16 @@ export default function ChatPage() {
 
         {/* Composer */}
         <div className="mx-auto w-full max-w-[44rem] pb-2 pt-3">
+          {outOfCredits ? <OutOfCreditsNotice /> : null}
           <form
             onSubmit={(e) => {
               e.preventDefault();
               send(input);
             }}
-            className="relative rounded-2xl border border-border bg-card shadow-lg shadow-black/5 transition-all duration-300 focus-within:border-primary/50 focus-within:shadow-[0_0_40px_-12px] focus-within:shadow-primary/40"
+            className={cn(
+              "relative rounded-2xl border border-border bg-card shadow-lg shadow-black/5 transition-all duration-300 focus-within:border-primary/50 focus-within:shadow-[0_0_40px_-12px] focus-within:shadow-primary/40",
+              outOfCredits && "opacity-60 shadow-none focus-within:border-border",
+            )}
           >
             <textarea
               ref={inputRef}
@@ -900,10 +914,15 @@ export default function ChatPage() {
                   send(input);
                 }
               }}
-              placeholder="Ask about customers, risks, ownership, what's shipping…"
+              placeholder={
+                outOfCredits
+                  ? "Out of credits. Request more to keep asking."
+                  : "Ask about customers, risks, ownership, what's shipping…"
+              }
               rows={1}
               autoFocus
-              className="max-h-[200px] w-full resize-none bg-transparent px-4 py-3.5 pr-14 text-[15px] leading-6 outline-none placeholder:text-muted-foreground"
+              disabled={outOfCredits}
+              className="max-h-[200px] w-full resize-none bg-transparent px-4 py-3.5 pr-14 text-[15px] leading-6 outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
             />
             <div className="absolute bottom-2.5 right-2.5">
               {streaming ? (
@@ -921,7 +940,7 @@ export default function ChatPage() {
                 <Button
                   type="submit"
                   size="icon-sm"
-                  disabled={!input.trim()}
+                  disabled={!input.trim() || outOfCredits}
                   aria-label="Send"
                   className="rounded-lg"
                 >
