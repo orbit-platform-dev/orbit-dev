@@ -135,6 +135,8 @@ export interface Integration {
   stats?: unknown[] | null;
   connectable?: boolean;
   oauthAvailable?: boolean;
+  liveEvents?: boolean;
+  canEnableLive?: boolean;
 }
 export interface MemoryCounts {
   artifacts: number;

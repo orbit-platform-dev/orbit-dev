@@ -243,8 +243,10 @@ export const disconnectIntegration = (key: string) =>
   send<Integration>(`/integrations/${key}/disconnect`, "POST");
 // Mint an authenticated, workspace-bound authorize URL, then redirect the browser
 // to it. The workspace is derived server-side from the signed-in user.
-export const getOAuthUrl = (key: string) =>
-  send<{ url: string }>(`/integrations/${key}/oauth/url`, "POST");
+// `admin` requests the wider scope that lets Orbit register the provider's
+// webhook (live updates). Only offer it to users the provider reports as admins.
+export const getOAuthUrl = (key: string, admin = false) =>
+  send<{ url: string }>(`/integrations/${key}/oauth/url${admin ? "?admin=true" : ""}`, "POST");
 // Mint (once) this workspace's inbound webhook URL for a connector — used by
 // push-based connectors like Circleback, which deliver meetings to this URL.
 export const getWebhookUrl = (key: string) =>
