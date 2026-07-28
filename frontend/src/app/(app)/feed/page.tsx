@@ -9,9 +9,12 @@ import {
   ArrowUpRight,
   CheckCircle2,
   GraduationCap,
+  Handshake,
   Lightbulb,
+  Moon,
   Radar,
   RefreshCw,
+  ShieldCheck,
   Sparkles,
   TrendingUp,
   type LucideIcon,
@@ -36,7 +39,7 @@ import { timeAgo, cn } from "@/lib/utils";
 import { findingSources, rankFinding, SEVERITY, sourceKey } from "@/lib/sources";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
 import { SyncBanner, SyncTheater } from "@/components/shared/sync-theater";
-import type { Finding, Brief, Correction } from "@/lib/types";
+import type { Finding, Brief, Briefing, Correction } from "@/lib/types";
 
 const KIND: Record<string, { label: string; icon: LucideIcon; chip: string }> = {
   gap: { label: "Gap", icon: AlertTriangle, chip: "text-warning bg-warning/10 border-warning/20" },
@@ -347,6 +350,151 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
   );
 }
 
+const MOVED_ICON: Record<string, { icon: LucideIcon; tone: string }> = {
+  finding: { icon: Radar, tone: "text-primary" },
+  shipped: { icon: CheckCircle2, tone: "text-success" },
+  promise: { icon: Handshake, tone: "text-info" },
+};
+
+// "While you were away" — the delta since the last visit. Renders nothing when
+// nothing moved: an empty ritual teaches people to stop reading.
+function AwayStrip({
+  briefing,
+  scanning,
+  onOpenFinding,
+}: {
+  briefing: Briefing;
+  scanning: boolean;
+  onOpenFinding: (id: string) => void;
+}) {
+  // Counts arrive per artifact source (github-pr, gdrive-doc, …). The total counts
+  // every update; logos dedupe to one per connector and skip unmapped sources.
+  const readCount = Object.values(briefing.watched).reduce((n, c) => n + c, 0);
+  const connectors = Array.from(
+    new Set(
+      Object.keys(briefing.watched)
+        .map(sourceKey)
+        .filter((k): k is NonNullable<ReturnType<typeof sourceKey>> => !!k),
+    ),
+  );
+  const nothingNeeded = briefing.moved.length === 0;
+  if (nothingNeeded && readCount === 0) return null;
+  return (
+    <Card className="mb-6 animate-in fade-in-0 slide-in-from-bottom-2 p-5 duration-500">
+      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <Moon className="h-3.5 w-3.5" /> While you were away
+        {briefing.since ? (
+          <span className="font-normal normal-case tracking-normal text-muted-foreground/70">
+            · since your last visit, {timeAgo(briefing.since)}
+          </span>
+        ) : null}
+      </div>
+      {!nothingNeeded && (
+        <p className="mt-1 text-xs text-muted-foreground/80">
+          Orbit kept watching your tools: promises that shipped, new promises made, and new findings
+          — each with its proof.
+        </p>
+      )}
+      {briefing.moved.length > 0 && (
+        <ul className="mt-3 space-y-1">
+          {briefing.moved.map((m, i) => {
+            const meta = MOVED_ICON[m.kind] ?? MOVED_ICON.finding;
+            const Icon = meta.icon;
+            const inner = (
+              <>
+                <Icon className={cn("h-4 w-4 shrink-0", meta.tone)} />
+                <span className="min-w-0 flex-1 truncate text-sm text-foreground/85">
+                  {m.label}
+                </span>
+                {(m.findingId || m.url) && (
+                  <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+                )}
+              </>
+            );
+            const row = "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left";
+            if (m.findingId)
+              return (
+                <li key={i}>
+                  <button
+                    className={cn(row, "hover:bg-accent/60")}
+                    onClick={() => onOpenFinding(m.findingId!)}
+                  >
+                    {inner}
+                  </button>
+                </li>
+              );
+            if (m.url)
+              return (
+                <li key={i}>
+                  <a
+                    className={cn(row, "hover:bg-accent/60")}
+                    href={m.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {inner}
+                  </a>
+                </li>
+              );
+            return (
+              <li key={i} className={row}>
+                {inner}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {readCount > 0 && (
+        <div
+          className={cn(
+            "mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-2 text-xs text-muted-foreground",
+            !nothingNeeded && "border-t border-border/60 pt-3",
+          )}
+        >
+          <span>
+            Orbit read {readCount} update{readCount === 1 ? "" : "s"}
+            {connectors.length > 0 && " across"}
+          </span>
+          {connectors.map((k) => (
+            <IntegrationLogo key={k} k={k} className="h-4 w-4 rounded-[4px] border-0" />
+          ))}
+          {nothingNeeded &&
+            (scanning ? (
+              <span>— still reasoning over them…</span>
+            ) : (
+              <span className="text-success">— checked every one, no new findings</span>
+            ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// The confident all-clear: an earned "nothing needs you", never a shrug.
+function AllClearHero({ onScan, scanning }: { onScan: () => void; scanning: boolean }) {
+  return (
+    <Card className="mb-6 animate-in fade-in-0 slide-in-from-bottom-2 p-8 text-center duration-500">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success/10">
+        <ShieldCheck className="h-6 w-6 text-success" />
+      </div>
+      <h2 className="mt-4 text-[19px] font-semibold tracking-[-0.02em]">Nothing needs you today</h2>
+      <p className="mx-auto mt-1.5 max-w-md text-sm leading-relaxed text-muted-foreground">
+        Every promise Orbit is tracking is covered by work in flight. It keeps watching your tools
+        and will surface anything that slips.
+      </p>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="mt-4 text-muted-foreground"
+        onClick={onScan}
+        disabled={scanning}
+      >
+        <RefreshCw className={cn("h-3.5 w-3.5", scanning && "animate-spin")} /> Re-check now
+      </Button>
+    </Card>
+  );
+}
+
 function describeCorrection(c: Correction): string {
   if (c.field === "dismiss") return `Dismissed "${c.before}"${c.after ? ` (${c.after})` : ""}`;
   return `Refined a recommendation: "${c.before}" → "${c.after}"`;
@@ -486,6 +634,15 @@ export default function FeedPage() {
   const hasData =
     (data?.findings.length ?? 0) > 0 || !!(data?.brief && (data.brief.detail || data.brief.title));
 
+  // A sync that finishes after the page loaded has produced new artifacts and
+  // findings this render can't know about — refetch so the briefing and strip
+  // appear without a manual reload.
+  const wasSyncing = useRef(false);
+  useEffect(() => {
+    if (wasSyncing.current && !sync?.active) qc.invalidateQueries({ queryKey: qk.feed });
+    wasSyncing.current = !!sync?.active;
+  }, [sync?.active, qc]);
+
   // On first load with an empty feed, scan once so the page is never dead.
   useEffect(() => {
     if (!isLoading && data && !data.brief && data.findings.length === 0 && !scannedOnce.current) {
@@ -498,13 +655,20 @@ export default function FeedPage() {
   const liveSelected =
     selected && data ? (data.findings.find((f) => f.id === selected.id) ?? selected) : selected;
   const findings = data?.findings ?? [];
+  const briefing = data?.briefing ?? null;
 
-  // Rank by importance (kind) + evidence + recency; the top problems get the
-  // analyst treatment, the rest stay compact. No flat lists.
+  // "Needs you" comes stakes-ranked from the server (due dates, named customers,
+  // kind). Older backends without a briefing fall back to the local ranking.
   const ranked = [...findings].sort((a, b) => rankFinding(b) - rankFinding(a));
-  const attention = ranked.filter((f) => f.kind !== "win" && f.status === "open").slice(0, 3);
+  const attention = briefing
+    ? briefing.needsYou
+    : ranked.filter((f) => f.kind !== "win" && f.status === "open").slice(0, 3);
   const attentionIds = new Set(attention.map((f) => f.id));
   const rest = ranked.filter((f) => !attentionIds.has(f.id));
+  const openFinding = (id: string) => {
+    const f = findings.find((x) => x.id === id);
+    if (f) setSelected(f);
+  };
 
   return (
     <div>
@@ -521,32 +685,29 @@ export default function FeedPage() {
               openFindings={findings.filter((f) => f.status === "open").length}
             />
           ) : null}
+          {briefing && (
+            <AwayStrip briefing={briefing} scanning={scanning} onOpenFinding={openFinding} />
+          )}
+          {findings.length === 0 && !scanning ? (
+            <AllClearHero onScan={() => scan.mutate()} scanning={scan.isPending} />
+          ) : null}
           {findings.length > 0 && data?.brief && (data.brief.detail || data.brief.title) ? (
             <BriefCard brief={data.brief} findings={findings} />
           ) : null}
           {findings.length === 0 ? (
-            <EmptyState
-              icon={Sparkles}
-              title={scanning ? "Orbit is looking right now" : "Nothing needs attention"}
-              description={
-                scanning
-                  ? "Reading your tools and comparing promises against what's actually being built — findings will appear here on their own."
-                  : "Orbit continuously compares what you promised and decided against what's actually being built. New findings appear here on their own."
-              }
-              action={
-                scanning ? undefined : (
-                  <Button variant="outline" onClick={() => scan.mutate()}>
-                    <RefreshCw className="h-4 w-4" /> Scan now
-                  </Button>
-                )
-              }
-            />
+            scanning ? (
+              <EmptyState
+                icon={Sparkles}
+                title="Orbit is looking right now"
+                description="Reading your tools and comparing promises against what's actually being built — findings will appear here on their own."
+              />
+            ) : null
           ) : (
             <>
               {attention.length > 0 && (
                 <div className="mb-8">
                   <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Needs attention
+                    Needs you
                   </div>
                   <div className="flex flex-col gap-3">
                     {attention.map((f, i) => (

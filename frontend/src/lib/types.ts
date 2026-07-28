@@ -96,9 +96,29 @@ export interface Brief {
   createdAt: string;
 }
 
+// One line of "while you were away": a new finding, a shipped promise, or a
+// promise someone just made. findingId opens the drawer; url deep-links out.
+export interface DeltaItem {
+  kind: "finding" | "shipped" | "promise";
+  label: string;
+  findingId?: string | null;
+  url?: string | null;
+}
+
+// The login moment: what needs YOU (stakes-ranked, capped), what moved since
+// your last visit, what Orbit read while you were away. allClear means it.
+export interface Briefing {
+  needsYou: Finding[];
+  allClear: boolean;
+  since: string | null;
+  moved: DeltaItem[];
+  watched: Record<string, number>;
+}
+
 export interface Feed {
   brief: Brief | null;
   findings: Finding[];
+  briefing?: Briefing | null;
 }
 
 // One captured human correction (edit or dismissal) that shapes future output (Learn).

@@ -24,3 +24,4 @@ pypdf>=5.0            # text-layer PDF extraction (Drive; scanned PDFs skipped â
 python-docx>=1.1     # Drive .docx text extraction
 openpyxl>=3.1        # Drive .xlsx cell extraction
 python-pptx>=1.0     # Drive .pptx slide-text extraction
+ddgs

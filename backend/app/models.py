@@ -270,6 +270,19 @@ class UserCredit(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class UserVisit(Base):
+    """One person's Feed visit window, powering the login briefing's 'while you
+    were away' delta. `seen_at` is the last fetch; `anchor_at` is where the delta
+    window starts — it only advances when a NEW session begins (last fetch older
+    than the session gap), so refreshing the page never erases the delta."""
+
+    __tablename__ = "user_visits"
+    workspace_id: Mapped[str] = mapped_column(String, primary_key=True, default="ws_default")
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    anchor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Memory(Base):
     """A distilled company FACT with confidence + lifecycle (Phase 3). Facts are
     derived from artifacts (their extraction + structured meta), deduplicated by

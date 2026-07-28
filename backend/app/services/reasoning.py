@@ -1,15 +1,3 @@
-"""Reasoning — the Reason + Recommend half of the loop.
-
-Deterministic detectors run over the company model (entities + links + artifacts)
-and produce evidence-linked findings, deduped by entity/condition rather than by
-title. The only generative call is the Reasoner brief. Findings that carry an
-`action` are recommendations: a prepared Linear write a human can approve.
-
-Kinds: gap (a commitment with no tracked work, carries an action) | drift
-(in-progress work tied to no request) | trend (repeated demand) | win (a
-commitment delivered) | brief (the Reasoner narrative).
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -22,7 +10,7 @@ from sqlalchemy import select
 from ..config import settings
 from ..models import Artifact, Entity, Insight, Link
 from .learning import render_corrections
-from .model import text_match
+from .model import WORK_SOURCES, text_match
 
 logger = logging.getLogger("orbit.reasoning")
 
@@ -77,7 +65,6 @@ async def detect_findings(db, ws: str) -> int:
     commitments = [e for e in ents if e.kind == "commitment"]
     features = [e for e in ents if e.kind == "feature"]
 
-    # link indexes
     fulfilling_artifact: dict[str, str] = {}  # commitment_id -> artifact_id (Linear issue)
     source_artifact: dict[str, str] = {}  # commitment_id -> artifact_id (the call)
     requested_customers: dict[str, set[str]] = {}  # feature_id -> {customer_id}
@@ -90,10 +77,10 @@ async def detect_findings(db, ws: str) -> int:
             requested_customers.setdefault(lk.from_id, set()).add(lk.to_id)
 
     linear_arts = [a for a in arts if a.source == "linear-issue"]
+    work_arts = [a for a in arts if a.source in WORK_SOURCES]
     feature_names = [f.name for f in features]
     desired: list[dict] = []
 
-    # 1) Untracked commitments -> gap (+ prepared Linear action)
     for c in commitments:
         if c.state != "open":
             continue
@@ -116,16 +103,17 @@ async def detect_findings(db, ws: str) -> int:
             }
         )
 
-    # 2) Delivered -> win (outcome watcher: advance state when the issue completed)
     for c in commitments:
         if c.state not in ("tracked", "delivered"):
             continue
-        ident = (c.meta or {}).get("linear", {}).get("identifier")
+        ref = (c.meta or {}).get("work") or (c.meta or {}).get("linear") or {}
+        ident = ref.get("identifier")
         done = next(
             (
                 a
-                for a in linear_arts
-                if (a.meta or {}).get("stateType") == "completed" and (a.meta or {}).get("identifier") == ident
+                for a in work_arts
+                if (a.meta or {}).get("stateType") == "completed"
+                and ((a.meta or {}).get("identifier") or a.external_ref) == ident
             ),
             None,
         )
@@ -146,7 +134,6 @@ async def detect_findings(db, ws: str) -> int:
             }
         )
 
-    # 3) Repeated demand -> trend
     for f in features:
         custs = requested_customers.get(f.id, set())
         if len(custs) >= 2:
@@ -186,7 +173,6 @@ async def detect_findings(db, ws: str) -> int:
             }
         )
 
-    # 5) Stale open PRs -> risk signal (code sitting unmerged is delivery risk)
     now = _now()
     stale_prs = []
     for a in arts:
@@ -246,14 +232,12 @@ async def detect_findings(db, ws: str) -> int:
             }
         )
 
-    # 7) INFERENCE: a tracked customer commitment whose issue is blocked or
-    #    stalled ⇒ the promise itself is at risk (the founder-level chain).
     blocked_idents = {(b.subject or "").lower() for b in blockers}
     stall_cutoff = _now() - timedelta(days=14)
     for c in commitments:
         if c.state != "tracked":
             continue
-        ident = ((c.meta or {}).get("linear") or {}).get("identifier") or ""
+        ident = ((c.meta or {}).get("work") or (c.meta or {}).get("linear") or {}).get("identifier") or ""
         art = ident_art.get(ident.lower())
         if not art or (art.meta or {}).get("stateType") in ("completed", "canceled"):
             continue
@@ -410,7 +394,6 @@ async def _upsert(db, ws: str, desired: list[dict], corrections: str = "") -> No
     await db.commit()
 
 
-# --- The Reasoner: a company brief over the model ---------------------------
 def _fallback_brief(open_findings: list[Insight]) -> dict:
     by_kind: dict[str, int] = {}
     for f in open_findings:
@@ -434,7 +417,11 @@ def _fallback_brief(open_findings: list[Insight]) -> dict:
 
 async def generate_brief(db, ws: str) -> Insight:
     """Reasoner: a short, evidence-grounded narrative over the current findings.
-    Uses the LLM when available, a deterministic template otherwise."""
+    Uses the LLM when available, a deterministic template otherwise.
+
+    Change-gated: the brief narrates the open findings, so if that set hasn't
+    changed since the last brief (and it isn't stale), regenerating is a pure
+    waste of an LLM call — every webhook sync lands here."""
     open_findings = (
         (
             await db.execute(
@@ -446,6 +433,29 @@ async def generate_brief(db, ws: str) -> Insight:
         .scalars()
         .all()
     )
+
+    fingerprint = hashlib.sha1("|".join(sorted(f.id for f in open_findings if f.kind != "brief")).encode()).hexdigest()[
+        :16
+    ]
+    existing = (
+        (
+            await db.execute(
+                select(Insight).where(
+                    Insight.workspace_id == ws, Insight.origin == "model", Insight.dedupe_key == "brief"
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if existing and (existing.evidence or {}).get("fingerprint") == fingerprint:
+        age = _now() - (
+            existing.created_at.replace(tzinfo=timezone.utc)
+            if existing.created_at.tzinfo is None
+            else existing.created_at
+        )
+        if age < timedelta(days=settings.brief_max_age_days):
+            return existing
 
     data = _fallback_brief(open_findings)
     if settings.ai_enabled:
@@ -461,17 +471,7 @@ async def generate_brief(db, ws: str) -> Insight:
         except Exception:
             logger.warning("reasoner brief failed; using fallback", exc_info=True)
 
-    brief = (
-        (
-            await db.execute(
-                select(Insight).where(
-                    Insight.workspace_id == ws, Insight.origin == "model", Insight.dedupe_key == "brief"
-                )
-            )
-        )
-        .scalars()
-        .first()
-    )
+    brief = existing
     if not brief:
         brief = Insight(
             id=f"in_{uuid.uuid4().hex[:10]}",
@@ -486,7 +486,9 @@ async def generate_brief(db, ws: str) -> Insight:
     brief.status = "open"  # a regenerated brief is current again (undo any prior resolve)
     brief.title = data.get("headline", "")[:200]
     brief.detail = data.get("summary", "")
-    brief.evidence = {k: data.get(k, []) for k in ("risks", "highlights", "recommendations")}
+    brief.evidence = {k: data.get(k, []) for k in ("risks", "highlights", "recommendations")} | {
+        "fingerprint": fingerprint
+    }
     brief.created_at = _now()
     await db.commit()
     return brief
