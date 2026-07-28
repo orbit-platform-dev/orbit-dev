@@ -66,12 +66,16 @@ class ChatDeps:
     touched: bool = False
 
 
+_CJK = "\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af"
+_TOKEN_RE = re.compile(rf"[{_CJK}]|(?:(?![{_CJK}])[^\W_]){{2,}}")
+
+
 def _toks(s: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]{2,}", (s or "").lower()))
+    return set(_TOKEN_RE.findall((s or "").lower()))
 
 
 def _name_tokens(v: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]{3,}", (v or "").split("@")[0].lower()))
+    return set(_TOKEN_RE.findall((v or "").split("@")[0].lower()))
 
 
 def _record(deps: ChatDeps, artifact: Artifact, score: float) -> None:
