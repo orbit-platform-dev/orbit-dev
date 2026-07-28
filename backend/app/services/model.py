@@ -416,7 +416,8 @@ async def ensure_link(
 
 
 async def _link_commitment_issue(db, ws: str, commitment: Entity, iss: Artifact, *, via: str) -> None:
-    """Record a commitment as fulfilled by a Linear issue (deterministic or vector)."""
+    """Record a commitment as fulfilled by a work item (deterministic or vector).
+    Writes meta under "work"; "linear" is kept as a legacy alias older rows read."""
     await ensure_link(
         db,
         ws,
@@ -428,48 +429,48 @@ async def _link_commitment_issue(db, ws: str, commitment: Entity, iss: Artifact,
         source_artifact_id=iss.id,
         meta={"identifier": iss.external_ref, "url": iss.url, "via": via},
     )
+    ref = {"identifier": iss.external_ref, "url": iss.url, "source": iss.source}
     commitment.state = "tracked"
-    commitment.meta = {**(commitment.meta or {}), "linear": {"identifier": iss.external_ref, "url": iss.url}}
+    commitment.meta = {**(commitment.meta or {}), "work": ref, "linear": ref}
     commitment.updated_at = _now()
 
 
-async def match_commitment_to_linear(db, ws: str, commitment: Entity) -> bool:
-    """Link a commitment to the Linear issue that fulfills it, if one exists.
-    Deterministic text match first (fast); a native vector pass then catches
-    semantic matches text misses. Sets state='tracked'; otherwise leaves it
-    untracked. READ-ONLY w.r.t. embeddings — issues are embedded at ingest, so
-    the query vector is the only thing computed here and it is never persisted."""
+async def match_commitment_to_work(db, ws: str, commitment: Entity) -> bool:
+    """Link a commitment to the work item that fulfills it — Linear issue,
+    GitHub PR or GitHub issue (WORK_SOURCES). Deterministic text match first
+    (fast); a native vector pass then catches semantic matches text misses.
+    Sets state='tracked'; otherwise leaves it untracked. READ-ONLY w.r.t.
+    embeddings — work items are embedded at ingest, so the query vector is the
+    only thing computed here and it is never persisted."""
     issues = (
-        (await db.execute(select(Artifact).where(Artifact.workspace_id == ws, Artifact.source == "linear-issue")))
+        (await db.execute(select(Artifact).where(Artifact.workspace_id == ws, Artifact.source.in_(WORK_SOURCES))))
         .scalars()
         .all()
     )
+
+    issues = [i for i in issues if (i.meta or {}).get("stateType") not in ("completed", "canceled")]
     if not issues:
         return False
 
-    # 1) Fast, deterministic pass on titles.
     for iss in issues:
         if text_match(commitment.name, iss.title):
             await _link_commitment_issue(db, ws, commitment, iss, via="text")
             return True
 
-    # 2) Vector assist — catches "SSO" ↔ "single sign-on" that tokens miss.
-    #    search_artifacts already applies the similarity floor; take the nearest
-    #    non-canceled issue.
     if embeddings.available():
         query = await embeddings.embed_query(commitment.name)
         if query:
-            results = await search_artifacts(db, ws, query, k=5, sources=["linear-issue"])
+            results = await search_artifacts(db, ws, query, k=5, sources=list(WORK_SOURCES))
             for iss, _score in results:
-                if (iss.meta or {}).get("stateType") == "canceled":
-                    continue  # a canceled ticket doesn't fulfill anything
+                if (iss.meta or {}).get("stateType") in ("completed", "canceled"):
+                    continue
                 await _link_commitment_issue(db, ws, commitment, iss, via="vector")
                 return True
     return False
 
 
 async def match_open_commitments(db, ws: str) -> int:
-    """Re-match every still-open commitment against Linear (used after a pull).
+    """Re-match every still-open commitment against tracked work (used after a pull).
     Returns how many became tracked."""
     open_commitments = (
         (
@@ -482,7 +483,7 @@ async def match_open_commitments(db, ws: str) -> int:
     )
     matched = 0
     for c in open_commitments:
-        if await match_commitment_to_linear(db, ws, c):
+        if await match_commitment_to_work(db, ws, c):
             matched += 1
     if matched:
         await db.commit()
@@ -706,7 +707,7 @@ async def build_from_artifact(db, ws: str, artifact: Artifact) -> None:
         if cust:
             await ensure_link(db, ws, "entity", ce.id, "entity", cust.id, "made_to")
         if ce.state == "open":
-            await match_commitment_to_linear(db, ws, ce)
+            await match_commitment_to_work(db, ws, ce)
 
     for req in ex.get("requests", []) or []:
         if not req:

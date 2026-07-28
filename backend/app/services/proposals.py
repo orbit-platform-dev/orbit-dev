@@ -1,17 +1,3 @@
-"""The Act phase — autonomous drafting for human review.
-
-When the heartbeat writes a high-priority finding (gap/drift), it dispatches the
-Product Agent here to draft a concrete, reviewable proposal — a PRD update, a
-Slack alert, or an action plan — and attaches it to the finding for a human to
-approve. This NEVER executes anything: it drafts and stores only, honoring
-Orbit's human-in-the-loop invariant and the heartbeat's read/insight-write-only
-charter. Degrades to a deterministic template with AI off.
-
-The draft lives on the finding at ``Insight.evidence["proposal"]`` (no migration
-needed; the detector's re-scan upsert never overwrites evidence) and is surfaced
-to the UI via ``FindingOut.proposal``.
-"""
-
 from __future__ import annotations
 
 import logging

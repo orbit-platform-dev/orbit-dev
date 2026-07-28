@@ -56,7 +56,7 @@ async def request_credits(
     if not credits.can_request():
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Credit requests aren't set up yet.")
     body = body or RequestIn()
-    email = ((body.email or user.get("email") or user.get("sub") or "unknown")).strip()
+    email = (body.email or user.get("email") or user.get("sub") or "unknown").strip()
     name = (body.name or user.get("name") or "").strip()
     try:
         issue = await credits.request_more(db, ws, _uid(user), email=email, name=name)

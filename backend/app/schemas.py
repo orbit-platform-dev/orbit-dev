@@ -94,9 +94,29 @@ class BriefOut(CamelModel):
     created_at: datetime
 
 
+class DeltaItemOut(CamelModel):
+    kind: str  # finding | shipped | promise
+    label: str
+    finding_id: str | None = None
+    url: str | None = None
+
+
+class BriefingOut(CamelModel):
+    """The login moment: what needs YOU (stakes-ranked, hard-capped), what moved
+    since your last visit, and what Orbit read while you were away. `all_clear`
+    means it — say 'nothing needs you today' with confidence."""
+
+    needs_you: list[FindingOut] = []
+    all_clear: bool = False
+    since: datetime | None = None
+    moved: list[DeltaItemOut] = []
+    watched: dict[str, int] = {}
+
+
 class FeedOut(CamelModel):
     brief: BriefOut | None = None
     findings: list[FindingOut] = []
+    briefing: BriefingOut | None = None
 
 
 class CorrectionOut(CamelModel):

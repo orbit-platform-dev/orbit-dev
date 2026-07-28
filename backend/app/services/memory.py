@@ -1,15 +1,3 @@
-"""Memory intelligence layer (Phase 3 + 4) — a self-updating company memory on
-top of the existing substrate.
-
-A `Memory` is a distilled FACT ("Kodama is working on ENG-432") with confidence,
-importance, lifecycle and provenance. Facts are DERIVED from artifacts (their
-Extractor output + structured Linear meta — no extra LLM call), DEDUPLICATED by
-embedding, and UPDATED as reality changes: a contradicting fact in the same slot
-supersedes the old one (kept as history, never deleted). Retrieval ranks facts by
-semantic similarity + confidence + recency + importance. Reuses embeddings, the
-Extractor's output, the heartbeat and the chat context engine.
-"""
-
 from __future__ import annotations
 
 import logging

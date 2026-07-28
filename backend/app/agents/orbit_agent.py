@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from pydantic_ai import Agent, RunContext, UsageLimits
+from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
@@ -25,7 +26,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from sqlalchemy import func, select
 
 from ..config import settings
-from ..models import Artifact, Entity, Integration
+from ..models import Artifact, Entity, Insight, Integration
 from ..services import embeddings, github, ingestion, learning, linear, memory
 from ..services.analytics import memory_stats as _memory_stats
 from ..services.model import WORK_SOURCES, search_artifacts, traverse
@@ -104,30 +105,50 @@ async def _expand_sources(db, ws: str, requested: list[str]) -> list[str]:
     return sorted(out)
 
 
+async def _keyword_hits(db, ws: str, query: str, src: list[str] | None, k: int) -> list[Artifact]:
+    q = _toks(query) - _STOPWORDS
+    if not q:
+        return []
+    stmt = select(Artifact).where(Artifact.workspace_id == ws)
+    if src:
+        stmt = stmt.where(Artifact.source.in_(src))
+    rows = (await db.execute(stmt.order_by(Artifact.occurred_at.desc()).limit(_MAX_SCAN))).scalars().all()
+    scored = [(a, len(q & _toks(f"{a.title} {a.content or ''}"))) for a in rows]
+    scored = [(a, n) for a, n in scored if n]
+    scored.sort(key=lambda t: (t[1], t[0].occurred_at), reverse=True)
+    return [a for a, _ in scored[:k]]
+
+
 async def _search(
     db, ws: str, query: str, *, sources: list[str] | None = None, k: int = _TOP_K
 ) -> list[tuple[Artifact, float]]:
+    """Hybrid retrieval: semantic (meaning) and keyword (exact terms/identifiers,
+    every language) fused by reciprocal rank — so a match neither method alone
+    would surface (a paraphrase, or an exact CJK/ID hit) still ranks."""
     connected = await connected_keys(db, ws)
     src = (await _expand_sources(db, ws, sources)) if sources else None
     src = src or None
-    out: list[tuple[Artifact, float]] = []
+
+    vector: list[Artifact] = []
     if embeddings.available():
         qv = await embeddings.embed_query(query)
         if qv is not None:
-            out = await search_artifacts(db, ws, qv, k=k, sources=src, max_distance=1.0 - 0.78)
-    if not out:
-        stmt = select(Artifact).where(Artifact.workspace_id == ws)
-        if src:
-            stmt = stmt.where(Artifact.source.in_(src))
-        rows = (await db.execute(stmt.order_by(Artifact.occurred_at.desc()).limit(_MAX_SCAN))).scalars().all()
-        q = _toks(query) - _STOPWORDS
+            hits = await search_artifacts(db, ws, qv, k=k, sources=src, max_distance=1.0 - 0.78)
+            vector = [a for a, _ in hits]
+    keyword = await _keyword_hits(db, ws, query, src, k)
 
-        def _kw(a: Artifact) -> float:
-            return len(q & _toks(f"{a.title} {a.content or ''}")) / max(len(q), 1)
+    scores: dict[str, float] = {}
+    arts: dict[str, Artifact] = {}
+    for rank, a in enumerate(vector):
+        scores[a.id] = scores.get(a.id, 0.0) + 1.0 / (60 + rank)
+        arts[a.id] = a
+    for rank, a in enumerate(keyword):
+        scores[a.id] = scores.get(a.id, 0.0) + 1.0 / (60 + rank)
+        arts[a.id] = a
 
-        ranked = sorted(rows, key=lambda a: (_kw(a), a.occurred_at), reverse=True)
-        out = [(a, _kw(a)) for a in ranked[:k]]
-    return [(a, s) for a, s in out if source_visible(a.source, connected)]
+    ranked = sorted(scores.items(), key=lambda t: t[1], reverse=True)
+    out = [(arts[i], s) for i, s in ranked if source_visible(arts[i].source, connected)]
+    return out[:k]
 
 
 async def _person_issues(db, ws: str, name: str, cap: int = 15) -> list[Artifact]:
@@ -550,7 +571,9 @@ def _thinking_settings():
 
 def _build() -> Agent[ChatDeps]:
     reserve = max(0, (settings.agent_request_limit or 5) - 1)
-    toolset = FunctionToolset(_TOOLS).filtered(lambda ctx, _tool: ctx.usage.requests < reserve)
+    toolset = FunctionToolset([*_TOOLS, duckduckgo_search_tool()]).filtered(
+        lambda ctx, _tool: ctx.usage.requests < reserve
+    )
     return Agent(
         build_model(settings.resolved_agent_model),
         deps_type=ChatDeps,
@@ -585,25 +608,58 @@ def _format_history(messages: list[dict] | None) -> str:
 
 
 async def _recall(deps: ChatDeps, question: str) -> str:
+    """Standing context injected into every chat turn: recalled memories plus the
+    Feed's own open findings — chat and Feed read the same brain, so 'what's at
+    risk?' in chat must answer with what the Feed shows."""
+    out = ""
+    try:
+        rows = (
+            (
+                await deps.db.execute(
+                    select(Insight)
+                    .where(
+                        Insight.workspace_id == deps.ws,
+                        Insight.origin == "model",
+                        Insight.kind.notin_(("brief", "note")),
+                        Insight.status.in_(("open", "approved")),
+                    )
+                    .order_by(Insight.created_at.desc())
+                    .limit(10)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if rows:
+            flines = "\n".join(
+                f"- [{i.kind}] {i.title}" + (f" — {' '.join((i.detail or '').split())[:160]}" if i.detail else "")
+                for i in rows
+            )
+            out += (
+                "CURRENT OPEN FINDINGS (Orbit's own analysis, shown on the user's Feed — cite these "
+                "directly for questions about risks, gaps, drift or what needs attention):\n" + flines + "\n\n"
+            )
+    except Exception:
+        logger.warning("findings recall failed", exc_info=True)
     if not embeddings.available():
-        return ""
+        return out
     try:
         qv = await embeddings.embed_query(question)
         if qv is None:
-            return ""
+            return out
         mems = await memory.search(deps.db, deps.ws, qv, k=6, statuses=("active",))
     except Exception:
         logger.warning("recall failed", exc_info=True)
-        return ""
+        return out
     if not mems:
-        return ""
+        return out
     lines = "\n".join(
         f"- {m.fact} [confidence {int(round(m.confidence * 100))}%"
         + (f" · {m.source_ref}" if m.source_ref else "")
         + "]"
         for m, _ in mems
     )
-    return (
+    return out + (
         "WHAT ORBIT HAS LEARNED SO FAR (prior facts and your own notes — signals to weigh by "
         "confidence and verify against current evidence, not absolute truth):\n" + lines + "\n\n"
     )
@@ -639,11 +695,30 @@ def _phase_for(part: ToolCallPart) -> dict | None:
     return None
 
 
-def _evidence_block(deps: ChatDeps, cap: int = 8, snippet: int = 500) -> str:
+def _passage(content: str, query: str, width: int = 700) -> str:
+    """The slice of content where the query's terms actually appear — so evidence
+    shows WHY an item matched (a promise buried in a comment), not just its
+    opening. Falls back to the opening when no term is found."""
+    text = content or ""
+    if len(text) <= width:
+        return text
+    terms = _toks(query) - _STOPWORDS
+    low = text.lower()
+    hit = next((low.find(t) for t in terms if low.find(t) >= 0), -1)
+    if hit < 0:
+        return text[:width]
+    start = max(0, hit - width // 3)
+    return ("…" if start else "") + text[start : start + width]
+
+
+def _evidence_block(deps: ChatDeps, question: str, cap: int = 8) -> str:
     items = sorted(deps.ledger.values(), key=lambda t: t[1], reverse=True)[:cap]
     if not items:
         return ""
-    lines = [f"[id: {a.id}] ({a.source}) {a.title}\n{(a.content or '')[:snippet]}" for a, _ in items]
+    lines = [
+        f"[id: {a.id}] ({a.source}) {a.title}\n{getattr(a, '_hit_snippet', None) or _passage(a.content or '', question)}"
+        for a, _ in items
+    ]
     return "EVIDENCE (already retrieved from company memory):\n" + "\n\n".join(lines)
 
 
@@ -657,7 +732,7 @@ async def _finalize(deps: ChatDeps, question: str) -> str:
         system_prompt=SYSTEM_PROMPTS["orbit-agent"],
         retries=1,
     )
-    evidence = _evidence_block(deps)
+    evidence = _evidence_block(deps, question)
     prompt = (
         f"{evidence}\n\n" if evidence else ""
     ) + f"QUESTION: {question}\n\nAnswer now from the evidence above. If it is insufficient, say so honestly."

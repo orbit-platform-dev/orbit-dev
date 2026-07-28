@@ -205,7 +205,7 @@ async def _fetch_comments(auth: str, repo: str, number: str) -> list[dict[str, A
 
 
 _FILES_PER_PR = 10
-_PATCH_CHARS = 1200 
+_PATCH_CHARS = 1200
 _COMMITS_PER_PR = 20
 
 
