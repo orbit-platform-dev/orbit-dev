@@ -175,23 +175,27 @@ export function ToolsToCore({ className }: { className?: string }) {
   );
 }
 
-// Three orbits at different radii/speeds, alternating direction for depth.
-// Guide insets must match each radius: container is 208px (half 104).
 const ORBIT_RINGS = [
-  { radius: 100, duration: 36, reverse: false, size: "h-7 w-7", guide: "inset-1 border-border/70" },
+  {
+    radius: 100,
+    duration: 36,
+    reverse: false,
+    size: "h-7 w-7",
+    guide: "inset-1 border-primary/30",
+  },
   {
     radius: 72,
     duration: 26,
     reverse: false,
     size: "h-6 w-6",
-    guide: "inset-8 border-dashed border-border/60",
+    guide: "inset-8 border-dashed border-primary/25",
   },
   {
     radius: 46,
     duration: 18,
     reverse: false,
     size: "h-5 w-5",
-    guide: "inset-[58px] border-dotted border-border/50",
+    guide: "inset-[58px] border-dotted border-primary/25",
   },
 ];
 
@@ -205,6 +209,9 @@ export function OrbitingTools({ className }: { className?: string }) {
       {ORBIT_RINGS.map((ring, ri) => (
         <div key={ri} className={cn("absolute rounded-full border", ring.guide)} />
       ))}
+
+      <div className="absolute inset-1 animate-spin rounded-full border border-transparent border-t-primary/70 [animation-duration:14s]" />
+      <div className="absolute inset-8 animate-spin rounded-full border border-transparent border-b-info/50 [animation-direction:reverse] [animation-duration:22s]" />
       <div className="absolute inset-16 rounded-full bg-primary/10 blur-md" />
       <div className="absolute inset-0 flex items-center justify-center">
         <OrbitMark className="h-12 w-12 drop-shadow-[0_0_16px_hsl(var(--primary)/0.5)]" />
