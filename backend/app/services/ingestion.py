@@ -195,9 +195,8 @@ def _advance_cursor(integ, *, full: bool, at: datetime | None = None) -> None:
     if not integ:
         return
     now = datetime.now(timezone.utc)
+    integ.last_sync = now
     st = dict(integ.sync_state or {})
-    # Anchor the cursor to when the data was FETCHED, not when the (possibly
-    # long) apply finished — anything updated in between must be seen next tick.
     st["cursor"] = ((at or now) - timedelta(minutes=_CURSOR_OVERLAP_MINUTES)).isoformat()
     # The first advance (initial backfill) sets the reconcile baseline too, so the
     # very next tick stays incremental instead of immediately running a full pull.

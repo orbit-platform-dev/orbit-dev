@@ -85,9 +85,18 @@ async def exchange_code(code: str) -> dict[str, Any]:
 
 
 async def get_auth(db, workspace_id: str = "ws_default") -> str | None:
+    """Both connect paths land here: an OAuth access token and a pasted internal
+    integration token are the same kind of bearer to Notion's API."""
     integ = await db.get(Integration, {"workspace_id": workspace_id, "key": "notion"})
-    token = ((integ.credentials or {}) if integ else {}).get("accessToken")
+    cred = (integ.credentials or {}) if integ else {}
+    token = cred.get("accessToken") or cred.get("apiKey")
     return f"Bearer {token}" if token else None
+
+
+async def validate_key(api_key: str) -> str:
+    """Internal-integration token path, which skips the public-app form OAuth needs.
+    Validated live: the workspace name proves the token works and where it points."""
+    return await account_name(f"Bearer {api_key.strip()}")
 
 
 def _headers(auth: str) -> dict[str, str]:

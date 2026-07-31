@@ -41,7 +41,13 @@ PROVIDERS = {
     "confluence": confluence,
 }
 
-KEY_PROVIDERS = {"linear": linear, "github": github, "fireflies": fireflies, "circleback": circleback}
+KEY_PROVIDERS = {
+    "linear": linear,
+    "github": github,
+    "notion": notion,
+    "fireflies": fireflies,
+    "circleback": circleback,
+}
 
 WEBHOOK_FIRST = {"circleback"}
 

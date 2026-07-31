@@ -22,7 +22,7 @@ import { IntegrationLogo } from "@/components/shared/integration-logo";
 import { McpCard } from "@/components/integrations/mcp-card";
 import { useIntegrations, qk } from "@/lib/hooks";
 import * as api from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, timeAgo } from "@/lib/utils";
 import type { Integration } from "@/lib/types";
 
 // Plainer, no-jargon category labels for the filter chips.
@@ -45,6 +45,11 @@ const KEY_CONNECT: Record<string, { name: string; placeholder: string; help: str
     name: "GitHub",
     placeholder: "ghp_… or github_pat_…",
     help: "GitHub → Settings → Developer settings → Personal access tokens (repo read access). Validated live; stored server-side, never exposed.",
+  },
+  notion: {
+    name: "Notion",
+    placeholder: "ntn_… or secret_…",
+    help: "Notion → Settings → Connections → Develop or manage integrations → New internal integration (read content), then share the pages you want Orbit to read with it. Validated live; stored server-side, never exposed.",
   },
   fireflies: {
     name: "Fireflies",
@@ -246,6 +251,27 @@ function SyncMode({ integration }: { integration: Integration }) {
   return <span className="text-[11px] text-muted-foreground">Scheduled sync</span>;
 }
 
+const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/** Freshness, whatever the strategy: webhook, schedule or manual pull all date it.
+ *  Amber past a day so a connector that quietly stopped can't look healthy. */
+function LastSync({ at }: { at?: string | null }) {
+  if (!at) {
+    return <span className="text-[11px] text-muted-foreground">waiting for first sync</span>;
+  }
+  const stale = Date.now() - new Date(at).getTime() > STALE_AFTER_MS;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn("text-[11px]", stale ? "text-warning" : "text-muted-foreground")}>
+          synced {timeAgo(at)}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{new Date(at).toLocaleString()}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function IntegrationRow({
   integration,
   onConnect,
@@ -298,6 +324,10 @@ function IntegrationRow({
       {connected ? (
         <div className="flex shrink-0 items-center gap-2">
           <SyncMode integration={integration} />
+          <span className="hidden text-muted-foreground/40 sm:inline">·</span>
+          <span className="hidden sm:inline">
+            <LastSync at={integration.lastSync} />
+          </span>
           <Button
             variant="outline"
             size="sm"
