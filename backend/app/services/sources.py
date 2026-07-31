@@ -19,6 +19,7 @@ _SOURCE_CONNECTOR = {
     "fireflies": "fireflies",
     "circleback": "circleback",
     "notion": "notion",
+    "confluence": "confluence",
     "zoom": "zoom",
     "meet": "google-meet",
 }

@@ -13,7 +13,18 @@ from ..deps import Depends, get_current_user, get_db
 from ..models import Integration, Workspace
 from ..schemas import IntegrationOut
 from ..seed import ensure_integrations
-from ..services import circleback, fireflies, github, google_drive, heartbeat, ingestion, linear, slack
+from ..services import (
+    circleback,
+    confluence,
+    fireflies,
+    github,
+    google_drive,
+    heartbeat,
+    ingestion,
+    linear,
+    notion,
+    slack,
+)
 from ..services.workspace import get_workspace_id
 
 logger = logging.getLogger("orbit.integrations")
@@ -21,7 +32,14 @@ logger = logging.getLogger("orbit.integrations")
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 
-PROVIDERS = {"linear": linear, "slack": slack, "github": github, "google-drive": google_drive}
+PROVIDERS = {
+    "linear": linear,
+    "slack": slack,
+    "github": github,
+    "google-drive": google_drive,
+    "notion": notion,
+    "confluence": confluence,
+}
 
 KEY_PROVIDERS = {"linear": linear, "github": github, "fireflies": fireflies, "circleback": circleback}
 
@@ -42,8 +60,11 @@ async def list_integrations(db=Depends(get_db), ws: str = Depends(get_workspace_
     rows = (await db.execute(select(Integration).where(Integration.workspace_id == ws))).scalars().all()
     for r in rows:
         prov = PROVIDERS.get(r.key)
-        r.connectable = (prov is not None or r.key in KEY_PROVIDERS) and r.key not in COMING_SOON
         r.oauth_available = bool(prov and prov.oauth_configured() and r.key not in COMING_SOON)
+        # Connectable means a path actually works right now: a pasted key, or OAuth
+        # whose credentials are configured. An OAuth connector without credentials
+        # stays on the roadmap side instead of offering a button that 503s.
+        r.connectable = (r.key in KEY_PROVIDERS or r.oauth_available) and r.key not in COMING_SOON
         cred = r.credentials or {}
         r.live_events = bool(cred.get("linearWebhookId") or cred.get("githubHooksWired"))
         # Linear only grants webhook rights with the admin scope, which must be

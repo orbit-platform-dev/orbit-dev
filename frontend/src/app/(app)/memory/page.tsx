@@ -51,6 +51,8 @@ const SOURCE_LABEL: Record<string, string> = {
   "gdrive-slides": "Google Slides",
   "gdrive-pdf": "PDF (Drive)",
   "gdrive-image": "Image (Drive)",
+  "notion-page": "Notion page",
+  "confluence-page": "Confluence page",
   fireflies: "Fireflies",
   circleback: "Circleback",
 };

@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     github_client_secret: str | None = None
     github_redirect_uri: str = "http://localhost:8000/integrations/github/oauth/callback"
 
+    notion_client_id: str | None = None
+    notion_client_secret: str | None = None
+    notion_redirect_uri: str = "http://localhost:8000/integrations/notion/oauth/callback"
+
+    confluence_client_id: str | None = None
+    confluence_client_secret: str | None = None
+    confluence_redirect_uri: str = "http://localhost:8000/integrations/confluence/oauth/callback"
+
     # Outbound alerts to US (beta credit requests). Without a key Orbit files the
     # request in our Linear instead — never a silent drop.
     resend_api_key: str | None = None
