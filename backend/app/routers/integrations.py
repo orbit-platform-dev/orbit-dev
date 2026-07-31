@@ -1,6 +1,5 @@
 import logging
 import secrets
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
@@ -109,7 +108,6 @@ async def connect_with_key(
     integ.credentials = {**(integ.credentials or {}), "apiKey": token}
     integ.status = "connected"
     integ.account = account
-    integ.last_sync = datetime.now(timezone.utc)
     await ingestion.set_source_stale(db, ws, key, False)
     await db.commit()
     await db.refresh(integ)
@@ -214,7 +212,6 @@ async def oauth_callback(
     integ.credentials = {**cred, "type": "oauth"}
     integ.status = "connected"
     integ.account = account
-    integ.last_sync = datetime.now(timezone.utc)
     await ingestion.set_source_stale(db, ws, key, False)
     await db.commit()
     await _auto_register_webhook(db, integ, key)

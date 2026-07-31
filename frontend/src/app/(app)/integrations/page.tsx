@@ -20,7 +20,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IntegrationLogo } from "@/components/shared/integration-logo";
 import { McpCard } from "@/components/integrations/mcp-card";
-import { useIntegrations, qk } from "@/lib/hooks";
+import { useHeartbeat, useIntegrations, qk } from "@/lib/hooks";
 import * as api from "@/lib/api";
 import { cn, timeAgo } from "@/lib/utils";
 import type { Integration } from "@/lib/types";
@@ -210,9 +210,9 @@ function CirclebackConnectDialog({
   );
 }
 
-/** Connected is not the same as live. A registered webhook means seconds; without
- *  one the connector is still synced on schedule — say which, never imply live. */
-function SyncMode({ integration }: { integration: Integration }) {
+const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+function SyncStatus({ integration, autoSync }: { integration: Integration; autoSync?: boolean }) {
   const enable = useMutation({
     mutationFn: async () => {
       const { url } = await api.getOAuthUrl(integration.key, true);
@@ -221,63 +221,74 @@ function SyncMode({ integration }: { integration: Integration }) {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Could not start the upgrade"),
   });
 
-  if (integration.liveEvents) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-success">
-        <span className="h-1.5 w-1.5 rounded-full bg-success" /> Live
-      </span>
-    );
-  }
-  if (integration.canEnableLive) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[11px]"
-            onClick={() => enable.mutate()}
-            disabled={enable.isPending}
-          >
-            <Zap className="h-3.5 w-3.5" /> Enable live
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          Syncing on schedule. Live updates need a workspace admin to re-authorize.
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
-  return <span className="text-[11px] text-muted-foreground">Scheduled sync</span>;
-}
+  const at = integration.lastSync;
+  const live = !!integration.liveEvents;
+  const overdue =
+    !!at && !live && autoSync !== false && Date.now() - new Date(at).getTime() > STALE_AFTER_MS;
 
-const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
-
-/** Freshness, whatever the strategy: webhook, schedule or manual pull all date it.
- *  Amber past a day so a connector that quietly stopped can't look healthy. */
-function LastSync({ at }: { at?: string | null }) {
-  if (!at) {
-    return <span className="text-[11px] text-muted-foreground">waiting for first sync</span>;
-  }
-  const stale = Date.now() - new Date(at).getTime() > STALE_AFTER_MS;
-  return (
+  const mode = live ? (
+    <span className="inline-flex items-center gap-1.5 font-medium text-success">
+      <span className="h-1.5 w-1.5 rounded-full bg-success" /> Live
+    </span>
+  ) : autoSync === false ? (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className={cn("text-[11px]", stale ? "text-warning" : "text-muted-foreground")}>
-          synced {timeAgo(at)}
-        </span>
+        <span className="text-warning">Manual only</span>
       </TooltipTrigger>
-      <TooltipContent>{new Date(at).toLocaleString()}</TooltipContent>
+      <TooltipContent>Auto-sync is off, so this refreshes only when you pull.</TooltipContent>
     </Tooltip>
+  ) : (
+    <span>Scheduled</span>
+  );
+
+  return (
+    <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+      {mode}
+      <span className="text-muted-foreground/40">·</span>
+      {at ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className={overdue ? "text-warning" : undefined}>
+              {live ? "updated" : "synced"} {timeAgo(at)}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{new Date(at).toLocaleString()}</TooltipContent>
+        </Tooltip>
+      ) : (
+        <span>waiting for first sync</span>
+      )}
+      {integration.canEnableLive && (
+        <>
+          <span className="text-muted-foreground/40">·</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => enable.mutate()}
+                disabled={enable.isPending}
+                className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+              >
+                <Zap className="h-3 w-3" /> Enable live
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Live updates need a workspace admin to re-authorize; polling covers it meanwhile.
+            </TooltipContent>
+          </Tooltip>
+        </>
+      )}
+    </div>
   );
 }
 
 function IntegrationRow({
   integration,
   onConnect,
+  autoSync,
 }: {
   integration: Integration;
   onConnect: (key: string) => void;
+  autoSync?: boolean;
 }) {
   const qc = useQueryClient();
   const connected = integration.status === "connected" || integration.status === "syncing";
@@ -320,23 +331,20 @@ function IntegrationRow({
           </span>
         </div>
         <p className="mt-0.5 truncate text-sm text-muted-foreground">{integration.description}</p>
+        {/* Status belongs with the connector's identity, not wedged against the
+            action: at two cards per row there is no width to share. */}
+        {connected && <SyncStatus integration={integration} autoSync={autoSync} />}
       </div>
       {connected ? (
-        <div className="flex shrink-0 items-center gap-2">
-          <SyncMode integration={integration} />
-          <span className="hidden text-muted-foreground/40 sm:inline">·</span>
-          <span className="hidden sm:inline">
-            <LastSync at={integration.lastSync} />
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => disconnect.mutate()}
-            disabled={disconnect.isPending}
-          >
-            Disconnect
-          </Button>
-        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          onClick={() => disconnect.mutate()}
+          disabled={disconnect.isPending}
+        >
+          Disconnect
+        </Button>
       ) : needsReconnect && canConnectNow ? (
         <div className="flex shrink-0 items-center gap-2">
           <span className="text-[11px] font-medium text-warning">Session expired</span>
@@ -392,6 +400,9 @@ function ConnectorSection({
 export default function IntegrationsPage() {
   const qc = useQueryClient();
   const { data, isLoading } = useIntegrations();
+  // Whether the schedule is actually running decides what "scheduled" can promise.
+  const { data: heartbeat } = useHeartbeat();
+  const autoSync = heartbeat?.enabled ?? undefined;
   const [category, setCategory] = useState("All");
   const [query, setQuery] = useState("");
   const [dialogProvider, setDialogProvider] = useState<string | null>(null);
@@ -505,7 +516,12 @@ export default function IntegrationsPage() {
           {available.length > 0 && (
             <ConnectorSection label="Available now" count={available.length}>
               {available.map((i) => (
-                <IntegrationRow key={i.key} integration={i} onConnect={onConnect} />
+                <IntegrationRow
+                  key={i.key}
+                  integration={i}
+                  onConnect={onConnect}
+                  autoSync={autoSync}
+                />
               ))}
             </ConnectorSection>
           )}
@@ -517,7 +533,12 @@ export default function IntegrationsPage() {
               className={available.length > 0 ? "mt-9" : undefined}
             >
               {upcoming.map((i) => (
-                <IntegrationRow key={i.key} integration={i} onConnect={onConnect} />
+                <IntegrationRow
+                  key={i.key}
+                  integration={i}
+                  onConnect={onConnect}
+                  autoSync={autoSync}
+                />
               ))}
             </ConnectorSection>
           )}
