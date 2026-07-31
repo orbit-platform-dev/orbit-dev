@@ -43,6 +43,10 @@ const LOCAL_LOGOS: Partial<Record<IntegrationKey, string>> = {
   circleback: "/connectors/circleback.png",
 };
 
+const GRADIENTS: Partial<Record<IntegrationKey, [string, string]>> = {
+  confluence: ["#2684FF", "#0052CC"],
+};
+
 // Monogram fallback (short label + brand color) for marks not in simple-icons.
 export const integrationBrand: Record<IntegrationKey, { short: string; color: string }> = {
   "google-meet": { short: "GM", color: "#00897b" },
@@ -163,20 +167,28 @@ export function IntegrationLogo({
   }
   const icon = ICONS[k];
   if (icon) {
-    if (bare) {
-      return (
-        <svg
-          role="img"
-          aria-label={k}
-          viewBox="0 0 24 24"
-          className={cn("h-10 w-10 shrink-0", className)}
-          fill={`#${icon.hex}`}
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <path d={icon.path} />
-        </svg>
-      );
-    }
+    const grad = GRADIENTS[k];
+    const mark = (cls: string) => (
+      <svg
+        role="img"
+        aria-label={k}
+        viewBox="0 0 24 24"
+        className={cls}
+        fill={grad ? `url(#brand-${k})` : `#${icon.hex}`}
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        {grad && (
+          <defs>
+            <linearGradient id={`brand-${k}`} x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor={grad[0]} />
+              <stop offset="100%" stopColor={grad[1]} />
+            </linearGradient>
+          </defs>
+        )}
+        <path d={icon.path} />
+      </svg>
+    );
+    if (bare) return mark(cn("h-10 w-10 shrink-0", className));
     // Real logos sit on a white tile so dark marks (GitHub, Notion) stay crisp on the dark UI.
     return (
       <div
@@ -185,15 +197,7 @@ export function IntegrationLogo({
           className,
         )}
       >
-        <svg
-          role="img"
-          viewBox="0 0 24 24"
-          className="h-1/2 w-1/2"
-          fill={`#${icon.hex}`}
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <path d={icon.path} />
-        </svg>
+        {mark("h-1/2 w-1/2")}
       </div>
     );
   }
