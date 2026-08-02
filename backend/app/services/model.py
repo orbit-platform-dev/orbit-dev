@@ -10,6 +10,7 @@ and reuses the customer normalizer.
 from __future__ import annotations
 
 import difflib
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,8 @@ from sqlalchemy import cast, delete, or_, select
 from ..database import engine
 from ..models import EMBEDDING_DIM, Artifact, ArtifactChunk, Entity, Link
 from . import embeddings
+
+logger = logging.getLogger("orbit.model")
 
 TICKET_REF = re.compile(r"\b([A-Z][A-Z0-9]{1,9}-\d{1,6})\b")
 
@@ -435,20 +438,28 @@ async def _link_commitment_issue(db, ws: str, commitment: Entity, iss: Artifact,
     commitment.updated_at = _now()
 
 
-async def match_commitment_to_work(db, ws: str, commitment: Entity) -> bool:
+async def _load_work_items(db, ws: str) -> list[Artifact]:
+    """Open work items for commitment matching, loaded once per batch."""
+    rows = (
+        (await db.execute(select(Artifact).where(Artifact.workspace_id == ws, Artifact.source.in_(WORK_SOURCES))))
+        .scalars()
+        .all()
+    )
+    return [i for i in rows if (i.meta or {}).get("stateType") not in ("completed", "canceled")]
+
+
+async def match_commitment_to_work(db, ws: str, commitment: Entity, issues: list[Artifact] | None = None) -> bool:
     """Link a commitment to the work item that fulfills it — Linear issue,
     GitHub PR or GitHub issue (WORK_SOURCES). Deterministic text match first
     (fast); a native vector pass then catches semantic matches text misses.
     Sets state='tracked'; otherwise leaves it untracked. READ-ONLY w.r.t.
     embeddings — work items are embedded at ingest, so the query vector is the
-    only thing computed here and it is never persisted."""
-    issues = (
-        (await db.execute(select(Artifact).where(Artifact.workspace_id == ws, Artifact.source.in_(WORK_SOURCES))))
-        .scalars()
-        .all()
-    )
-
-    issues = [i for i in issues if (i.meta or {}).get("stateType") not in ("completed", "canceled")]
+    only thing computed here and it is never persisted. `issues` may be passed
+    pre-loaded so a batch matcher reads the work set once, not once per commitment."""
+    if issues is None:
+        issues = await _load_work_items(db, ws)
+    if not issues:
+        return False
     if not issues:
         return False
 
@@ -481,9 +492,12 @@ async def match_open_commitments(db, ws: str) -> int:
         .scalars()
         .all()
     )
+    if not open_commitments:
+        return 0
+    issues = await _load_work_items(db, ws)  # read the work set ONCE, not per commitment
     matched = 0
     for c in open_commitments:
-        if await match_commitment_to_work(db, ws, c):
+        if await match_commitment_to_work(db, ws, c, issues):
             matched += 1
     if matched:
         await db.commit()
@@ -719,7 +733,66 @@ async def build_from_artifact(db, ws: str, artifact: Artifact) -> None:
         for cust in customer_ents.values():
             await ensure_link(db, ws, "entity", fe.id, "entity", cust.id, "requested_by")
 
+    # Decisions become first-class memory (the institutional 'why'). A brand-new
+    # one is checked once against prior decisions for a reversal — best-effort, so
+    # it can never affect the rest of ingestion.
+    for dec in ex.get("decisions", []) or []:
+        if not dec:
+            continue
+        de = await resolve_entity(db, ws, "decision", dec)
+        if not de:
+            continue
+        await ensure_link(db, ws, "artifact", artifact.id, "entity", de.id, "source_of", source_artifact_id=artifact.id)
+        if de.state == "open" and not (de.meta or {}).get("conflictChecked"):
+            await _flag_decision_conflict(db, ws, de)
+
     await db.commit()
+
+
+async def _flag_decision_conflict(db, ws: str, new_decision: Entity) -> None:
+    """Judge a new decision against the topically-nearest prior decision and, if it
+    reverses one, record a `supersedes` marker the detector reads. Fully guarded:
+    any failure leaves ingestion untouched and simply retries on a later sync."""
+    try:
+        others = (
+            (
+                await db.execute(
+                    select(Entity).where(
+                        Entity.workspace_id == ws, Entity.kind == "decision", Entity.id != new_decision.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        q = _tokens(new_decision.name)
+        candidate, best = None, 1
+        for o in others:
+            if o.state != "open":
+                continue
+            overlap = len(q & _tokens(o.name))
+            if overlap > best:
+                candidate, best = o, overlap
+        if candidate is None:
+            return
+
+        from ..agents.definitions import SYSTEM_PROMPTS, build_agent
+        from ..agents.schemas import DecisionConflict
+
+        agent = build_agent(SYSTEM_PROMPTS["decision-judge"], DecisionConflict)
+        prompt = f'EARLIER DECISION: "{candidate.name}"\n\nNEW DECISION: "{new_decision.name}"'
+        verdict = (await agent.run(prompt)).output
+        new_decision.meta = {**(new_decision.meta or {}), "conflictChecked": True}
+        if verdict.contradicts:
+            new_decision.meta = {
+                **new_decision.meta,
+                "supersedes": {"id": candidate.id, "reason": verdict.reason},
+            }
+            await ensure_link(db, ws, "entity", new_decision.id, "entity", candidate.id, "supersedes")
+        new_decision.updated_at = _now()
+        await db.flush()
+    except Exception:
+        logger.warning("decision-conflict check skipped", exc_info=True)
 
 
 async def traverse(

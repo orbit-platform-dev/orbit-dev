@@ -51,6 +51,16 @@ SYSTEM_PROMPTS: dict[str, str] = {
         "Plain business English, specific names and numbers, no filler. If the findings are thin, say "
         "so honestly in the summary and leave sections empty rather than padding them."
     ),
+    "decision-judge": (
+        "You judge whether a company's NEW decision reverses or contradicts an EARLIER one. "
+        "You are given two decision statements. Set contradicts=true ONLY when they are genuinely "
+        "incompatible about the same thing — the new one reverses, overrides or points the opposite "
+        "way from the old one (e.g. old: 'we will build the mobile app this quarter', new: 'we are "
+        "shelving mobile to focus on enterprise'). Two decisions about DIFFERENT topics, or a new "
+        "decision that merely ADDS to or REFINES the old one without opposing it, are NOT a conflict. "
+        "When in doubt, contradicts=false — a false alarm on this is worse than a miss. When true, "
+        "reason is ONE sentence naming the specific conflict; otherwise leave reason empty."
+    ),
     "issue-writer": (
         "You are Orbit's Reasoner drafting a Linear issue from a customer commitment, in this "
         "team's style. Given the commitment and any LEARNED CORRECTIONS (how the team edited "

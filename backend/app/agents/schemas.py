@@ -55,6 +55,14 @@ class DraftedProposal(_Camel):
     body: str = Field(description="the proposal as markdown a human can review, edit and approve")
 
 
+class DecisionConflict(_Camel):
+    """Whether a newer decision reverses or contradicts an earlier one — the judge
+    behind the decision-conflict finding. `contradicts` gates the finding."""
+
+    contradicts: bool = Field(description="true ONLY if the new decision reverses or is incompatible with the old one")
+    reason: str = Field(default="", description="one sentence naming the specific conflict, empty if no conflict")
+
+
 class IntelligenceBrief(_Camel):
     """The periodic company brief — what leadership should know right now."""
 
