@@ -34,7 +34,9 @@ _SITE = "https://api.atlassian.com/ex/confluence"
 
 # Granular scopes for the v2 API; offline_access is what yields a refresh token.
 # These must match the scopes on the Atlassian app or authorization fails.
-_SCOPE = "read:page:confluence read:space:confluence offline_access"
+# Comment/attachment scopes power Discussion + diagram ingestion; tokens granted
+# before they were added simply skip those (best-effort) until reconnect.
+_SCOPE = "read:page:confluence read:space:confluence read:comment:confluence read:attachment:confluence offline_access"
 
 _MAX_PAGES = 30
 _CONTENT_CLIP = 20000
@@ -43,6 +45,8 @@ _BLOCK_BREAKS = re.compile(r"</(?:p|h[1-6]|li|tr|t[dh]|div|blockquote|ac:[^>]+)>
 _LIST_ITEM = re.compile(r"<li[^>]*>", re.I)
 _TAGS = re.compile(r"<[^>]+>")
 _BLANK_LINES = re.compile(r"\n{3,}")
+# Embedded diagrams/screenshots: <ac:image><ri:attachment ri:filename="x.png"/></ac:image>
+_AC_IMAGE = re.compile(r'<ac:image[^>]*>.*?ri:filename="([^"]+)".*?</ac:image>', re.I | re.S)
 
 
 class Session(NamedTuple):
@@ -153,10 +157,16 @@ async def account_name(auth: str) -> str:
     return (await _site(auth)).get("name") or "Confluence"
 
 
-def _storage_text(value: str) -> str:
+def _storage_text(value: str, page_id: str = "", base: str = "") -> str:
     """Confluence storage format (XHTML) → readable text. Block tags become line
-    breaks, list items keep their bullet, everything else is stripped."""
-    text = _BLOCK_BREAKS.sub("\n", value or "")
+    breaks, list items keep their bullet, everything else is stripped. Embedded
+    attachment images become markdown images (download URL on the authed API
+    host) BEFORE tag-stripping, so ingestion's vision pass can read diagrams."""
+    text = value or ""
+    if page_id and base:
+        wiki = base.removesuffix("/api/v2")
+        text = _AC_IMAGE.sub(lambda m: f"\n![{m.group(1)}]({wiki}/download/attachments/{page_id}/{m.group(1)})\n", text)
+    text = _BLOCK_BREAKS.sub("\n", text)
     text = _LIST_ITEM.sub("- ", text)
     text = _TAGS.sub("", text)
     text = html.unescape(text)
@@ -173,6 +183,23 @@ async def _get(session: Session, path: str, params: dict | None = None) -> dict:
     if res.status_code != 200:
         raise RuntimeError(f"Confluence API error {res.status_code}: {res.text[:150]}")
     return res.json()
+
+
+async def _page_comments(session: Session, page_id: str) -> str:
+    """Footer comments as Discussion lines (same shape as Linear issue comments).
+    Best-effort: tokens granted before the comment scope was added get a 403 here
+    and simply skip — never a failed sync."""
+    try:
+        data = await _get(session, f"/pages/{page_id}/footer-comments", {"body-format": "storage", "limit": 25})
+    except Exception:
+        return ""
+    lines = []
+    for c in data.get("results", []):
+        body = ((c.get("body") or {}).get("storage") or {}).get("value") or ""
+        text = _storage_text(body)
+        if text:
+            lines.append(f"- {text[:600]}")
+    return "Discussion:\n" + "\n".join(lines) if lines else ""
 
 
 async def page_exists(session: Session, page_id: str) -> bool:
@@ -216,9 +243,12 @@ async def fetch_documents(
         if known and known.get(page_id) == modified:
             continue
         body = ((page.get("body") or {}).get("storage") or {}).get("value") or ""
-        text = _storage_text(body)
+        text = _storage_text(body, page_id=page_id, base=session.base)
         if not text:
             continue
+        discussion = await _page_comments(session, page_id)
+        if discussion:
+            text = f"{text}\n\n{discussion}"
         webui = ((page.get("_links") or {}).get("webui")) or ""
         out.append(
             {

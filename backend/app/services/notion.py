@@ -123,9 +123,15 @@ def _rich_text(items: list[dict] | None) -> str:
 
 def _block_text(block: dict) -> str:
     """One block's own text, with the markdown shape that makes structure survive
-    into extraction and chat (headings, list bullets, code fences)."""
+    into extraction and chat (headings, list bullets, code fences). Image blocks
+    become markdown images so ingestion's vision pass can read diagrams the same
+    way it does for Drive and Linear/GitHub."""
     btype = block.get("type") or ""
     body = block.get(btype) or {}
+    if btype == "image":
+        url = (body.get("file") or {}).get("url") or (body.get("external") or {}).get("url") or ""
+        caption = _rich_text(body.get("caption"))
+        return f"![{caption or 'image'}]({url})" if url else ""
     text = _rich_text(body.get("rich_text"))
     if not text:
         return ""
@@ -185,6 +191,27 @@ async def _page_text(auth: str, page_id: str, budget: list[int]) -> str:
     return "\n".join(lines).strip()
 
 
+async def _page_comments(auth: str, page_id: str, budget: list[int]) -> str:
+    """The page's open comment threads as Discussion lines (same shape as Linear
+    issue comments), so decisions made in comments reach extraction, embeddings
+    and chat. Best-effort: an integration without the comment capability, or a
+    spent budget, yields an empty string — never a failed sync."""
+    if budget[0] <= 0:
+        return ""
+    budget[0] -= 1
+    try:
+        data = await _request(auth, "GET", f"/comments?block_id={page_id}&page_size=50")
+    except Exception:
+        return ""
+    lines = []
+    for c in data.get("results", []):
+        text = _rich_text(c.get("rich_text"))
+        if text:
+            author = (c.get("created_by") or {}).get("name") or "someone"
+            lines.append(f"- {author}: {text[:600]}")
+    return "Discussion:\n" + "\n".join(lines) if lines else ""
+
+
 async def page_exists(auth: str, page_id: str) -> bool:
     """False ONLY when the page is gone or in the Notion trash — the deletion
     signal for reconcile. Transient errors raise; deletion needs proof."""
@@ -233,6 +260,9 @@ async def fetch_documents(
             continue  # one unreadable page must not sink the sync
         if not text:
             continue
+        discussion = await _page_comments(auth, page["id"], budget)
+        if discussion:
+            text = f"{text}\n\n{discussion}"
         out.append(
             {
                 "id": page["id"],

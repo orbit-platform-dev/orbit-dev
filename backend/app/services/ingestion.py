@@ -939,6 +939,10 @@ async def _pull_documents(
 
     ingested = 0
     changed = 0
+    img_budget = _image_budget(integ)
+    # Confluence auth is a Session (header + tenant base); Notion/Drive are plain
+    # bearer strings. _fold_images only ever needs the header.
+    img_auth = getattr(auth, "auth", auth if isinstance(auth, str) else None)
     for d in docs:
         content = d["content"]
         if not content:
@@ -964,6 +968,10 @@ async def _pull_documents(
         if existing:
             if meta.get("modifiedAt") and (existing.meta or {}).get("modifiedAt") != meta["modifiedAt"]:
                 changed += 1
+                prev_imgs = (existing.meta or {}).get("imageTexts") or {}
+                content, imgs = await _fold_images(content, auth=img_auth, prev=prev_imgs, budget=img_budget)
+                if imgs:
+                    meta["imageTexts"] = imgs
                 existing.title = d["title"][:300]
                 existing.content = content
                 existing.meta = meta
@@ -976,6 +984,9 @@ async def _pull_documents(
                         existing.embedding = vec
                 await _write_chunks(db, existing)
             continue
+        content, imgs = await _fold_images(content, auth=img_auth, prev={}, budget=img_budget)
+        if imgs:
+            meta["imageTexts"] = imgs
         await ingest_artifact(
             db,
             workspace_id,
