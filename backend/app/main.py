@@ -18,6 +18,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     from .database import SessionLocal
     from .services import embeddings
+    from .services.model import heal_normalized_names
     from .services.workspace import ensure_workspace_rows
 
     # Best-effort: these self-heal on the next boot; a busy DB (locks held by a
@@ -26,6 +27,7 @@ async def lifespan(app: FastAPI):
         async with SessionLocal() as db:
             await ensure_workspace_rows(db)
             await embeddings.ensure_vector_space(db)
+            await heal_normalized_names(db)
     except Exception:
         import logging
 
