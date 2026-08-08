@@ -468,24 +468,6 @@ async def _link_commitment_issue(db, ws: str, commitment: Entity, iss: Artifact,
     commitment.updated_at = _now()
 
 
-async def heal_normalized_names(db) -> int:
-    """Recompute entity identity keys after tokenizer changes — CJK names used to
-    normalize to '' or bare digits, so lookups couldn't find them. Runs at startup;
-    a no-op when every key is already current. Never merges rows (a wrong merge is
-    worse than a duplicate) — it only repairs keys so future resolution works."""
-    rows = (await db.execute(select(Entity))).scalars().all()
-    fixed = 0
-    for e in rows:
-        norm = normalize_name(e.name)
-        if norm and norm != e.normalized_name:
-            e.normalized_name = norm
-            fixed += 1
-    if fixed:
-        await db.commit()
-        logger.info("healed %d entity identity keys", fixed)
-    return fixed
-
-
 async def _load_work_items(db, ws: str) -> list[Artifact]:
     """Open work items for commitment matching, loaded once per batch."""
     rows = (
