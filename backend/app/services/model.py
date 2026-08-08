@@ -460,8 +460,6 @@ async def match_commitment_to_work(db, ws: str, commitment: Entity, issues: list
         issues = await _load_work_items(db, ws)
     if not issues:
         return False
-    if not issues:
-        return False
 
     for iss in issues:
         if text_match(commitment.name, iss.title):
