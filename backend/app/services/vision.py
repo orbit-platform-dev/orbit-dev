@@ -20,7 +20,13 @@ _IMAGE_MIMES = {"image/png", "image/jpeg", "image/webp", "image/heic", "image/he
 # Only these hosts may receive a connector's auth token (private uploads live
 # here). Everything else is fetched WITHOUT auth, so a token can never leak to a
 # URL an attacker planted in issue/PR/message content.
-_AUTHED_HOSTS = ("uploads.linear.app", ".slack.com", ".githubusercontent.com", ".googleusercontent.com")
+_AUTHED_HOSTS = (
+    "uploads.linear.app",
+    ".slack.com",
+    ".githubusercontent.com",
+    ".googleusercontent.com",
+    "api.atlassian.com",
+)
 _MAX_REDIRECTS = 3
 
 

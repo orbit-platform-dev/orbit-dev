@@ -182,7 +182,7 @@ async def learned_facts(query: str) -> str:
 async def pull_connector(name: str) -> str:
     """Fetch FRESH data from a connected tool when memory can't answer or the
     user needs current state. `name` is one of linear | github | slack |
-    google-drive. After it succeeds, call search_memory again. A big pull keeps
+    google-drive | notion | confluence. After it succeeds, call search_memory again. A big pull keeps
     syncing in the background — answer from current memory and retry shortly."""
     from .agents import orbit_agent
 

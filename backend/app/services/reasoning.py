@@ -299,6 +299,29 @@ async def detect_findings(db, ws: str) -> int:
             }
         )
 
+    for d in (e for e in ents if e.kind == "decision"):
+        sup = (d.meta or {}).get("supersedes") if d.state == "open" else None
+        if not sup:
+            continue
+        old = by_id.get(sup.get("id"))
+        if not old or old.state != "open":
+            continue
+        srcs = [source_artifact.get(d.id), source_artifact.get(old.id)]
+        desired.append(
+            {
+                "dedupe_key": f"decision-conflict:{d.id}",
+                "kind": "drift",
+                "title": f"New decision may reverse an earlier one: {_clip(d.name, 70)}",
+                "detail": (
+                    f"{sup.get('reason') or 'This decision appears to reverse an earlier one.'} "
+                    f'Earlier decision: "{_clip(old.name, 120)}".'
+                ),
+                "entity_ids": [d.id, old.id],
+                "artifact_ids": [a for a in srcs if a],
+                "action": None,
+            }
+        )
+
     corrections = await render_corrections(db, ws)
     await _upsert(db, ws, desired, corrections)
     open_count = (

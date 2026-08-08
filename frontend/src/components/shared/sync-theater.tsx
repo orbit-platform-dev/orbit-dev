@@ -13,14 +13,26 @@ import type { IntegrationKey, SyncProgress } from "@/lib/types";
 // a sync is running: connected tools flow into the Orbit core, outputs flow
 // out, and a stage tracker mirrors the live sync phase.
 
-const PULLED_TOOLS: IntegrationKey[] = ["linear", "slack", "github", "google-drive", "fireflies"];
-const TOOL_NAME: Record<string, string> = {
-  linear: "Linear",
-  slack: "Slack",
-  github: "GitHub",
-  "google-drive": "Google Drive",
-  fireflies: "Fireflies",
-};
+// Connectors that read INTO memory, which is what these animations depict.
+// Everything else about them (name, logo) comes from the backend catalog, so a
+// new sensor appears here the moment it ships instead of needing a UI edit.
+const PULLED_TOOLS: IntegrationKey[] = [
+  "linear",
+  "slack",
+  "github",
+  "google-drive",
+  "notion",
+  "confluence",
+  "fireflies",
+  "circleback",
+];
+
+function usePulledTools(): { key: IntegrationKey; name: string }[] {
+  const { data } = useIntegrations();
+  return (data ?? [])
+    .filter((i) => i.status === "connected" && PULLED_TOOLS.includes(i.key))
+    .map((i) => ({ key: i.key, name: i.name }));
+}
 
 const STAGES = ["Reading", "Understanding", "Reasoning", "Ready"];
 export const PHASE_STAGE: Record<string, number> = { reading: 0, reasoning: 2, done: 3, error: 0 };
@@ -119,25 +131,37 @@ const PHASE_MESSAGE: Record<string, string> = {
   error: "Sync hit a snag — retrying shortly.",
 };
 
+const STRIP_LOGOS = 5;
+
 export function ToolsToCore({ className }: { className?: string }) {
-  const { data: integrations } = useIntegrations();
-  const tools = (integrations ?? [])
-    .filter((i) => i.status === "connected" && PULLED_TOOLS.includes(i.key))
-    .map((i) => i.key);
+  const tools = usePulledTools();
+  const overflow = tools.length - STRIP_LOGOS;
   return (
     <div className={cn("flex items-center gap-3", className)}>
       <div className="flex items-center gap-2">
-        {tools.slice(0, 5).map((k, i) => (
+        {tools.slice(0, STRIP_LOGOS).map(({ key }, i) => (
           <motion.span
-            key={k}
+            key={key}
             initial={{ opacity: 0, x: -6 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: i * 0.1 }}
             className="inline-flex"
           >
-            <IntegrationLogo k={k} bare className="h-6 w-6 drop-shadow-sm" />
+            <IntegrationLogo k={key} bare className="h-6 w-6 drop-shadow-sm" />
           </motion.span>
         ))}
+        {/* Never drop a connected tool silently — say how many more are feeding in. */}
+        {overflow > 0 && (
+          <span
+            title={tools
+              .slice(STRIP_LOGOS)
+              .map((t) => t.name)
+              .join(", ")}
+            className="inline-flex h-6 items-center rounded-full border border-border bg-card/70 px-1.5 text-[10px] font-medium text-muted-foreground"
+          >
+            +{overflow}
+          </span>
+        )}
       </div>
       <div className="w-14">
         <Lane delay={0} />
@@ -151,38 +175,43 @@ export function ToolsToCore({ className }: { className?: string }) {
   );
 }
 
-// Three orbits at different radii/speeds, alternating direction for depth.
-// Guide insets must match each radius: container is 208px (half 104).
 const ORBIT_RINGS = [
-  { radius: 100, duration: 36, reverse: false, size: "h-7 w-7", guide: "inset-1 border-border/70" },
+  {
+    radius: 100,
+    duration: 36,
+    reverse: false,
+    size: "h-7 w-7",
+    guide: "inset-1 border-primary/30",
+  },
   {
     radius: 72,
     duration: 26,
     reverse: false,
     size: "h-6 w-6",
-    guide: "inset-8 border-dashed border-border/60",
+    guide: "inset-8 border-dashed border-primary/25",
   },
   {
     radius: 46,
     duration: 18,
     reverse: false,
     size: "h-5 w-5",
-    guide: "inset-[58px] border-dotted border-border/50",
+    guide: "inset-[58px] border-dotted border-primary/25",
   },
 ];
 
 export function OrbitingTools({ className }: { className?: string }) {
-  const { data: integrations } = useIntegrations();
-  const tools = (integrations ?? [])
-    .filter((i) => i.status === "connected" && PULLED_TOOLS.includes(i.key))
-    .map((i) => i.key)
-    .slice(0, 6);
+  const tools = usePulledTools()
+    .map((t) => t.key)
+    .slice(0, ORBIT_RINGS.length * 2);
   const byRing = ORBIT_RINGS.map((_, ri) => tools.filter((_, i) => i % ORBIT_RINGS.length === ri));
   return (
     <div className={cn("relative h-52 w-52", className)}>
       {ORBIT_RINGS.map((ring, ri) => (
         <div key={ri} className={cn("absolute rounded-full border", ring.guide)} />
       ))}
+
+      <div className="absolute inset-1 animate-spin rounded-full border border-transparent border-t-primary/70 [animation-duration:14s]" />
+      <div className="absolute inset-8 animate-spin rounded-full border border-transparent border-b-info/50 [animation-direction:reverse] [animation-duration:22s]" />
       <div className="absolute inset-16 rounded-full bg-primary/10 blur-md" />
       <div className="absolute inset-0 flex items-center justify-center">
         <OrbitMark className="h-12 w-12 drop-shadow-[0_0_16px_hsl(var(--primary)/0.5)]" />
@@ -273,10 +302,7 @@ export function SyncBanner({
 }
 
 export function SyncTheater({ sync }: { sync?: SyncProgress | null }) {
-  const { data: integrations } = useIntegrations();
-  const tools = (integrations ?? [])
-    .filter((i) => i.status === "connected" && PULLED_TOOLS.includes(i.key))
-    .map((i) => i.key);
+  const tools = usePulledTools();
   const phase = sync?.phase ?? "reading";
   const stage = PHASE_STAGE[phase] ?? 0;
 
@@ -290,18 +316,16 @@ export function SyncTheater({ sync }: { sync?: SyncProgress | null }) {
       <div className="flex w-full max-w-3xl items-center">
         <div className="flex flex-1 flex-col gap-5">
           {tools.length
-            ? tools.map((k, i) => (
+            ? tools.map(({ key, name }, i) => (
                 <motion.div
-                  key={k}
+                  key={key}
                   className="flex items-center gap-2.5"
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: i * 0.12 }}
                 >
-                  <IntegrationLogo k={k} className="h-9 w-9 rounded-xl" />
-                  <span className="hidden w-24 truncate text-sm font-medium md:block">
-                    {TOOL_NAME[k] ?? k}
-                  </span>
+                  <IntegrationLogo k={key} className="h-9 w-9 rounded-xl" />
+                  <span className="hidden w-24 truncate text-sm font-medium md:block">{name}</span>
                   <Lane delay={i * 0.45} />
                 </motion.div>
               ))

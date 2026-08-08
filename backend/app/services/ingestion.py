@@ -23,7 +23,7 @@ from sqlalchemy import delete, func, select, update
 
 from ..agents.extractor import extract
 from ..models import Artifact, ArtifactChunk, Integration
-from . import embeddings, fireflies, github, google_drive, linear, slack, vision
+from . import confluence, embeddings, fireflies, github, google_drive, linear, notion, slack, vision
 
 logger = logging.getLogger("orbit.ingestion")
 
@@ -107,6 +107,8 @@ SOURCE_BY_INTEGRATION: dict[str, list[str]] = {
     "slack": ["slack-message"],
     "github": ["github-pr", "github-issue"],
     "google-drive": ["gdrive-doc", "gdrive-sheet", "gdrive-slides", "gdrive-pdf", "gdrive-image"],
+    "notion": ["notion-page"],
+    "confluence": ["confluence-page"],
     "fireflies": ["fireflies"],
     "circleback": ["circleback"],
 }
@@ -193,9 +195,8 @@ def _advance_cursor(integ, *, full: bool, at: datetime | None = None) -> None:
     if not integ:
         return
     now = datetime.now(timezone.utc)
+    integ.last_sync = now
     st = dict(integ.sync_state or {})
-    # Anchor the cursor to when the data was FETCHED, not when the (possibly
-    # long) apply finished — anything updated in between must be seen next tick.
     st["cursor"] = ((at or now) - timedelta(minutes=_CURSOR_OVERLAP_MINUTES)).isoformat()
     # The first advance (initial backfill) sets the reconcile baseline too, so the
     # very next tick stays incremental instead of immediately running a full pull.
@@ -878,53 +879,70 @@ async def pull_github(
     return ingested
 
 
-async def _plan_gdrive(db, workspace_id: str) -> _Prefetch:
+# The document connectors: every one exposes the same three calls, so they share
+# one plan/pull below instead of a copy each. (module, existence probe).
+_DOC_CONNECTORS: dict[str, tuple[Any, Any]] = {
+    "google-drive": (google_drive, google_drive.file_exists),
+    "notion": (notion, notion.page_exists),
+    "confluence": (confluence, confluence.page_exists),
+}
+
+
+async def _plan_documents(db, workspace_id: str, key: str) -> _Prefetch:
+    """Auth + sync window + what's already in memory, so unchanged documents are
+    never re-downloaded (or re-OCR'd, or re-parsed). An auth failure here is a dead
+    connection, not a crash: it flags the integration and yields an empty plan."""
+    service, _ = _DOC_CONNECTORS[key]
     try:
-        auth = await google_drive.get_auth(db, workspace_id)
+        auth = await service.get_auth(db, workspace_id)
     except Exception as exc:
-        logger.warning("Google Drive token refresh failed", exc_info=True)
-        await _note_sync_health(
-            db, await db.get(Integration, {"workspace_id": workspace_id, "key": "google-drive"}), exc
-        )
+        logger.warning("%s auth failed", key, exc_info=True)
+        await _note_sync_health(db, await db.get(Integration, {"workspace_id": workspace_id, "key": key}), exc)
         return _Prefetch()
     if not auth:
         return _Prefetch()
-    since, integ = await _sync_plan(db, workspace_id, "google-drive")
-    # What's already in memory, so unchanged files are never re-downloaded/re-OCR'd.
+    since, integ = await _sync_plan(db, workspace_id, key)
     known_rows = (
         await db.execute(
             select(Artifact.external_ref, Artifact.meta).where(
-                Artifact.workspace_id == workspace_id, Artifact.source.in_(SOURCE_BY_INTEGRATION["google-drive"])
+                Artifact.workspace_id == workspace_id, Artifact.source.in_(SOURCE_BY_INTEGRATION[key])
             )
         )
     ).all()
     known = {ref: (m or {}).get("modifiedAt") for ref, m in known_rows if ref}
 
     async def fetch():
-        return await google_drive.fetch_documents(auth, since=since, known=known)
+        return await service.fetch_documents(auth, since=since, known=known)
 
     return _Prefetch(auth=auth, since=since, integ=integ, fetch=fetch)
 
 
-async def pull_gdrive(
-    db, workspace_id: str, pre: _Prefetch | None = None, *, match_commitments: bool = True, stats: dict | None = None
+async def _pull_documents(
+    db, workspace_id: str, key: str, pre: _Prefetch | None, *, match_commitments: bool, stats: dict | None
 ) -> int:
-    """Ingest recently-modified Google Docs/Sheets/Slides + PDFs (text layer,
-    scanned ones via OCR) as document artifacts. Content refreshes in place when
-    a file changes (modifiedTime moves). Honest when not connected (0) / on failure."""
+    """Ingest a document connector's recently-changed items as artifacts.
+
+    Content refreshes IN PLACE when the source changes (its modified time moves),
+    which re-embeds the opening vector and rebuilds the passage chunks — both only
+    on real change, so a quiet sync costs no model calls. Honest when not connected
+    (0) and on failure (flags the connection, returns 0)."""
     if pre is None:
-        pre = await _resolve(await _plan_gdrive(db, workspace_id))
+        pre = await _resolve(await _plan_documents(db, workspace_id, key))
     if not pre.auth:
         return 0
     auth, since, integ = pre.auth, pre.since, pre.integ
     if pre.exc is not None:
-        logger.warning("Google Drive pull failed", exc_info=pre.exc)
+        logger.warning("%s pull failed", key, exc_info=pre.exc)
         await _note_sync_health(db, integ, pre.exc)
         return 0
     docs, listed = pre.data
 
     ingested = 0
     changed = 0
+    img_budget = _image_budget(integ)
+    # Confluence auth is a Session (header + tenant base); Notion/Drive are plain
+    # bearer strings. _fold_images only ever needs the header.
+    img_auth = getattr(auth, "auth", auth if isinstance(auth, str) else None)
     for d in docs:
         content = d["content"]
         if not content:
@@ -950,6 +968,10 @@ async def pull_gdrive(
         if existing:
             if meta.get("modifiedAt") and (existing.meta or {}).get("modifiedAt") != meta["modifiedAt"]:
                 changed += 1
+                prev_imgs = (existing.meta or {}).get("imageTexts") or {}
+                content, imgs = await _fold_images(content, auth=img_auth, prev=prev_imgs, budget=img_budget)
+                if imgs:
+                    meta["imageTexts"] = imgs
                 existing.title = d["title"][:300]
                 existing.content = content
                 existing.meta = meta
@@ -962,6 +984,9 @@ async def pull_gdrive(
                         existing.embedding = vec
                 await _write_chunks(db, existing)
             continue
+        content, imgs = await _fold_images(content, auth=img_auth, prev={}, budget=img_budget)
+        if imgs:
+            meta["imageTexts"] = imgs
         await ingest_artifact(
             db,
             workspace_id,
@@ -976,15 +1001,16 @@ async def pull_gdrive(
         )
         ingested += 1
 
-    # Reconcile on FULL syncs: files missing from the (capped) listing get a live
+    # Reconcile on FULL syncs: items missing from the (capped) listing get a live
     # probe — deleted/trashed → stale; still there → just outside the cap, untouched.
     if since is None:
+        exists = _DOC_CONNECTORS[key][1]
         rows = (
             (
                 await db.execute(
                     select(Artifact).where(
                         Artifact.workspace_id == workspace_id,
-                        Artifact.source.in_(SOURCE_BY_INTEGRATION["google-drive"]),
+                        Artifact.source.in_(SOURCE_BY_INTEGRATION[key]),
                         Artifact.status != "stale",
                     )
                 )
@@ -996,7 +1022,7 @@ async def pull_gdrive(
         random.shuffle(missing)
         for a in missing[:_RECONCILE_CHECKS]:
             try:
-                if not await google_drive.file_exists(auth, a.external_ref):
+                if not await exists(auth, a.external_ref):
                     a.status = "stale"
             except Exception:
                 continue  # transient — deletion needs proof, not doubt
@@ -1011,6 +1037,42 @@ async def pull_gdrive(
 
         await match_open_commitments(db, workspace_id)
     return ingested
+
+
+async def _plan_gdrive(db, workspace_id: str) -> _Prefetch:
+    return await _plan_documents(db, workspace_id, "google-drive")
+
+
+async def pull_gdrive(
+    db, workspace_id: str, pre: _Prefetch | None = None, *, match_commitments: bool = True, stats: dict | None = None
+) -> int:
+    """Google Docs/Sheets/Slides, PDFs (text layer or OCR) and images (read by the
+    vision model) as document artifacts."""
+    return await _pull_documents(
+        db, workspace_id, "google-drive", pre, match_commitments=match_commitments, stats=stats
+    )
+
+
+async def _plan_notion(db, workspace_id: str) -> _Prefetch:
+    return await _plan_documents(db, workspace_id, "notion")
+
+
+async def pull_notion(
+    db, workspace_id: str, pre: _Prefetch | None = None, *, match_commitments: bool = True, stats: dict | None = None
+) -> int:
+    """Notion pages the integration has been given access to, as document artifacts."""
+    return await _pull_documents(db, workspace_id, "notion", pre, match_commitments=match_commitments, stats=stats)
+
+
+async def _plan_confluence(db, workspace_id: str) -> _Prefetch:
+    return await _plan_documents(db, workspace_id, "confluence")
+
+
+async def pull_confluence(
+    db, workspace_id: str, pre: _Prefetch | None = None, *, match_commitments: bool = True, stats: dict | None = None
+) -> int:
+    """Confluence wiki pages as document artifacts."""
+    return await _pull_documents(db, workspace_id, "confluence", pre, match_commitments=match_commitments, stats=stats)
 
 
 async def _plan_slack(db, workspace_id: str) -> _Prefetch:
@@ -1443,6 +1505,8 @@ async def pull_all(db, workspace_id: str) -> dict[str, int]:
         ("slack", _plan_slack, pull_slack),
         ("github", _plan_github, pull_github),
         ("google-drive", _plan_gdrive, pull_gdrive),
+        ("notion", _plan_notion, pull_notion),
+        ("confluence", _plan_confluence, pull_confluence),
         ("fireflies", _plan_fireflies, pull_fireflies),
     )
     plans = [await plan(db, workspace_id) for _, plan, _ in connectors]

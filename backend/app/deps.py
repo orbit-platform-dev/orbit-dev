@@ -17,7 +17,7 @@ from .database import get_db  # re-exported for routers
 
 _jwks_cache: dict[str, Any] | None = None
 
-DEMO_PRINCIPAL = {"sub": "demo_user", "email": "yash@batton.co.jp", "name": "Yash Pandey"}
+DEMO_PRINCIPAL = {"sub": "demo_user", "email": "yash@tryorbit.pro", "name": "Yash Pandey"}
 
 
 async def _get_jwks(force: bool = False) -> dict[str, Any]:

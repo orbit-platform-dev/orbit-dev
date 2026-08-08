@@ -19,6 +19,6 @@ export interface CurrentUser {
 export const demoUser: CurrentUser = {
   id: "u_1",
   name: "Yash Pandey",
-  email: "yash@batton.co.jp",
+  email: "yash@tryorbit.pro",
   title: "Founder & CEO",
 };

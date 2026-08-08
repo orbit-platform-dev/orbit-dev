@@ -64,8 +64,15 @@ def _baseline_integrations(workspace_id: str) -> list:
             key="notion",
             name="Notion",
             category="Product",
-            description="Docs as company context.",
-            status="coming-soon",
+            description="Pages you share with Orbit as company knowledge.",
+            status="disconnected",
+        ),
+        integ(
+            key="confluence",
+            name="Confluence",
+            category="Product",
+            description="Wiki pages and specs as company knowledge.",
+            status="disconnected",
         ),
         integ(
             key="google-meet",
