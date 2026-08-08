@@ -33,14 +33,28 @@ _SEMANTIC_MAX_DISTANCE = 1.0 - _SEMANTIC_THRESHOLD
 _SUFFIXES = ("inc", "llc", "ltd", "gmbh", "corp", "corporation", "co", "kk", "sa", "srl", "plc")
 
 
+# Language-agnostic matching: \w is Unicode-aware, so every script survives
+# normalization. CJK (kana/han/hangul) has no word spaces, so tokens there are
+# character BIGRAMS — the standard CJK retrieval unit — and hiragana-only
+# fragments are dropped (grammar particles, not content).
+_CJK = "぀-ヿ㐀-䶿一-鿿豈-﫿가-힯"
+_WORD_RUN = re.compile(rf"(?:(?![{_CJK}])[^\W_]){{2,}}")
+_CJK_RUN = re.compile(rf"[{_CJK}]+")
+_HIRAGANA_ONLY = re.compile(r"^[぀-ゟ]+$")
+_CJK_CORP = ("株式会社", "合同会社", "有限会社")
+
+
 def normalize_name(name: str) -> str:
-    """Identity key for entity resolution: lowercased, punctuation-stripped,
-    corporate suffixes dropped. (Moved here from the retired customers service.)"""
-    n = re.sub(r"[^a-z0-9 ]", " ", (name or "").lower()).strip()
+    """Identity key for entity resolution: lowercased, punctuation stripped in ANY
+    script, corporate suffixes dropped (Latin and Japanese forms)."""
+    n = re.sub(r"[\W_]+", " ", (name or "").lower()).strip()
     words = [w for w in n.split() if w]
     while words and words[-1] in _SUFFIXES:
         words.pop()
-    return " ".join(words)
+    out = " ".join(words)
+    for corp in _CJK_CORP:
+        out = out.removeprefix(corp).removesuffix(corp).strip()
+    return out
 
 
 _STOP = {
@@ -66,16 +80,32 @@ _STOP = {
 
 
 def _tokens(s: str) -> set[str]:
-    return {w for w in normalize_name(s).split() if len(w) >= 3 and w not in _STOP}
+    """Significant tokens in any script: Latin/Cyrillic/etc. words of 3+ chars,
+    plus CJK character bigrams (single CJK chars only when they stand alone)."""
+    s = (s or "").lower()
+    out = {w for w in _WORD_RUN.findall(s) if len(w) >= 3 and w not in _STOP}
+    for run in _CJK_RUN.findall(s):
+        if len(run) == 1 and not _HIRAGANA_ONLY.match(run):
+            out.add(run)
+        for i in range(len(run) - 1):
+            bg = run[i : i + 2]
+            if not _HIRAGANA_ONLY.match(bg):
+                out.add(bg)
+    return out
 
 
 def text_match(a: str, b: str) -> bool:
     """Deterministic 'do these describe the same thing' check: >= 2 shared
-    significant tokens, or a high fuzzy ratio on the normalized strings."""
+    significant tokens, or a high fuzzy ratio on the normalized strings.
+    Two strings with nothing comparable are NEVER a match — without that guard,
+    difflib rates two empty normals 1.0 and unrelated CJK texts 'matched'."""
     ta, tb = _tokens(a), _tokens(b)
     if ta and (len(ta & tb) >= 2 or ta == tb):
         return True
-    return difflib.SequenceMatcher(None, normalize_name(a), normalize_name(b)).ratio() >= 0.82
+    na, nb = normalize_name(a), normalize_name(b)
+    if not na or not nb:
+        return False
+    return difflib.SequenceMatcher(None, na, nb).ratio() >= 0.82
 
 
 def _now() -> datetime:
@@ -436,6 +466,24 @@ async def _link_commitment_issue(db, ws: str, commitment: Entity, iss: Artifact,
     commitment.state = "tracked"
     commitment.meta = {**(commitment.meta or {}), "work": ref, "linear": ref}
     commitment.updated_at = _now()
+
+
+async def heal_normalized_names(db) -> int:
+    """Recompute entity identity keys after tokenizer changes — CJK names used to
+    normalize to '' or bare digits, so lookups couldn't find them. Runs at startup;
+    a no-op when every key is already current. Never merges rows (a wrong merge is
+    worse than a duplicate) — it only repairs keys so future resolution works."""
+    rows = (await db.execute(select(Entity))).scalars().all()
+    fixed = 0
+    for e in rows:
+        norm = normalize_name(e.name)
+        if norm and norm != e.normalized_name:
+            e.normalized_name = norm
+            fixed += 1
+    if fixed:
+        await db.commit()
+        logger.info("healed %d entity identity keys", fixed)
+    return fixed
 
 
 async def _load_work_items(db, ws: str) -> list[Artifact]:
