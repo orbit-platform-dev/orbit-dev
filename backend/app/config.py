@@ -91,6 +91,10 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str | None = None
 
+    # Server-only Deepgram project key. The desktop app receives only a
+    # short-lived token via POST /voice/deepgram-token.
+    deepgram_api_key: str | None = None
+
     # --- Heartbeat (the OS loop) ----------------------------------------------
     # Orbit scans for gaps and refreshes the brief on its own schedule; nothing
     # here EXECUTES actions — detection and briefs are read + insight writes only.
